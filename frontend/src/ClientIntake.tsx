@@ -22,6 +22,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [inputMode, setInputMode] = useState<'voice' | 'text'>('voice');
   const [textNarrative, setTextNarrative] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   
   // Session & Chat History State
   const [sessionState, setSessionState] = useState<any>(null);
@@ -63,58 +65,165 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     if (!message.trim() && !isContinuation) return;
 
     setIsLoading(true);
+    setIsStreaming(true);
+    setStreamStatus('বিবরণ বিশ্লেষণ ও আইনি তথ্য যাচাই করা হচ্ছে...');
+
+    // Optimistically push the user's message and an active assistant placeholder
+    if (message.trim()) {
+      setChatHistory((prev) => [
+        ...prev,
+        { role: 'user', content: message.trim() },
+        { role: 'assistant', content: '' }
+      ]);
+    }
+    setTextNarrative('');
+
+    // Switch to conversational view immediately so the user sees live activity
+    if (step === 'recording') {
+      setStep('follow_up');
+    }
+
     try {
-      const response = await axios.post('/api/intake/message', {
-        transcript: message || "",
-        existing_state: sessionState,
-        is_continuation: isContinuation
+      // Connect to SSE streaming endpoint
+      const response = await fetch('/api/intake/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: message || "",
+          existing_state: sessionState,
+          is_continuation: isContinuation
+        })
       });
 
-      const data = response.data;
-      setSessionState(data.session_state);
-
-      if (data.chat_history && data.chat_history.length > 0) {
-        setChatHistory(data.chat_history);
+      if (!response.ok || !response.body) {
+        throw new Error('Streaming connection failed, activating fallback');
       }
 
-      // 1. Check safety breakout
-      if (data.safety_flag) {
-        setSafetyMessage(data.safety_message);
-        setStep('safety');
-        onCaseSubmitted();
-        setIsLoading(false);
-        return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulatedAssistantText = '';
+      let finalData: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const jsonStr = trimmed.replace('data: ', '').trim();
+          if (!jsonStr) continue;
+
+          try {
+            const event = JSON.parse(jsonStr);
+            if (event.type === 'status') {
+              setStreamStatus(event.content);
+            } else if (event.type === 'token') {
+              accumulatedAssistantText += event.content;
+              setStreamStatus(null);
+              setChatHistory((prev) => {
+                const copy = [...prev];
+                if (copy.length > 0 && copy[copy.length - 1].role === 'assistant') {
+                  copy[copy.length - 1] = { role: 'assistant', content: accumulatedAssistantText };
+                }
+                return copy;
+              });
+            } else if (event.type === 'final') {
+              finalData = event;
+            }
+          } catch (e) {
+            console.error('SSE token parse error:', e);
+          }
+        }
       }
 
-      // 2. Check token budget continuation requirement
-      if (data.requires_continuation) {
-        setContinuationPrompt(data.continuation_prompt);
-        setStep('continuation');
-        setIsLoading(false);
-        return;
-      }
+      if (finalData) {
+        setSessionState(finalData.session_state);
+        if (finalData.chat_history && finalData.chat_history.length > 0) {
+          setChatHistory(finalData.chat_history);
+        }
 
-      // 3. If follow-up required
-      if (data.follow_up_question) {
-        setFollowUpQuestion(data.follow_up_question);
-        setTextNarrative('');
-        setStep('follow_up');
-      } else if (data.is_complete) {
-        setRightsExplanation(data.rights_explanation);
-        setDraftComplaint(data.draft_complaint);
-        setReferralInfo({
-          clinic: data.referral_clinic || 'ব্র্যাক আইনি সহায়তা কেন্দ্র, সদর শাখা',
-          slot: data.referral_slot || 'বুধবার, সকাল ১০:০০ টা'
-        });
-        setCaseId(data.case_id);
-        setStep('rights');
-        onCaseSubmitted();
+        // 1. Safety Breakout
+        if (finalData.safety_flag) {
+          setSafetyMessage(finalData.safety_message);
+          setStep('safety');
+          onCaseSubmitted();
+          return;
+        }
+
+        // 2. Token Budget Continuation
+        if (finalData.requires_continuation) {
+          setContinuationPrompt(finalData.continuation_prompt);
+          setStep('continuation');
+          return;
+        }
+
+        // 3. Follow-up or Legal Rights Solution
+        if (finalData.follow_up_question) {
+          setFollowUpQuestion(finalData.follow_up_question);
+          setStep('follow_up');
+        } else if (finalData.is_complete) {
+          setRightsExplanation(finalData.rights_explanation);
+          setDraftComplaint(finalData.draft_complaint);
+          setReferralInfo({
+            clinic: finalData.referral_clinic || 'ব্র্যাক আইনি সহায়তা কেন্দ্র, সদর শাখা',
+            slot: finalData.referral_slot || 'বুধবার, সকাল ১০:০০ টা'
+          });
+          setCaseId(finalData.case_id);
+          setStep('rights');
+          onCaseSubmitted();
+        }
       }
     } catch (err) {
-      console.error('Error submitting narrative:', err);
-      alert('বার্তা পাঠাতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+      console.warn('Streaming failed, fallback to standard endpoint:', err);
+      // Seamless fallback to standard HTTP endpoint
+      try {
+        const fallbackRes = await axios.post('/api/intake/message', {
+          transcript: message || "",
+          existing_state: sessionState,
+          is_continuation: isContinuation
+        });
+
+        const data = fallbackRes.data;
+        setSessionState(data.session_state);
+
+        if (data.chat_history && data.chat_history.length > 0) {
+          setChatHistory(data.chat_history);
+        }
+
+        if (data.safety_flag) {
+          setSafetyMessage(data.safety_message);
+          setStep('safety');
+          onCaseSubmitted();
+        } else if (data.requires_continuation) {
+          setContinuationPrompt(data.continuation_prompt);
+          setStep('continuation');
+        } else if (data.follow_up_question) {
+          setFollowUpQuestion(data.follow_up_question);
+          setStep('follow_up');
+        } else if (data.is_complete) {
+          setRightsExplanation(data.rights_explanation);
+          setDraftComplaint(data.draft_complaint);
+          setReferralInfo({
+            clinic: data.referral_clinic || 'ব্র্যাক আইনি সহায়তা কেন্দ্র, সদর শাখা',
+            slot: data.referral_slot || 'বুধবার, সকাল ১০:০০ টা'
+          });
+          setCaseId(data.case_id);
+          setStep('rights');
+          onCaseSubmitted();
+        }
+      } catch (fallbackErr) {
+        console.error('Fallback endpoint also failed:', fallbackErr);
+        alert('বার্তা পাঠাতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+      }
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
+      setStreamStatus(null);
     }
   };
 
@@ -338,7 +447,18 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                         maxWidth: '90%'
                       }}
                     >
-                      {msg.content}
+                      {msg.content ? (
+                        <span>
+                          {msg.content}
+                          {isStreaming && idx === chatHistory.length - 1 && msg.role === 'assistant' && (
+                            <span style={{ display: 'inline-block', width: '6px', height: '14px', backgroundColor: '#0284c7', marginLeft: '4px', verticalAlign: 'middle', animation: 'pulse 1s infinite' }}></span>
+                          )}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#64748b', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <RefreshCw className="animate-spin" size={14} /> {streamStatus || 'আইনি তথ্য বিশ্লেষণ করা হচ্ছে...'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -350,7 +470,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             অতিরিক্ত তথ্য প্রয়োজন (Follow-up)
           </div>
           <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: '#1e293b' }}>
-            {followUpQuestion}
+            {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
           </h2>
 
           <textarea
