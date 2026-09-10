@@ -51,6 +51,17 @@ def audit_safety_event(user_text: str, safety_flag: bool, category: Optional[str
     else:
         logger.info(f"✅ [SAFE INTAKE] Category: {category or 'General'} | Text: '{user_text[:50]}...'")
 
+def audit_llm_error_event(error_info: Dict[str, Any], user_text: str = ""):
+    """
+    Audits LLM connection, 401 authentication, and token errors for diagnostics.
+    """
+    code = error_info.get("status_code", "unknown")
+    err_type = error_info.get("error_type", "error")
+    logger.error(
+        f"⚠️ [LLM ERROR DETECTED] Type: {err_type} | Code: {code} | "
+        f"Msg: {error_info.get('message_bn')} | Prompt: '{user_text[:60]}...'"
+    )
+
 def validate_narrative_input(text: str) -> bool:
     """
     Pre-checks narrative string before feeding into LangGraph.

@@ -3,7 +3,7 @@ import axios from 'axios';
 import { 
   Mic, MicOff, Send, AlertTriangle, PhoneCall, 
   CheckCircle2, ChevronRight, RefreshCw, ArrowRightCircle,
-  MessageSquare, User, Bot
+  MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle
 } from 'lucide-react';
 
 interface IntakeProps {
@@ -13,6 +13,14 @@ interface IntakeProps {
 interface ChatMessage {
   role: string;
   content: string;
+}
+
+export interface LlmErrorInfo {
+  title: string;
+  message: string;
+  code?: string | number;
+  details?: string;
+  errorType?: string;
 }
 
 export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
@@ -25,6 +33,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   
+  // LLM Error and Retry tracking
+  const [llmError, setLlmError] = useState<LlmErrorInfo | null>(null);
+  const [lastAttemptedMessage, setLastAttemptedMessage] = useState<string>('');
+
   // Session & Chat History State
   const [sessionState, setSessionState] = useState<any>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -64,6 +76,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     const message = textToSend !== undefined ? textToSend : textNarrative;
     if (!message.trim() && !isContinuation) return;
 
+    setLlmError(null);
+    setLastAttemptedMessage(message || "");
     setIsLoading(true);
     setIsStreaming(true);
     setStreamStatus('বিবরণ বিশ্লেষণ ও আইনি তথ্য যাচাই করা হচ্ছে...');
@@ -122,6 +136,16 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             const event = JSON.parse(jsonStr);
             if (event.type === 'status') {
               setStreamStatus(event.content);
+            } else if (event.type === 'error') {
+              const errDetails = event.llm_error_details || {};
+              setLlmError({
+                title: errDetails.title || 'এলএলএম ত্রুটি (LLM Error)',
+                message: event.llm_error || errDetails.message_bn || 'এআই মডেলের সাথে যোগাযোগে ত্রুটি ঘটেছে।',
+                code: errDetails.status_code || errDetails.error_type || 500,
+                details: errDetails.message_en || errDetails.raw_error || '',
+                errorType: errDetails.error_type
+              });
+              setStreamStatus(null);
             } else if (event.type === 'token') {
               accumulatedAssistantText += event.content;
               setStreamStatus(null);
@@ -142,6 +166,19 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       }
 
       if (finalData) {
+        if (finalData.llm_error) {
+          const errDetails = finalData.llm_error_details || {};
+          setLlmError({
+            title: errDetails.title || 'এলএলএম ত্রুটি (LLM Error)',
+            message: finalData.llm_error,
+            code: errDetails.status_code || errDetails.error_type || 500,
+            details: errDetails.message_en || errDetails.raw_error || '',
+            errorType: errDetails.error_type
+          });
+          setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+          return;
+        }
+
         setSessionState(finalData.session_state);
         if (finalData.chat_history && finalData.chat_history.length > 0) {
           setChatHistory(finalData.chat_history);
@@ -189,6 +226,19 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         });
 
         const data = fallbackRes.data;
+        if (data.llm_error) {
+          const errDetails = data.llm_error_details || {};
+          setLlmError({
+            title: errDetails.title || 'এলএলএম ত্রুটি (LLM Error)',
+            message: data.llm_error,
+            code: errDetails.status_code || errDetails.error_type || 500,
+            details: errDetails.message_en || errDetails.raw_error || '',
+            errorType: errDetails.error_type
+          });
+          setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+          return;
+        }
+
         setSessionState(data.session_state);
 
         if (data.chat_history && data.chat_history.length > 0) {
@@ -216,9 +266,53 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           setStep('rights');
           onCaseSubmitted();
         }
-      } catch (fallbackErr) {
+      } catch (fallbackErr: any) {
         console.error('Fallback endpoint also failed:', fallbackErr);
-        alert('বার্তা পাঠাতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
+        let errorTitle = 'সার্ভার সংযোগ ত্রুটি';
+        let errorMsg = 'সার্ভারের সাথে যোগাযোগ করা যাচ্ছে না।';
+        let errCode: string | number = 'CONNECTION_ERROR';
+        let errDetails = '';
+        let errType = 'connection_error';
+
+        if (fallbackErr.response) {
+          const status = fallbackErr.response.status;
+          errCode = status;
+          if (status === 401) {
+            errorTitle = 'এলএলএম অথেন্টিকেশন ত্রুটি (Error 401 Unauthorized)';
+            errorMsg = 'এআই মডেলের API কী বা টোকেন সঠিক নয় অথবা মেয়াদোত্তীর্ণ। backend/.env ফাইলে OPENROUTER_API_KEY যাচাই করুন।';
+            errDetails = 'Invalid, missing, or expired API token (HTTP 401 Unauthorized).';
+            errType = 'authentication_error';
+          } else if (status === 429) {
+            errorTitle = 'টোকেন কোটা বা রেট লিমিট অতিক্রম (Error 429)';
+            errorMsg = 'টোকেন কোটা শেষ অথবা রেট লিমিট অতিক্রম করেছে। অনুগ্রহ করে কিছুক্ষণ পর পুনরায় চেষ্টা করুন।';
+            errDetails = 'Rate limit reached or token quota exhausted (HTTP 429 Rate Limit).';
+            errType = 'rate_limit_error';
+          } else if (status === 402) {
+            errorTitle = 'টোকেন ব্যালেন্স ত্রুটি (Error 402 Payment Required)';
+            errorMsg = 'আপনার একাউন্টে পর্যাপ্ত টোকেন ব্যালেন্স বা ক্রেডিট নেই। অনুগ্রহ করে টোকেন রিচার্জ করুন।';
+            errDetails = 'Insufficient token credits or balance (HTTP 402).';
+            errType = 'token_credit_error';
+          } else if (fallbackErr.response.data?.detail) {
+            errorMsg = typeof fallbackErr.response.data.detail === 'string'
+              ? fallbackErr.response.data.detail
+              : JSON.stringify(fallbackErr.response.data.detail);
+            errDetails = errorMsg;
+          }
+        } else if (fallbackErr.request) {
+          errorTitle = 'এলএলএম / সার্ভার সংযোগ বিচ্ছিন্ন (Not Connected)';
+          errorMsg = 'এআই মডেল বা ব্যাকএন্ড সার্ভারের সাথে সংযোগ স্থাপন সম্ভব হয়নি। অনুগ্রহ করে ইন্টারনেট ও সার্ভার চালু আছে কি না দেখুন।';
+          errDetails = fallbackErr.message || 'Network connection failed.';
+          errType = 'connection_error';
+        }
+
+        setLlmError({
+          title: errorTitle,
+          message: errorMsg,
+          code: errCode,
+          details: errDetails,
+          errorType: errType
+        });
+        setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
       }
     } finally {
       setIsLoading(false);
@@ -242,6 +336,118 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
   return (
     <div style={{ maxWidth: '640px', margin: '0 auto' }}>
+      {/* GLOBAL LLM ERROR BANNER (401, Disconnection, Token / Rate Limits) */}
+      {llmError && (
+        <div 
+          className="card" 
+          style={{ 
+            border: '2px solid #f43f5e', 
+            backgroundColor: '#fff1f2', 
+            marginBottom: '20px',
+            boxShadow: '0 4px 12px rgba(244, 63, 94, 0.12)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
+            <div style={{ 
+              backgroundColor: '#ffe4e6', 
+              color: '#e11d48', 
+              borderRadius: '10px', 
+              padding: '10px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              {llmError.errorType === 'authentication_error' || llmError.code === 401 ? (
+                <KeyRound size={26} />
+              ) : llmError.errorType === 'connection_error' ? (
+                <WifiOff size={26} />
+              ) : (
+                <AlertOctagon size={26} />
+              )}
+            </div>
+
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+                <h3 style={{ fontSize: '17px', fontWeight: '700', color: '#9f1239', margin: 0 }}>
+                  {llmError.title}
+                </h3>
+                {llmError.code && (
+                  <span style={{ 
+                    fontSize: '12px', 
+                    fontWeight: '700', 
+                    padding: '2px 8px', 
+                    borderRadius: '6px', 
+                    backgroundColor: '#fecdd3', 
+                    color: '#881337',
+                    border: '1px solid #fda4af'
+                  }}>
+                    {typeof llmError.code === 'number' ? `Error ${llmError.code}` : llmError.code}
+                  </span>
+                )}
+              </div>
+
+              <p style={{ fontSize: '14px', lineHeight: '1.6', color: '#881337', margin: '4px 0 10px' }}>
+                {llmError.message}
+              </p>
+
+              {/* Troubleshooting helper tips */}
+              <div style={{ backgroundColor: 'white', padding: '10px 14px', borderRadius: '8px', border: '1px solid #fecdd3', marginBottom: '12px' }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: '#be123c', marginBottom: '4px' }}>
+                  সম্ভাব্য সমাধান (Troubleshooting):
+                </div>
+                <ul style={{ fontSize: '12px', color: '#475569', margin: 0, paddingLeft: '18px', lineHeight: '1.6' }}>
+                  {llmError.code === 401 || llmError.errorType === 'authentication_error' ? (
+                    <>
+                      <li>প্রকল্পের <code>backend/.env</code> ফাইলে <code>OPENROUTER_API_KEY</code> সঠিক আছে কি না তা যাচাই করুন।</li>
+                      <li>API Key পরিবর্তন করলে ব্যাকএন্ড সার্ভার রিস্টার্ট করুন।</li>
+                    </>
+                  ) : llmError.code === 429 || llmError.errorType === 'rate_limit_error' ? (
+                    <>
+                      <li>মডেলের বর্তমান রিকোয়েস্ট লিমিট শেষ হয়েছে — ১-২ মিনিট অপেক্ষা করে পুনরায় চেষ্টা করুন।</li>
+                      <li>অথবা <code>backend/.env</code> ফাইলে অপর একটি সক্রিয় মডেল বা নিজস্ব API Key ব্যবহার করুন।</li>
+                    </>
+                  ) : llmError.code === 402 || llmError.errorType === 'token_credit_error' ? (
+                    <>
+                      <li>আপনার OpenRouter একাউন্টে টোকেন ব্যালেন্স বা ক্রেডিট যোগ করুন।</li>
+                    </>
+                  ) : (
+                    <>
+                      <li>আপনার কম্পিউটার ও ব্যাকএন্ড সার্ভার (Port 8000) সচল আছে কি না পরীক্ষা করুন।</li>
+                      <li>ইন্টারনেট সংযোগ চালু আছে কি না দেখুন।</li>
+                    </>
+                  )}
+                </ul>
+                {llmError.details && (
+                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #fecdd3', fontSize: '11px', color: '#64748b', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                    <strong>Technical Details:</strong> {llmError.details}
+                  </div>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: '13px', padding: '7px 16px', backgroundColor: '#e11d48' }}
+                  disabled={isLoading}
+                  onClick={() => handleSendMessage(lastAttemptedMessage || undefined)}
+                >
+                  <RefreshCw className={isLoading ? 'animate-spin' : ''} size={14} /> পুনরায় চেষ্টা করুন (Retry)
+                </button>
+                <button
+                  className="btn btn-outline"
+                  style={{ fontSize: '13px', padding: '7px 14px', borderColor: '#fda4af', color: '#9f1239', backgroundColor: 'white' }}
+                  onClick={() => setLlmError(null)}
+                >
+                  <XCircle size={14} /> বন্ধ করুন (Dismiss)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SCREEN: SAFETY BREAKOUT */}
       {step === 'safety' && (
         <div className="card" style={{ border: '2px solid #e11d48', backgroundColor: '#fff1f2' }}>

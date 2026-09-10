@@ -14,28 +14,15 @@ from langchain_core.tools import tool
 import prompts
 import templates
 
-# OpenRouter configuration with environment variables
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-MODEL_NAME = os.getenv("MODEL_NAME", "google/gemini-3.8-flash")
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
-TEMPERATURE = float(os.getenv("TEMPERATURE", "0"))
-REASONING_MAX_TOKENS = int(os.getenv("REASONING_MAX_TOKENS", "0"))
-
-extra_body = {}
-if REASONING_MAX_TOKENS > 0:
-    extra_body["reasoning"] = {"max_tokens": REASONING_MAX_TOKENS}
-
-# TOKEN THRESHOLD: If estimated tokens exceed this budget, ask user to confirm continuation
-# This ensures users with low budgets or long rambling narratives stay in control
-TOKEN_BUDGET_LIMIT = int(os.getenv("TOKEN_BUDGET_LIMIT", "180"))
-
-llm = ChatOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_API_KEY,
-    model=MODEL_NAME,
-    max_tokens=MAX_TOKENS,
-    temperature=TEMPERATURE,
-    extra_body=extra_body if extra_body else None
+from utils import (
+    llm,
+    OPENROUTER_API_KEY,
+    MODEL_NAME,
+    TOKEN_BUDGET_LIMIT,
+    check_llm_status,
+    parse_llm_error,
+    is_model_configured,
+    get_error_message,
 )
 
 # Directory of BRAC Legal Aid Clinics and Helplines across Bangladesh
@@ -272,6 +259,8 @@ class IntakeState(TypedDict):
     referral_clinic: Optional[str]
     referral_slot: Optional[str]
     chat_history: List[Dict[str, Any]]
+    llm_error: Optional[str]
+    llm_error_details: Optional[Dict[str, Any]]
 
 
 # Helper to estimate tokens (Bangla words average ~2.5 tokens per word)
@@ -327,6 +316,8 @@ def transcribe_node(state: IntakeState) -> Dict[str, Any]:
 
 def safety_check_node(state: IntakeState) -> Dict[str, Any]:
     """Safety check runs on every turn, tuned to over-trigger rather than under-trigger."""
+    if state.get("llm_error"):
+        return {}
     text_to_eval = state.get("transcript", "")
     if not text_to_eval:
         return {"safety_flag": False}
@@ -344,13 +335,20 @@ def safety_check_node(state: IntakeState) -> Dict[str, Any]:
         }
     except Exception as e:
         print(f"[Safety LLM Error] {e}")
-        return {"safety_flag": False}
+        err_info = parse_llm_error(e)
+        return {
+            "safety_flag": False,
+            "llm_error": err_info["message_bn"],
+            "llm_error_details": err_info
+        }
 
 def token_budget_node(state: IntakeState) -> Dict[str, Any]:
     """
     Checks if token consumption exceeds the threshold.
     If yes and user has not confirmed continuation yet, pauses generation and asks for continuation.
     """
+    if state.get("llm_error"):
+        return {}
     tokens = state.get("estimated_tokens", 0)
     confirmed = state.get("is_continuation_confirmed", False)
     
@@ -373,6 +371,8 @@ def token_budget_node(state: IntakeState) -> Dict[str, Any]:
 
 def classification_node(state: IntakeState) -> Dict[str, Any]:
     """Classifies category and checks confidence."""
+    if state.get("llm_error"):
+        return {}
     text_to_eval = state.get("client_own_words") or state.get("transcript", "")
     
     prompt = ChatPromptTemplate.from_messages([
@@ -393,15 +393,20 @@ def classification_node(state: IntakeState) -> Dict[str, Any]:
         }
     except Exception as e:
         print(f"[Classification Error] {e}")
+        err_info = parse_llm_error(e)
         return {
             "category": "unclassifiable",
-            "confidence": 40,
+            "confidence": 0,
             "classification_reason": "স্বয়ংক্রিয় শ্রেণিবিভাগ করা যায়নি",
-            "disambiguation_needed": True
+            "disambiguation_needed": False,
+            "llm_error": err_info["message_bn"],
+            "llm_error_details": err_info
         }
 
 def extraction_node(state: IntakeState) -> Dict[str, Any]:
     """Extracts facts from client's full narrative."""
+    if state.get("llm_error"):
+        return {}
     text_to_eval = state.get("client_own_words") or state.get("transcript", "")
     cat = state.get("category", "")
     
@@ -417,10 +422,16 @@ def extraction_node(state: IntakeState) -> Dict[str, Any]:
         return {k: v for k, v in data.items() if v is not None}
     except Exception as e:
         print(f"[Extraction Error] {e}")
-        return {}
+        err_info = parse_llm_error(e)
+        return {
+            "llm_error": err_info["message_bn"],
+            "llm_error_details": err_info
+        }
 
 def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     """Identifies missing facts and formulates a dynamic, context-aware follow-up question."""
+    if state.get("llm_error"):
+        return {}
     cat = state.get("category")
     turn_count = state.get("turn_count", 1)
     text_to_eval = state.get("client_own_words") or state.get("transcript", "")
@@ -443,6 +454,13 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
                 question = res.content.strip()
         except Exception as e:
             print(f"[Dialogue LLM Error - Disambiguation] {e}")
+            err_info = parse_llm_error(e)
+            return {
+                "is_complete": False,
+                "follow_up_question": None,
+                "llm_error": err_info["message_bn"],
+                "llm_error_details": err_info
+            }
 
         return {
             "is_complete": False,
@@ -518,6 +536,14 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
                 question = res.content.strip()
         except Exception as e:
             print(f"[Dialogue LLM Error - Follow-up] {e}")
+            err_info = parse_llm_error(e)
+            return {
+                "is_complete": False,
+                "missing_fields": missing,
+                "follow_up_question": None,
+                "llm_error": err_info["message_bn"],
+                "llm_error_details": err_info
+            }
 
         return {
             "is_complete": False,
@@ -533,6 +559,8 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
 
 def template_output_node(state: IntakeState) -> Dict[str, Any]:
     """Applies reviewed legal templates, calls nearby clinic tool, and synthesizes dynamic legal rights & solutions."""
+    if state.get("llm_error"):
+        return {}
     cat = state.get("category", "family_dower_maintenance")
     standard_exp = templates.RIGHTS_EXPLANATIONS.get(cat, templates.RIGHTS_EXPLANATIONS["out_of_scope"])
     
@@ -585,6 +613,17 @@ def template_output_node(state: IntakeState) -> Dict[str, Any]:
         print(f"[Clinic Tool Calling Error] {e}")
         clinic = DEFAULT_CLINIC["clinic_name"]
         slot = DEFAULT_CLINIC["referral_slot"]
+        err_info = parse_llm_error(e)
+        if err_info.get("status_code") in (401, 402, 429) or err_info.get("error_type") in ("authentication_error", "connection_error"):
+            return {
+                "rights_explanation": standard_exp,
+                "draft_complaint": draft,
+                "referral_clinic": clinic,
+                "referral_slot": slot,
+                "is_complete": True,
+                "llm_error": err_info["message_bn"],
+                "llm_error_details": err_info
+            }
     
     # 2. Dynamic synthesis: Generate personalized legal advice and action plan based on user's narrative & follow-up answers
     rights_exp = standard_exp
@@ -605,6 +644,17 @@ def template_output_node(state: IntakeState) -> Dict[str, Any]:
         except Exception as e:
             print(f"[Dynamic Solution Error] Falling back to standard template: {e}")
             rights_exp = standard_exp
+            err_info = parse_llm_error(e)
+            if err_info.get("status_code") in (401, 402, 429) or err_info.get("error_type") in ("authentication_error", "connection_error"):
+                return {
+                    "rights_explanation": rights_exp,
+                    "draft_complaint": draft,
+                    "referral_clinic": clinic,
+                    "referral_slot": slot,
+                    "is_complete": True,
+                    "llm_error": err_info["message_bn"],
+                    "llm_error_details": err_info
+                }
     
     return {
         "rights_explanation": rights_exp,
@@ -631,6 +681,8 @@ workflow.add_edge("transcribe", "safety_check")
 
 # Safety routing
 def check_safety_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
     if state.get("safety_flag"):
         return "safety_breakout"
     return "token_budget"
@@ -640,12 +692,15 @@ workflow.add_conditional_edges(
     check_safety_route,
     {
         "safety_breakout": END,
-        "token_budget": "token_budget"
+        "token_budget": "token_budget",
+        END: END
     }
 )
 
 # Token budget routing: if exceeds threshold, pause and ask for confirmation
 def check_token_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
     if state.get("requires_continuation"):
         return "ask_continuation"
     return "classify"
@@ -655,12 +710,15 @@ workflow.add_conditional_edges(
     check_token_route,
     {
         "ask_continuation": END,
-        "classify": "classify"
+        "classify": "classify",
+        END: END
     }
 )
 
 # Classification routing
 def check_classification_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
     if state.get("category") == "out_of_scope":
         return "generate_templates"
     if state.get("disambiguation_needed"):
@@ -673,7 +731,8 @@ workflow.add_conditional_edges(
     {
         "generate_templates": "generate_templates",
         "dialogue": "dialogue",
-        "extract": "extract"
+        "extract": "extract",
+        END: END
     }
 )
 
@@ -681,6 +740,8 @@ workflow.add_edge("extract", "dialogue")
 
 # Dialogue routing
 def check_dialogue_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
     if state.get("is_complete"):
         return "generate_templates"
     return END
@@ -694,7 +755,6 @@ workflow.add_conditional_edges(
     }
 )
 
-
 workflow.add_edge("generate_templates", END)
 
 odhikar_graph = workflow.compile()
@@ -706,7 +766,33 @@ def run_intake(
     existing_state: Optional[Dict[str, Any]] = None,
     is_continuation: bool = False
 ) -> Dict[str, Any]:
-    """Processes a single conversational turn in Bangla with token continuation support."""
+    """Processes a single conversational turn in Bangla with token continuation and LLM error support."""
+    # Check if API Key is configured before running LangGraph
+    if not is_model_configured():
+        err_details = get_error_message("authentication_error", "Missing or placeholder OPENROUTER_API_KEY in backend/.env")
+        history = list(existing_state.get("chat_history", [])) if existing_state else []
+        if transcript and transcript.strip():
+            history.append({"role": "user", "content": transcript.strip()})
+        history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
+        return {
+            "transcript": transcript,
+            "client_own_words": existing_state.get("client_own_words", "") if existing_state else transcript,
+            "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
+            "safety_flag": False,
+            "safety_message": None,
+            "is_complete": False,
+            "requires_continuation": False,
+            "continuation_prompt": None,
+            "follow_up_question": None,
+            "rights_explanation": None,
+            "draft_complaint": None,
+            "referral_clinic": None,
+            "referral_slot": None,
+            "chat_history": history,
+            "llm_error": err_details["message_bn"],
+            "llm_error_details": err_details
+        }
+
     state: IntakeState = {
         "audio_path": audio_path,
         "transcript": transcript,
@@ -743,7 +829,9 @@ def run_intake(
         "draft_complaint": None,
         "referral_clinic": None,
         "referral_slot": None,
-        "chat_history": list(existing_state.get("chat_history", [])) if existing_state else []
+        "chat_history": list(existing_state.get("chat_history", [])) if existing_state else [],
+        "llm_error": None,
+        "llm_error_details": None
     }
     
     # Append the user's current message to chat_history if present
@@ -753,11 +841,23 @@ def run_intake(
             "content": transcript.strip()
         })
 
-    result = odhikar_graph.invoke(state)
+    try:
+        result = odhikar_graph.invoke(state)
+    except Exception as exc:
+        print(f"[Graph Invocations Error] {exc}")
+        err_info = parse_llm_error(exc)
+        result = dict(state)
+        result["llm_error"] = err_info["message_bn"]
+        result["llm_error_details"] = err_info
     
     # Append assistant's response to chat_history based on outcome
     history = list(result.get("chat_history", []))
-    if result.get("safety_flag"):
+    if result.get("llm_error"):
+        history.append({
+            "role": "assistant",
+            "content": f"⚠️ ত্রুটি: {result.get('llm_error')}"
+        })
+    elif result.get("safety_flag"):
         history.append({
             "role": "assistant",
             "content": result.get("safety_message") or "জরুরি নিরাপত্তা ব্রেক-আউট সক্রিয় করা হয়েছে।"

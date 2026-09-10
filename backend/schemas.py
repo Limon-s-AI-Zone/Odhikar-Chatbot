@@ -73,3 +73,5 @@ class IntakeResponse(BaseModel):
     referral_slot: Optional[str] = None
     chat_history: List[Dict[str, Any]] = []
     case_id: Optional[int] = None
+    llm_error: Optional[str] = None
+    llm_error_details: Optional[Dict[str, Any]] = None

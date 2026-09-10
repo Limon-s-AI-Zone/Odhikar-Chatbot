@@ -14,7 +14,7 @@ import models
 import schemas
 from database import engine, get_db
 import ai_pipeline
-from middleware import AIPipelineMiddleware, audit_safety_event, validate_narrative_input
+from middleware import AIPipelineMiddleware, audit_safety_event, audit_llm_error_event, validate_narrative_input
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
@@ -69,21 +69,42 @@ def update_case(case_id: int, update_data: schemas.CaseUpdate, db: Session = Dep
     db.refresh(case)
     return case
 
-# Interactive Intake Endpoint with Token Continuation Handling
+@app.get("/llm/status")
+def get_llm_status():
+    """Checks LLM connectivity, 401 authentication status, and token health."""
+    return ai_pipeline.check_llm_status()
+
+# Interactive Intake Endpoint with Token Continuation & LLM Error Handling
 @app.post("/intake/message", response_model=schemas.IntakeResponse)
 def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get_db)):
-    # Run through LangGraph pipeline with continuation support
-    result = ai_pipeline.run_intake(
-        transcript=req.transcript,
-        existing_state=req.existing_state,
-        is_continuation=req.is_continuation
-    )
+    try:
+        # Run through LangGraph pipeline with continuation support
+        result = ai_pipeline.run_intake(
+            transcript=req.transcript,
+            existing_state=req.existing_state,
+            is_continuation=req.is_continuation
+        )
+    except Exception as exc:
+        err_info = ai_pipeline.parse_llm_error(exc)
+        result = {
+            "transcript": req.transcript,
+            "safety_flag": False,
+            "is_complete": False,
+            "requires_continuation": False,
+            "llm_error": err_info["message_bn"],
+            "llm_error_details": err_info,
+            "chat_history": (req.existing_state.get("chat_history", []) if req.existing_state else []) + [
+                {"role": "assistant", "content": f"⚠️ ত্রুটি: {err_info['message_bn']}"}
+            ]
+        }
 
     safety_flag = result.get("safety_flag", False)
     safety_message = result.get("safety_message")
     is_complete = result.get("is_complete", False)
     requires_continuation = result.get("requires_continuation", False)
     continuation_prompt = result.get("continuation_prompt")
+    llm_error = result.get("llm_error")
+    llm_error_details = result.get("llm_error_details")
     
     # Audit safety and narrative via middleware logger
     audit_safety_event(
@@ -91,10 +112,15 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
         safety_flag=safety_flag,
         category=result.get("category")
     )
+    if llm_error:
+        audit_llm_error_event(
+            error_info=llm_error_details or {"message_bn": llm_error},
+            user_text=req.transcript
+        )
     
     case_id = None
-    # If complete or safety breakout (and not paused for continuation), persist to database
-    if (is_complete or safety_flag) and not requires_continuation:
+    # If complete or safety breakout (and not paused for continuation, and no fatal LLM error), persist to database
+    if not llm_error and (is_complete or safety_flag) and not requires_continuation:
         status = "URGENT" if safety_flag else "New"
         db_case = models.Case(
             category=result.get("category") or ("Family — Violence Disclosed" if safety_flag else "General"),
@@ -138,7 +164,9 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
         referral_clinic=result.get("referral_clinic"),
         referral_slot=result.get("referral_slot"),
         chat_history=result.get("chat_history", []),
-        case_id=case_id
+        case_id=case_id,
+        llm_error=llm_error,
+        llm_error_details=llm_error_details
     )
 
 
@@ -148,6 +176,7 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
     """
     Streaming endpoint that pushes progressive status, token streams, and final response
     so that the React frontend displays smooth typewriter animations and real-time streaming feedback.
+    Handles LLM connection, 401, and token errors with dedicated error SSE events.
     """
     async def event_generator():
         # Step 1: Initial status message
@@ -155,30 +184,69 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
         await asyncio.sleep(0.04)
         
         # Step 2: Run pipeline asynchronously
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: ai_pipeline.run_intake(
-                transcript=req.transcript,
-                existing_state=req.existing_state,
-                is_continuation=req.is_continuation
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: ai_pipeline.run_intake(
+                    transcript=req.transcript,
+                    existing_state=req.existing_state,
+                    is_continuation=req.is_continuation
+                )
             )
-        )
+        except Exception as exc:
+            err_info = ai_pipeline.parse_llm_error(exc)
+            yield f"data: {json.dumps({'type': 'error', 'llm_error': err_info['message_bn'], 'llm_error_details': err_info})}\n\n"
+            err_payload = {
+                "type": "final",
+                "session_state": {"llm_error": err_info["message_bn"], "llm_error_details": err_info},
+                "safety_flag": False,
+                "safety_message": None,
+                "category": None,
+                "confidence": None,
+                "follow_up_question": None,
+                "is_complete": False,
+                "requires_continuation": False,
+                "continuation_prompt": None,
+                "rights_explanation": None,
+                "draft_complaint": None,
+                "referral_clinic": None,
+                "referral_slot": None,
+                "chat_history": (req.existing_state.get("chat_history", []) if req.existing_state else []) + [
+                    {"role": "assistant", "content": f"⚠️ ত্রুটি: {err_info['message_bn']}"}
+                ],
+                "case_id": None,
+                "llm_error": err_info["message_bn"],
+                "llm_error_details": err_info
+            }
+            yield f"data: {json.dumps(err_payload)}\n\n"
+            return
         
         safety_flag = result.get("safety_flag", False)
         safety_message = result.get("safety_message")
         is_complete = result.get("is_complete", False)
         requires_continuation = result.get("requires_continuation", False)
         continuation_prompt = result.get("continuation_prompt")
+        llm_error = result.get("llm_error")
+        llm_error_details = result.get("llm_error_details")
+
+        # If LLM returned an error (e.g. 401, not connected, token issue)
+        if llm_error:
+            yield f"data: {json.dumps({'type': 'error', 'llm_error': llm_error, 'llm_error_details': llm_error_details})}\n\n"
         
         audit_safety_event(
             user_text=req.transcript,
             safety_flag=safety_flag,
             category=result.get("category")
         )
+        if llm_error:
+            audit_llm_error_event(
+                error_info=llm_error_details or {"message_bn": llm_error},
+                user_text=req.transcript
+            )
         
         case_id = None
-        if (is_complete or safety_flag) and not requires_continuation:
+        if not llm_error and (is_complete or safety_flag) and not requires_continuation:
             status = "URGENT" if safety_flag else "New"
             db_case = models.Case(
                 category=result.get("category") or ("Family — Violence Disclosed" if safety_flag else "General"),
@@ -207,9 +275,11 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
             db.refresh(db_case)
             case_id = db_case.id
             
-        # Step 3: Stream tokens of assistant response
+        # Step 3: Stream tokens of assistant response if no fatal LLM error
         text_to_stream = ""
-        if safety_flag:
+        if llm_error:
+            text_to_stream = f"⚠️ ত্রুটি: {llm_error}"
+        elif safety_flag:
             text_to_stream = safety_message or ""
         elif requires_continuation:
             text_to_stream = continuation_prompt or ""
@@ -247,9 +317,13 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
             "referral_clinic": result.get("referral_clinic"),
             "referral_slot": result.get("referral_slot"),
             "chat_history": result.get("chat_history", []),
-            "case_id": case_id
+            "case_id": case_id,
+            "llm_error": llm_error,
+            "llm_error_details": llm_error_details
         }
         yield f"data: {json.dumps(final_payload)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
