@@ -142,111 +142,96 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
     )
 
 
-# Server-Sent Events (SSE) Streaming Intake Endpoint
+# Server-Sent Events (SSE) Streaming Intake Endpoint powered by Native LangGraph Streaming
 @app.post("/intake/stream")
 async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depends(get_db)):
     """
-    Streaming endpoint that pushes progressive status, token streams, and final response
-    so that the React frontend displays smooth typewriter animations and real-time streaming feedback.
+    Native LangGraph streaming endpoint using graph.astream(stream_mode='updates').
+    Emits live node execution events, token streams, and final structured state.
     """
     async def event_generator():
-        # Step 1: Initial status message
-        yield f"data: {json.dumps({'type': 'status', 'content': 'বিবরণ বিশ্লেষণ ও আইনি তথ্য যাচাই করা হচ্ছে...'})}\n\n"
-        await asyncio.sleep(0.04)
+        yield f"data: {json.dumps({'type': 'status', 'content': 'ল্যাংগ্রাফ পাইপলাইন সক্রিয় করা হচ্ছে...'})}\n\n"
         
-        # Step 2: Run pipeline asynchronously
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: ai_pipeline.run_intake(
+        final_state = None
+        
+        # Stream directly from native LangGraph astream generator
+        async for event in ai_pipeline.run_intake_stream(
+            transcript=req.transcript,
+            existing_state=req.existing_state,
+            is_continuation=req.is_continuation
+        ):
+            if event["type"] == "node_update":
+                yield f"data: {json.dumps({'type': 'status', 'node': event['node'], 'content': event['label']})}\n\n"
+            elif event["type"] == "token":
+                yield f"data: {json.dumps({'type': 'token', 'content': event['content']})}\n\n"
+            elif event["type"] == "final_state":
+                final_state = event["data"]
+                
+        if not final_state:
+            final_state = ai_pipeline.run_intake(
                 transcript=req.transcript,
                 existing_state=req.existing_state,
                 is_continuation=req.is_continuation
             )
-        )
-        
-        safety_flag = result.get("safety_flag", False)
-        safety_message = result.get("safety_message")
-        is_complete = result.get("is_complete", False)
-        requires_continuation = result.get("requires_continuation", False)
-        continuation_prompt = result.get("continuation_prompt")
+            
+        safety_flag = final_state.get("safety_flag", False)
+        safety_message = final_state.get("safety_message")
+        is_complete = final_state.get("is_complete", False)
+        requires_continuation = final_state.get("requires_continuation", False)
+        continuation_prompt = final_state.get("continuation_prompt")
         
         audit_safety_event(
             user_text=req.transcript,
             safety_flag=safety_flag,
-            category=result.get("category")
+            category=final_state.get("category")
         )
         
         case_id = None
         if (is_complete or safety_flag) and not requires_continuation:
             status = "URGENT" if safety_flag else "New"
             db_case = models.Case(
-                category=result.get("category") or ("Family — Violence Disclosed" if safety_flag else "General"),
+                category=final_state.get("category") or ("Family — Violence Disclosed" if safety_flag else "General"),
                 status=status,
-                applicant_name=result.get("applicant_name") or "[নাম সংরক্ষিত]",
-                respondent=result.get("respondent") or "[বিবাদী]",
-                marriage_date=result.get("marriage_date"),
-                marriage_date_inferred=result.get("marriage_date_inferred", False),
-                dower_amount=result.get("dower_amount"),
-                dowry_paid=result.get("dowry_paid"),
-                unpaid_wages_claim=result.get("unpaid_wages_claim"),
-                work_period=result.get("work_period"),
-                current_status=result.get("current_status"),
-                children=result.get("children"),
-                evidence=result.get("evidence"),
+                applicant_name=final_state.get("applicant_name") or "[নাম সংরক্ষিত]",
+                respondent=final_state.get("respondent") or "[বিবাদী]",
+                marriage_date=final_state.get("marriage_date"),
+                marriage_date_inferred=final_state.get("marriage_date_inferred", False),
+                dower_amount=final_state.get("dower_amount"),
+                dowry_paid=final_state.get("dowry_paid"),
+                unpaid_wages_claim=final_state.get("unpaid_wages_claim"),
+                work_period=final_state.get("work_period"),
+                current_status=final_state.get("current_status"),
+                children=final_state.get("children"),
+                evidence=final_state.get("evidence"),
                 safety_flag="URGENT — VIOLENCE DETECTED" if safety_flag else "None",
-                original_transcript=result.get("client_own_words") or req.transcript,
-                rights_explanation=result.get("rights_explanation"),
-                draft_complaint=result.get("draft_complaint"),
-                referral_clinic=result.get("referral_clinic") or "ব্র্যাক লিগ্যাল এইড ক্লিনিক, সদর শাখা",
-                referral_slot=result.get("referral_slot") or "বুধবার, সকাল ১০:০০ টা",
-                chat_history=result.get("chat_history", [])
+                original_transcript=final_state.get("client_own_words") or req.transcript,
+                rights_explanation=final_state.get("rights_explanation"),
+                draft_complaint=final_state.get("draft_complaint"),
+                referral_clinic=final_state.get("referral_clinic") or "ব্র্যাক লিগ্যাল এইড ক্লিনিক, সদর শাখা",
+                referral_slot=final_state.get("referral_slot") or "বুধবার, সকাল ১০:০০ টা",
+                chat_history=final_state.get("chat_history", [])
             )
             db.add(db_case)
             db.commit()
             db.refresh(db_case)
             case_id = db_case.id
             
-        # Step 3: Stream tokens of assistant response
-        text_to_stream = ""
-        if safety_flag:
-            text_to_stream = safety_message or ""
-        elif requires_continuation:
-            text_to_stream = continuation_prompt or ""
-        elif result.get("follow_up_question"):
-            text_to_stream = result.get("follow_up_question") or ""
-        elif result.get("chat_history") and len(result.get("chat_history")) > 0:
-            last_msg = result.get("chat_history")[-1]
-            if last_msg.get("role") == "assistant":
-                text_to_stream = last_msg.get("content", "")
-                
-        if text_to_stream:
-            words = text_to_stream.split(" ")
-            chunk_size = 2
-            for i in range(0, len(words), chunk_size):
-                chunk = " ".join(words[i:i+chunk_size])
-                if i + chunk_size < len(words):
-                    chunk += " "
-                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
-                await asyncio.sleep(0.03)
-
-        # Step 4: Final event with complete state
         final_payload = {
             "type": "final",
-            "session_state": result,
+            "session_state": final_state,
             "safety_flag": safety_flag,
             "safety_message": safety_message,
-            "category": result.get("category"),
-            "confidence": result.get("confidence"),
-            "follow_up_question": result.get("follow_up_question"),
+            "category": final_state.get("category"),
+            "confidence": final_state.get("confidence"),
+            "follow_up_question": final_state.get("follow_up_question"),
             "is_complete": is_complete,
             "requires_continuation": requires_continuation,
             "continuation_prompt": continuation_prompt,
-            "rights_explanation": result.get("rights_explanation"),
-            "draft_complaint": result.get("draft_complaint"),
-            "referral_clinic": result.get("referral_clinic"),
-            "referral_slot": result.get("referral_slot"),
-            "chat_history": result.get("chat_history", []),
+            "rights_explanation": final_state.get("rights_explanation"),
+            "draft_complaint": final_state.get("draft_complaint"),
+            "referral_clinic": final_state.get("referral_clinic"),
+            "referral_slot": final_state.get("referral_slot"),
+            "chat_history": final_state.get("chat_history", []),
             "case_id": case_id
         }
         yield f"data: {json.dumps(final_payload)}\n\n"

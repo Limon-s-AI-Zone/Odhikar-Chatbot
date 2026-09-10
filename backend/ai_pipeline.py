@@ -1,5 +1,6 @@
 import os
 import sys
+import asyncio
 from typing import TypedDict, Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,7 @@ llm = ChatOpenAI(
     model=MODEL_NAME,
     max_tokens=MAX_TOKENS,
     temperature=TEMPERATURE,
+    streaming=True,
     extra_body=extra_body if extra_body else None
 )
 
@@ -788,4 +790,162 @@ def run_intake(
     
     result["chat_history"] = history
     return result
+
+
+# Bengali UI labels for LangGraph node lifecycle streaming
+NODE_LABELS_BN = {
+    "transcribe": "কথা ও বার্তা গ্রহণ সম্পন্ন...",
+    "safety_check": "জরুরি নিরাপত্তা বিশ্লেষণ সম্পন্ন...",
+    "token_budget": "টোকেন বাজেট নিরীক্ষা সম্পন্ন...",
+    "classify": "মামলার আইনি ধরণ নির্ধারণ সম্পন্ন...",
+    "extract": "মূল তথ্যমালা বিশ্লেষণ সম্পন্ন...",
+    "dialogue": "আইনি প্রতিক্রিয়া প্রস্তুত সম্পন্ন...",
+    "generate_templates": "আইনি পথরেখা ও খসড়া প্রস্তুত সম্পন্ন..."
+}
+
+NODE_START_LABELS_BN = {
+    "transcribe": "কথা ও বার্তা গ্রহণ করা হচ্ছে...",
+    "safety_check": "জরুরি নিরাপত্তা বিশ্লেষণ চলছে...",
+    "token_budget": "টোকেন বাজেট নিরীক্ষা করা হচ্ছে...",
+    "classify": "মামলার আইনি ধরণ নির্ধারণ করা হচ্ছে...",
+    "extract": "মূল তথ্যমালা বিশ্লেষণ করা হচ্ছে...",
+    "dialogue": "আইনি ফলো-আপ প্রস্তুত করা হচ্ছে...",
+    "generate_templates": "আইনি পথরেখা ও পরামর্শ প্রস্তুত করা হচ্ছে..."
+}
+
+async def run_intake_stream(
+    transcript: str,
+    audio_path: Optional[str] = None,
+    existing_state: Optional[Dict[str, Any]] = None,
+    is_continuation: bool = False
+):
+    """
+    Native LangGraph v2 streaming generator using odhikar_graph.astream_events(state, version='v2').
+    Yields live node execution lifecycle updates, real-time LLM token streams (on_chat_model_stream),
+    and the final structured session state without synthetic delays or LangSmith dependency.
+    """
+    state: IntakeState = {
+        "audio_path": audio_path,
+        "transcript": transcript,
+        "client_own_words": existing_state.get("client_own_words", "") if existing_state else "",
+        "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
+        "estimated_tokens": existing_state.get("estimated_tokens", 0) if existing_state else 0,
+        "requires_continuation": False,
+        "continuation_prompt": None,
+        "is_continuation_confirmed": is_continuation or (existing_state.get("is_continuation_confirmed", False) if existing_state else False),
+        "safety_flag": False,
+        "safety_message": None,
+        "category": existing_state.get("category") if existing_state else None,
+        "confidence": existing_state.get("confidence") if existing_state else None,
+        "classification_reason": None,
+        "disambiguation_needed": False,
+        "applicant_name": existing_state.get("applicant_name") if existing_state else None,
+        "respondent": existing_state.get("respondent") if existing_state else None,
+        "address": existing_state.get("address") if existing_state else None,
+        "marriage_date": existing_state.get("marriage_date") if existing_state else None,
+        "marriage_date_inferred": existing_state.get("marriage_date_inferred", False) if existing_state else False,
+        "dower_amount": existing_state.get("dower_amount") if existing_state else None,
+        "dowry_paid": existing_state.get("dowry_paid") if existing_state else None,
+        "unpaid_wages_claim": existing_state.get("unpaid_wages_claim") if existing_state else None,
+        "work_period": existing_state.get("work_period") if existing_state else None,
+        "current_status": existing_state.get("current_status") if existing_state else None,
+        "children": existing_state.get("children") if existing_state else None,
+        "evidence": existing_state.get("evidence") if existing_state else None,
+        "collective_count": existing_state.get("collective_count") if existing_state else None,
+        "time_critical": existing_state.get("time_critical", False) if existing_state else False,
+        "is_complete": False,
+        "missing_fields": [],
+        "follow_up_question": None,
+        "rights_explanation": None,
+        "draft_complaint": None,
+        "referral_clinic": None,
+        "referral_slot": None,
+        "chat_history": list(existing_state.get("chat_history", [])) if existing_state else []
+    }
+
+    if transcript and transcript.strip():
+        state["chat_history"].append({
+            "role": "user",
+            "content": transcript.strip()
+        })
+
+    current_state = dict(state)
+    tokens_streamed: List[str] = []
+
+    # Stream graph execution natively using LangGraph v2 events
+    async for event in odhikar_graph.astream_events(state, version="v2"):
+        kind = event.get("event")
+        node = event.get("metadata", {}).get("langgraph_node")
+
+        # 1. Native Real-Time LLM Token Streaming
+        if kind == "on_chat_model_stream":
+            # Stream tokens directly to user chat for conversational dialogue nodes
+            if node == "dialogue":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and isinstance(chunk.content, str) and chunk.content:
+                    tokens_streamed.append(chunk.content)
+                    yield {
+                        "type": "token",
+                        "content": chunk.content
+                    }
+
+        # 2. Node lifecycle start
+        elif kind == "on_chain_start":
+            node_name = event.get("name")
+            if node_name in NODE_START_LABELS_BN:
+                yield {
+                    "type": "node_update",
+                    "node": node_name,
+                    "label": NODE_START_LABELS_BN[node_name],
+                    "data": None
+                }
+
+        # 3. Node lifecycle completion
+        elif kind == "on_chain_end":
+            node_name = event.get("name")
+            if node_name in NODE_LABELS_BN:
+                node_output = event.get("data", {}).get("output")
+                if isinstance(node_output, dict):
+                    current_state.update(node_output)
+                label = NODE_LABELS_BN.get(node_name, f"{node_name} সম্পন্ন")
+                yield {
+                    "type": "node_update",
+                    "node": node_name,
+                    "label": label,
+                    "data": node_output
+                }
+
+    # Finalize chat history
+    history = list(current_state.get("chat_history", []))
+    final_assistant_msg = ""
+    if current_state.get("safety_flag"):
+        final_assistant_msg = current_state.get("safety_message") or "জরুরি নিরাপত্তা ব্রেক-আউট সক্রিয় করা হয়েছে।"
+    elif current_state.get("requires_continuation"):
+        final_assistant_msg = current_state.get("continuation_prompt") or "টোকেন বিশ্লেষণ অনুমতির অপেক্ষা।"
+    elif current_state.get("follow_up_question"):
+        final_assistant_msg = current_state.get("follow_up_question")
+    elif current_state.get("is_complete"):
+        cat = current_state.get("category")
+        if cat == "out_of_scope":
+            final_assistant_msg = "আপনার বিবরণটি পর্যালোচনা করা হয়েছে। এটি আমাদের লিগ্যাল এইডের আওতাভুক্ত না হলেও সম্ভাব্য পদক্ষেপের পরামর্শ প্রদান করা হয়েছে।"
+        else:
+            final_assistant_msg = (
+                f"ধন্যবাদ। আপনার সম্পূর্ণ বিবরণ ও উত্তরের ভিত্তিতে ব্যক্তিগত আইনি অধিকার ও পথরেখা প্রস্তুত করা হয়েছে। "
+                f"নিকটস্থ পরামর্শ কেন্দ্র: {current_state.get('referral_clinic')} ({current_state.get('referral_slot')})।"
+            )
+
+    if final_assistant_msg:
+        history.append({
+            "role": "assistant",
+            "content": final_assistant_msg
+        })
+    current_state["chat_history"] = history
+
+    # If no tokens were streamed live (e.g. is_complete reached, safety breakout, or fallback),
+    # stream the final message tokens so the frontend receives the assistant's text
+    if not tokens_streamed and final_assistant_msg:
+        yield {"type": "token", "content": final_assistant_msg}
+
+    yield {"type": "final_state", "data": current_state}
+
 

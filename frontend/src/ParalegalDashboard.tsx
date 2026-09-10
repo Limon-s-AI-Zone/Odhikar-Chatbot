@@ -72,7 +72,7 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.7fr', gap: '24px' }}>
+    <div className="dashboard-grid">
       {/* LEFT COLUMN: CASE QUEUE */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -98,21 +98,13 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
                 <div
                   key={c.id}
                   onClick={() => handleSelectCase(c)}
-                  style={{
-                    backgroundColor: isSelected ? '#f0f9ff' : 'white',
-                    border: isSelected ? '2px solid #0284c7' : isUrgent ? '1px solid #fca5a5' : '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                    padding: '14px',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
-                  }}
+                  className={`dashboard-case-item ${isSelected ? 'selected' : ''}`}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
                     <span style={{ fontWeight: '700', fontSize: '15px', color: '#1e293b' }}>
                       #{c.id.toString().padStart(4, '0')}
                     </span>
-                    <span className={`badge ${isUrgent ? 'badge-urgent' : c.status === 'Approved' ? 'badge-booked' : 'badge-new'}`}>
+                    <span className={`badge ${isUrgent ? 'badge-urgent' : c.status === 'Approved' ? 'badge-approved' : 'badge-new'}`}>
                       {c.status}
                     </span>
                   </div>

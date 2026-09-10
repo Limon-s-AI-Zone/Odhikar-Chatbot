@@ -30,15 +30,15 @@ export const App: React.FC = () => {
       {/* HEADER / NAVIGATION */}
       <header className="navbar">
         <div className="logo-area">
-          <div style={{ backgroundColor: '#d92d20', color: 'white', padding: '6px 10px', borderRadius: '8px', fontWeight: '800', fontSize: '18px' }}>
+          <div className="logo-mark">
             অ
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span className="brand-title">অধিকার (Odhikar)</span>
-              <span className="logo-tag">BRAC Legal Aid</span>
+              <span className="brand-badge">BRAC Legal Aid</span>
             </div>
-            <div className="brand-subtitle">AI Paralegal for Legal Aid Clients</div>
+            <div className="brand-subtitle">AI Paralegal · আইনি সহায়তা ও অধিকার সেবা</div>
           </div>
         </div>
 
@@ -61,19 +61,9 @@ export const App: React.FC = () => {
       </header>
 
       {/* MAIN BODY */}
-      <main className="main-content">
+      <main className={`main-content ${activeTab === 'client' ? 'client-mode' : 'paralegal-mode'}`}>
         {activeTab === 'client' ? (
-          <div>
-            <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-              <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#0f172a' }}>
-                আইনি অভিযোগ ভয়েস ও টেক্সট গ্রহণ সেবা
-              </h2>
-              <p style={{ fontSize: '14px', color: '#64748b' }}>
-                সহজ সাধারণ বাংলায় আপনার ঘটনা বলুন বা লিখুন — আমাদের সিস্টেম আপনার অভিযোগ প্রস্তুত করবে।
-              </p>
-            </div>
-            <ClientIntake onCaseSubmitted={fetchCases} />
-          </div>
+          <ClientIntake onCaseSubmitted={fetchCases} />
         ) : (
           <div>
             <div style={{ marginBottom: '20px' }}>
