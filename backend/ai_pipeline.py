@@ -254,6 +254,7 @@ class IntakeState(TypedDict):
     is_complete: bool
     missing_fields: List[str]
     follow_up_question: Optional[str]
+    suggested_replies: Optional[List[str]]
     rights_explanation: Optional[str]
     draft_complaint: Optional[str]
     referral_clinic: Optional[str]
@@ -493,6 +494,113 @@ def extraction_node(state: IntakeState) -> Dict[str, Any]:
             "llm_error_details": err_info
         }
 
+def generate_suggested_replies(
+    question: Optional[str],
+    missing_fields: Optional[List[str]] = None,
+    category: Optional[str] = None
+) -> List[str]:
+    """Generates 3-4 natural, colloquial Bengali suggested quick-replies based on the follow-up question."""
+    q = (question or "").lower()
+    target = (missing_fields[0] if missing_fields else "").lower()
+
+    # 1. Kabinnama / Marriage document evidence
+    if "কাবিন" in q or "দলিল" in q or "কাগজ" in q or "কাবিননামা" in target or "দলিল" in target:
+        return [
+            "কাবিননামার কাগজটি বাবার বাড়িতে রাখা আছে",
+            "কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি",
+            "রেজিস্ট্রি হয়েছিল, কাজী অফিসে কাবিনের নকল পাওয়া যাবে",
+            "আমাদের কোনো লিখিত কাবিননামা বা বিয়ের কাগজ নেই"
+        ]
+
+    # 2. Dower / Dowry / Claim amount
+    if "দেনমোহর" in q or "টাকার পরিমাণ" in target or "টাকা" in q or "দাবি" in q:
+        return [
+            "দেনমোহর ধার্য করা হয়েছিল ১ লাখ টাকা",
+            "দেনমোহর ধার্য করা হয়েছিল ২ লাখ টাকা",
+            "দেনমোহর ধার্য করা হয়েছিল ৫ লাখ টাকা",
+            "কাবিননামার কাগজ দেখে সঠিক টাকার পরিমাণ বলতে পারব"
+        ]
+
+    # 3. Marriage Date / Timeline
+    if ("বিয়ে" in q or "বিয়ে" in q) and ("সন" in q or "কবে" in q or "সাল" in q or "বছর" in q or "তারিখ" in q or "বিয়ের সন" in target):
+        return [
+            "আনুমানিক ১ থেকে ২ বছর আগে আমাদের বিয়ে হয়েছে",
+            "আনুমানিক ৪ থেকে ৫ বছর আগে বিয়ে হয়েছিল",
+            "১০ বছরেরও বেশি সময় আগে আমাদের বিয়ে হয়েছে",
+            "সঠিক সন মনে নেই, তবে কয়েক বছর হয়ে গেছে"
+        ]
+
+    # 4. Wages / Unpaid Salary
+    if "মজুরি" in q or "বেতন" in q or "বকেয়া" in target or "বকেয়া" in target or "মজুরির মোট পরিমাণ" in target:
+        return [
+            "১ মাসের পুরো মজুরি বা বেতন বকেয়া রয়েছে",
+            "প্রায় ২ থেকে ৩ মাসের বেতন এখনও বকেয়া আছে",
+            "হিসাব অনুযায়ী প্রায় ৫ থেকে ১০ হাজার টাকা পাওনা আছে",
+            "কাজের চুক্তি অনুযায়ী এখনো পুরো টাকা পরিশোধ করা হয়নি"
+        ]
+
+    # 5. Work Period / Duration
+    if "কতদিন" in q or "কাজের সময়" in target or "কোন সময়" in q:
+        return [
+            "গত ১ মাস ধরে আমি এই কাজটি করেছি",
+            "টানা ৬ মাস ধরে সেখানে নিয়মিত কাজ করেছি",
+            "১ বছরেরও বেশি সময় ধরে সেখানে কাজ করেছি",
+            "১০ থেকে ১৫ দিনের নির্দিষ্ট চুক্তিভিত্তিক কাজ ছিল"
+        ]
+
+    # 6. Work Evidence / Witness / Sardar / Slip
+    if "সাক্ষী" in q or "সর্দার" in q or "স্লিপ" in q or "হাজিরা" in q or "সাক্ষী" in target:
+        return [
+            "কাজের দৈনিক হাজিরা খাতা বা স্লিপের প্রমাণ রয়েছে",
+            "কাজের জায়গায় সহকর্মী ও সর্দার সরাসরি সাক্ষী আছেন",
+            "শুধুমাত্র মৌখিক চুক্তি হয়েছিল, লিখিত কোনো কাগজ নেই",
+            "মালিক ও ঠিকাদারের পূর্ণ নাম এবং ফোন নম্বর জানা আছে"
+        ]
+
+    # 7. Land Deeds / Dispute
+    if "জমি" in q or "খতিয়ান" in q or "পর্চা" in q or category == "land_dispute" or "খতিয়ান" in target:
+        return [
+            "জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে",
+            "জমির পর্চা ও খতিয়ানের সত্যায়িত কপি আছে",
+            "জমির মূল কাগজপত্র বা দলিল প্রতিপক্ষের দখলে আটকে আছে",
+            "কাগজপত্র জটিল হলেও জমিটি বহু বছর ধরে আমাদের দখলে আছে"
+        ]
+
+    # 8. Children / Maintenance
+    if "সন্তান" in q or "বাচ্চা" in q or "ভরণপোষণ" in q:
+        return [
+            "হ্যাঁ, আমাদের ১টি সন্তান আছে এবং সে আমার কাছেই থাকে",
+            "হ্যাঁ, আমাদের ২টি সন্তান আছে এবং তাদের দেখাশোনা আমি করছি",
+            "না, আমাদের কোনো সন্তান নেই",
+            "স্বামী সন্তান বা আমার কারও কোনো ভরণপোষণ বা খরচ দেয় না"
+        ]
+
+    # 9. Disambiguation
+    if category == "unclassifiable" or "পারিবারিক" in q:
+        return [
+            "পারিবারিক দেনমোহর বা ভরণপোষণ",
+            "বকেয়া মজুরি বা শ্রমিকের পাওনা",
+            "জমিজমা সংক্রান্ত বিরোধ",
+            "যৌতুক ও নির্যাতন সংক্রান্ত"
+        ]
+
+    # 10. Confirmation / Yes-No
+    if "কি না" in q or "কিনা" in q or "আছে কি" in q or "হয়েছে কি" in q or "হয়েছে কি" in q or q.endswith("?"):
+        return [
+            "হ্যাঁ, এই বিষয়ে প্রমাণ ও তথ্য আছে",
+            "না, এই ধরনের কোনো প্রমাণ বা তথ্য নেই",
+            "হ্যাঁ, ঘটনাটি এইভাবেই হয়েছিল",
+            "কিছু অংশ দেওয়া হয়েছিল, তবে পুরোটা এখনো বাকি আছে"
+        ]
+
+    # 11. General fallback
+    return [
+        "হ্যাঁ, এই বিষয়ে প্রয়োজনীয় সব তথ্য আমার কাছে আছে",
+        "কোনো লিখিত প্রমাণ বা কাগজপত্র নেই, সবই মৌখিক",
+        "সব আলোচনা ও চুক্তি মৌখিকভাবে হয়েছিল",
+        "এই পরিস্থিতিতে কীভাবে অগ্রসর হব সেই আইনি পরামর্শ চাই"
+    ]
+
 def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     """Identifies missing facts and formulates a dynamic, context-aware follow-up question."""
     if state.get("llm_error"):
@@ -523,13 +631,20 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             return {
                 "is_complete": False,
                 "follow_up_question": None,
+                "suggested_replies": None,
                 "llm_error": err_info["message_bn"],
                 "llm_error_details": err_info
             }
 
         return {
             "is_complete": False,
-            "follow_up_question": question
+            "follow_up_question": question,
+            "suggested_replies": [
+                "পারিবারিক দেনমোহর বা ভরণপোষণ",
+                "বকেয়া মজুরি বা শ্রমিকের পাওনা",
+                "জমিজমা সংক্রান্ত বিরোধ",
+                "যৌতুক ও নির্যাতন সংক্রান্ত"
+            ]
         }
 
     # 2. Conclude after 1 follow-up turn (turn_count >= 2) to avoid client fatigue
@@ -606,20 +721,28 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
                 "is_complete": False,
                 "missing_fields": missing,
                 "follow_up_question": None,
+                "suggested_replies": None,
                 "llm_error": err_info["message_bn"],
                 "llm_error_details": err_info
             }
 
+        suggested = generate_suggested_replies(
+            question=question,
+            missing_fields=missing,
+            category=cat
+        )
         return {
             "is_complete": False,
             "missing_fields": missing,
-            "follow_up_question": question
+            "follow_up_question": question,
+            "suggested_replies": suggested
         }
     
     return {
         "is_complete": True,
         "missing_fields": [],
-        "follow_up_question": None
+        "follow_up_question": None,
+        "suggested_replies": None
     }
 
 def template_output_node(state: IntakeState) -> Dict[str, Any]:
@@ -849,6 +972,7 @@ def run_intake(
             "requires_continuation": False,
             "continuation_prompt": None,
             "follow_up_question": None,
+            "suggested_replies": None,
             "rights_explanation": None,
             "draft_complaint": None,
             "referral_clinic": None,
@@ -890,6 +1014,7 @@ def run_intake(
         "is_complete": False,
         "missing_fields": [],
         "follow_up_question": None,
+        "suggested_replies": existing_state.get("suggested_replies") if existing_state else None,
         "rights_explanation": None,
         "draft_complaint": None,
         "referral_clinic": None,

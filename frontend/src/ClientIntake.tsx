@@ -26,6 +26,253 @@ export interface LlmErrorInfo {
   troubleshooting?: string[];
 }
 
+export interface HelperChip {
+  label: string;
+  text: string;
+}
+
+export function getContextualChips(
+  question: string | null,
+  backendReplies?: string[],
+  category?: string
+): HelperChip[] {
+  // 1. If backend provided customized replies from LLM or pipeline, format and present them
+  if (backendReplies && backendReplies.length > 0) {
+    return backendReplies.map((reply) => {
+      let label = reply;
+      if (reply.length > 20) {
+        if (reply.includes('বাবার বাড়ি')) label = 'বাবার বাড়িতে আছে';
+        else if (reply.includes('স্বামীর কাছে')) label = 'স্বামীর কাছে আছে';
+        else if (reply.includes('কাজী অফিস')) label = 'কাজী অফিসে আছে';
+        else if (reply.includes('কাগজ নেই') || reply.includes('দলিল নেই')) label = 'কোনো কাগজ নেই';
+        else if (reply.includes('১ লাখ')) label = '১ লাখ টাকা';
+        else if (reply.includes('২ লাখ')) label = '২ লাখ টাকা';
+        else if (reply.includes('৫ লাখ')) label = '৫ লাখ টাকা';
+        else if (reply.includes('হাজিরা') || reply.includes('স্লিপ')) label = 'হাজিরা খাতা/স্লিপ আছে';
+        else if (reply.includes('সাক্ষী')) label = 'সাক্ষী আছেন';
+        else if (reply.includes('মৌখিক')) label = 'মৌখিক চুক্তি ছিল';
+        else if (reply.includes('১ মাস')) label = '১ মাস কাজ করেছি';
+        else if (reply.includes('৬ মাস')) label = '৬ মাস কাজ করেছি';
+        else if (reply.includes('১ বছর')) label = '১ বছরের বেশি';
+        else if (reply.includes('১টি সন্তান')) label = '১টি সন্তান আছে';
+        else if (reply.includes('২টি সন্তান')) label = '২টি সন্তান আছে';
+        else if (reply.includes('কোনো সন্তান নেই')) label = 'কোনো সন্তান নেই';
+        else if (reply.includes('মূল দলিল')) label = 'মূল দলিল আছে';
+        else if (reply.includes('খতিয়ান') || reply.includes('পর্চা')) label = 'খতিয়ান/পর্চা আছে';
+        else if (reply.includes('সালিশ')) label = 'সালিশ হয়েছিল';
+        else if (reply.includes('জিডি')) label = 'থানায় জিডি করেছি';
+        else if (reply.includes('অভিযোগ করিনি')) label = 'কোনো অভিযোগ করিনি';
+        else label = reply.slice(0, 18) + '...';
+      }
+      return { label, text: reply };
+    });
+  }
+
+  const q = (question || '').toLowerCase();
+  const cat = (category || '').toLowerCase();
+
+  // 1. Marriage / Kabinnama / Document evidence
+  if (
+    q.includes('কাবিন') || 
+    q.includes('কাবিননামা') || 
+    q.includes('নিকাহনামা') || 
+    (q.includes('কাগজ') && (q.includes('বিয়ে') || q.includes('বিয়ে') || cat.includes('family') || cat.includes('dower')))
+  ) {
+    return [
+      { label: 'বাবার বাড়িতে আছে', text: 'কাবিননামার কাগজটি বাবার বাড়িতে রাখা আছে' },
+      { label: 'স্বামীর কাছে আছে', text: 'কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি' },
+      { label: 'কাজী অফিসে আছে', text: 'রেজিস্ট্রি হয়েছিল, কাজী অফিসে কাবিনের নকল পাওয়া যাবে' },
+      { label: 'কোনো কাগজ নেই', text: 'আমাদের কোনো লিখিত কাবিননামা বা বিয়ের কাগজ নেই' }
+    ];
+  }
+
+  // 2. Dower / Dowry / Claim amount
+  if (
+    q.includes('দেনমোহর') || 
+    (q.includes('টাকা') && (q.includes('ধার্য') || q.includes('পরিমাণ') || q.includes('দাবি'))) ||
+    q.includes('কত টাকা') ||
+    q.includes('টাকার পরিমাণ')
+  ) {
+    return [
+      { label: '১ লাখ টাকা', text: 'দেনমোহর ধার্য করা হয়েছিল ১ লাখ টাকা' },
+      { label: '২ লাখ টাকা', text: 'দেনমোহর ধার্য করা হয়েছিল ২ লাখ টাকা' },
+      { label: '৫ লাখ টাকা', text: 'দেনমোহর ধার্য করা হয়েছিল ৫ লাখ টাকা' },
+      { label: 'দেখে বলতে হবে', text: 'কাবিননামার কাগজ দেখে সঠিক টাকার পরিমাণ বলতে পারব' }
+    ];
+  }
+
+  // 3. Marriage Timeline / Date / How many years
+  if (
+    (q.includes('বিয়ে') || q.includes('বিয়ে')) && 
+    (q.includes('সন') || q.includes('কবে') || q.includes('সাল') || q.includes('বছর') || q.includes('তারিখ') || q.includes('সময়') || q.includes('সময়'))
+  ) {
+    return [
+      { label: '১-২ বছর আগে', text: 'আনুমানিক ১ থেকে ২ বছর আগে আমাদের বিয়ে হয়েছে' },
+      { label: '৪-৫ বছর আগে', text: 'আনুমানিক ৪ থেকে ৫ বছর আগে বিয়ে হয়েছিল' },
+      { label: '১০+ বছর আগে', text: '১০ বছরেরও বেশি সময় আগে আমাদের বিয়ে হয়েছে' },
+      { label: 'কয়েক বছর হয়েছে', text: 'সঠিক সন মনে নেই, তবে কয়েক বছর হয়ে গেছে' }
+    ];
+  }
+
+  // 4. Wages / Unpaid Salary Amount
+  if (
+    (q.includes('মজুরি') || q.includes('বেতন') || q.includes('পাওনা')) && 
+    (q.includes('টাকা') || q.includes('কত') || q.includes('বকেয়া') || q.includes('বকেয়া'))
+  ) {
+    return [
+      { label: '১ মাসের বেতন', text: '১ মাসের পুরো মজুরি বা বেতন বকেয়া রয়েছে' },
+      { label: '২-৩ মাসের বেতন', text: 'প্রায় ২ থেকে ৩ মাসের বেতন এখনও বকেয়া আছে' },
+      { label: '৫-১০ হাজার টাকা', text: 'হিসাব অনুযায়ী প্রায় ৫ থেকে ১০ হাজার টাকা পাওনা আছে' },
+      { label: 'হিসাব অনুযায়ী পাওনা', text: 'কাজের চুক্তি অনুযায়ী এখনো পুরো টাকা পরিশোধ করা হয়নি' }
+    ];
+  }
+
+  // 5. Work Period / Duration / How long worked
+  if (
+    (q.includes('কাজ') || q.includes('চাকরি')) && 
+    (q.includes('কতদিন') || q.includes('কবে থেকে') || q.includes('কোন সময়') || q.includes('কত মাস') || q.includes('সময়') || q.includes('সময়'))
+  ) {
+    return [
+      { label: '১ মাস কাজ করেছি', text: 'গত ১ মাস ধরে আমি এই কাজটি করেছি' },
+      { label: '৬ মাস কাজ করেছি', text: 'টানা ৬ মাস ধরে সেখানে নিয়মিত কাজ করেছি' },
+      { label: '১ বছরের বেশি', text: '১ বছরেরও বেশি সময় ধরে সেখানে কাজ করেছি' },
+      { label: '১০-১৫ দিনের চুক্তি', text: '১০ থেকে ১৫ দিনের নির্দিষ্ট চুক্তিভিত্তিক কাজ ছিল' }
+    ];
+  }
+
+  // 6. Work Evidence / Attendance register / Slip / Witness / Sardar
+  if (
+    q.includes('হাজিরা') || 
+    q.includes('স্লিপ') || 
+    q.includes('সর্দার') || 
+    q.includes('সাক্ষী') || 
+    (q.includes('প্রমাণ') && cat === 'unpaid_wages')
+  ) {
+    return [
+      { label: 'হাজিরা খাতা/স্লিপ আছে', text: 'কাজের দৈনিক হাজিরা খাতা বা স্লিপের প্রমাণ রয়েছে' },
+      { label: 'সহকর্মী/সর্দার সাক্ষী', text: 'কাজের জায়গায় সহকর্মী ও সর্দার সরাসরি সাক্ষী আছেন' },
+      { label: 'মৌখিক চুক্তি ছিল', text: 'শুধুমাত্র মৌখিক চুক্তি হয়েছিল, লিখিত কোনো কাগজ নেই' },
+      { label: 'মালিকের তথ্য আছে', text: 'মালিক ও ঠিকাদারের পূর্ণ নাম এবং ফোন নম্বর জানা আছে' }
+    ];
+  }
+
+  // 7. Land Deeds / Khatian / Parcha / Boundary / Ownership
+  if (
+    q.includes('জমি') || 
+    q.includes('দলিল') || 
+    q.includes('খতিয়ান') || 
+    q.includes('পর্চা') || 
+    q.includes('সীমানা') || 
+    q.includes('দখল') || 
+    cat === 'land_dispute'
+  ) {
+    return [
+      { label: 'মূল দলিল আছে', text: 'জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে' },
+      { label: 'খতিয়ান/পর্চা আছে', text: 'জমির পর্চা ও খতিয়ানের সত্যায়িত কপি আছে' },
+      { label: 'দলিল প্রতিপক্ষের কাছে', text: 'জমির মূল কাগজপত্র বা দলিল প্রতিপক্ষের দখলে আটকে আছে' },
+      { label: 'শুধু দখল আছে', text: 'কাগজপত্র জটিল হলেও জমিটি বহু বছর ধরে আমাদের দখলে আছে' }
+    ];
+  }
+
+  // 8. Children / Maintenance / Child custody
+  if (
+    q.includes('সন্তান') || 
+    q.includes('বাচ্চা') || 
+    q.includes('ছেলে') || 
+    q.includes('মেয়ে') || 
+    q.includes('মেয়ে') || 
+    q.includes('হেফাজত')
+  ) {
+    return [
+      { label: '১টি সন্তান আছে', text: 'হ্যাঁ, আমাদের ১টি সন্তান আছে এবং সে আমার কাছেই থাকে' },
+      { label: '২টি সন্তান আছে', text: 'হ্যাঁ, আমাদের ২টি সন্তান আছে এবং তাদের দেখাশোনা আমি করছি' },
+      { label: 'কোনো সন্তান নেই', text: 'না, আমাদের কোনো সন্তান নেই' },
+      { label: 'বাচ্চার খরচ দেয় না', text: 'স্বামী সন্তান বা আমার কারও কোনো ভরণপোষণ বা খরচ দেয় না' }
+    ];
+  }
+
+  // 9. Current living place / Location / Father's house / Shelter
+  if (
+    q.includes('কোথায়') || 
+    q.includes('কোথায়') || 
+    q.includes('থাকেন') || 
+    q.includes('বসবাস') || 
+    q.includes('আলাদা') || 
+    q.includes('আশ্রয়') || 
+    q.includes('আশ্রয়')
+  ) {
+    return [
+      { label: 'বাবার বাড়িতে আছি', text: 'বাধ্য হয়ে বর্তমানে বাবার বাড়িতে এসে আশ্রয় নিয়েছি' },
+      { label: 'স্বামীর বাড়িতে আছি', text: 'এখনো স্বামীর বাড়িতেই আছি তবে আলাদা ঘরে থাকছি' },
+      { label: 'আত্মীয়ের বাসায়', text: 'বাড়ি থেকে বের করে দেওয়ায় আত্মীয়ের বাড়িতে আশ্রয় নিয়েছি' },
+      { label: 'নিরাপদ আশ্রয়ে আছি', text: 'বর্তমানে নিরাপদ জায়গায় আশ্রয় নিয়েছি' }
+    ];
+  }
+
+  // 10. Police / Salish / GD / Chairman / Case
+  if (
+    q.includes('থানা') || 
+    q.includes('জিডি') || 
+    q.includes('পুলিশ') || 
+    q.includes('অভিযোগ') || 
+    q.includes('মামলা') || 
+    q.includes('সালিশ') || 
+    q.includes('মেম্বার') || 
+    q.includes('চেয়ারম্যান')
+  ) {
+    return [
+      { label: 'সালিশ হয়েছিল', text: 'স্থানীয় মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল তবে মীমাংসা হয়নি' },
+      { label: 'থানায় জিডি করেছি', text: 'নিরাপত্তার স্বার্থে আগেই থানায় একটি জিডি করা হয়েছিল' },
+      { label: 'কোনো অভিযোগ করিনি', text: 'এখনো পর্যন্ত থানা বা আদালতে কোনো আনুষ্ঠানিক অভিযোগ করিনি' },
+      { label: 'সমাধান হয়নি', text: 'চেষ্টা করা হয়েছিল কিন্তু কোনো সুরাহা বা সমাধান হয়নি' }
+    ];
+  }
+
+  // 11. Disambiguation (Problem category clarification)
+  if (
+    q.includes('পারিবারিক') || 
+    q.includes('বকেয়া মজুরি') || 
+    q.includes('বকেয়া মজুরি') || 
+    q.includes('জমিজমা') || 
+    q.includes('মূল ধরণ') || 
+    q.includes('কোন ধরনের')
+  ) {
+    return [
+      { label: 'দেনমোহর ও ভরণপোষণ', text: 'এটি পারিবারিক দেনমোহর ও ভরণপোষণ সংক্রান্ত দাবি' },
+      { label: 'বকেয়া মজুরির দাবি', text: 'এটি কাজ করিয়ে পারিশ্রমিক বা বকেয়া মজুরি না পাওয়ার বিষয়' },
+      { label: 'জমিজমা সংক্রান্ত', text: 'এটি পৈতৃক জমিজমা বা সীমানা বেদখল সংক্রান্ত বিরোধ' },
+      { label: 'যৌতুক ও নির্যাতন', text: 'এটি যৌতুক দাবি ও পারিবারিক নির্যাতন সংক্রান্ত বিষয়' }
+    ];
+  }
+
+  // 12. Direct confirmation / Yes-No / Did it happen
+  if (
+    q.includes('কি না') || 
+    q.includes('কিনা') || 
+    q.includes('আছে কি') || 
+    q.includes('হয়েছে কি') || 
+    q.includes('হয়েছে কি না') || 
+    q.includes('পেয়েছেন কি') || 
+    q.includes('দিয়েছেন কি') || 
+    q.endsWith('?')
+  ) {
+    return [
+      { label: 'হ্যাঁ, আছে', text: 'হ্যাঁ, এই বিষয়ে প্রমাণ ও তথ্য আছে' },
+      { label: 'না, নেই', text: 'না, এই ধরনের কোনো প্রমাণ বা তথ্য নেই' },
+      { label: 'হ্যাঁ, হয়েছিল', text: 'হ্যাঁ, ঘটনাটি এইভাবেই হয়েছিল' },
+      { label: 'কিছুটা পেয়েছি', text: 'কিছু অংশ দেওয়া হয়েছিল, তবে পুরোটা এখনো বাকি আছে' }
+    ];
+  }
+
+  // 13. General / Safe fallback
+  return [
+    { label: 'হ্যাঁ, তথ্য আছে', text: 'হ্যাঁ, এই বিষয়ে প্রয়োজনীয় সব তথ্য আমার কাছে আছে' },
+    { label: 'কোনো কাগজ নেই', text: 'কোনো লিখিত প্রমাণ বা কাগজপত্র নেই, সবই মৌখিক' },
+    { label: 'মৌখিকভাবে হয়েছিল', text: 'সব আলোচনা ও চুক্তি মৌখিকভাবে হয়েছিল' },
+    { label: 'পরামর্শ নিতে চাই', text: 'এই পরিস্থিতিতে কীভাবে অগ্রসর হব সেই আইনি পরামর্শ চাই' }
+  ];
+}
+
 export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [step, setStep] = useState<'welcome' | 'recording' | 'follow_up' | 'continuation' | 'rights' | 'referral' | 'safety'>('welcome');
   const [textNarrative, setTextNarrative] = useState('');
@@ -41,6 +288,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [sessionState, setSessionState] = useState<any>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
+  const [suggestedReplies, setSuggestedReplies] = useState<string[]>([]);
   const [continuationPrompt, setContinuationPrompt] = useState<string | null>(null);
   const [safetyMessage, setSafetyMessage] = useState<string | null>(null);
   const [rightsExplanation, setRightsExplanation] = useState<string | null>(null);
@@ -382,6 +630,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       ]);
     }
     setTextNarrative('');
+    setSuggestedReplies([]);
 
     // Switch to conversational view immediately so the user sees live activity
     if (step === 'recording') {
@@ -491,6 +740,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
 
         // 3. Follow-up or Legal Rights Solution
+        if (finalData.suggested_replies && finalData.suggested_replies.length > 0) {
+          setSuggestedReplies(finalData.suggested_replies);
+        }
         if (finalData.follow_up_question) {
           setFollowUpQuestion(finalData.follow_up_question);
           setStep('follow_up');
@@ -544,6 +796,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           setContinuationPrompt(data.continuation_prompt);
           setStep('continuation');
         } else if (data.follow_up_question) {
+          if (data.suggested_replies && data.suggested_replies.length > 0) {
+            setSuggestedReplies(data.suggested_replies);
+          }
           setFollowUpQuestion(data.follow_up_question);
           setStep('follow_up');
         } else if (data.is_complete) {
@@ -1237,36 +1492,41 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           />
 
           {/* Quick Answer Shortcut Chips */}
-          <div className="quick-chips-wrapper">
-            <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>দ্রুত উত্তর:</span>
-            <button type="button" className="quick-chip" onClick={() => handleSendMessage("জানি না / মনে নেই")}>
-              মনে নেই
-            </button>
-            <button type="button" className="quick-chip" onClick={() => setTextNarrative("কোনো লিখিত প্রমাণ বা কাগজ নেই")}>
-              কোনো কাগজ নেই
-            </button>
-            <button type="button" className="quick-chip" onClick={() => setTextNarrative("হ্যাঁ, সব প্রমাণ আছে")}>
-              হ্যাঁ, আছে
-            </button>
-            <button type="button" className="quick-chip" onClick={() => setTextNarrative("না, এরকম কিছু হয়নি")}>
-              না, হয়নি
-            </button>
-          </div>
+          {(() => {
+            const activeQuestion = followUpQuestion || 
+              (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
+                ? chatHistory[chatHistory.length - 1].content 
+                : '');
+            const chips = getContextualChips(activeQuestion, suggestedReplies, sessionState?.category);
+            if (!chips || chips.length === 0) return null;
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '14px' }}>
-            <button
-              className="btn btn-outline"
-              style={{ flex: 1 }}
-              onClick={() => {
-                stopVoice();
-                handleSendMessage("জানি না / মনে নেই");
-              }}
-            >
-              জানি না / মনে নেই
-            </button>
+            return (
+              <div className="quick-chips-wrapper">
+                <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                  সহায়ক উত্তর:
+                </span>
+                {chips.map((chip, idx) => {
+                  const isSelected = textNarrative === chip.text;
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      className={`quick-chip ${isSelected ? 'active' : ''}`}
+                      onClick={() => setTextNarrative(chip.text)}
+                      title={chip.text}
+                    >
+                      {chip.label}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          <div style={{ marginTop: '14px' }}>
             <button
               className="btn btn-primary"
-              style={{ flex: 1.5 }}
+              style={{ width: '100%', padding: '13px', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               disabled={isLoading || !textNarrative.trim()}
               onClick={() => {
                 stopVoice();

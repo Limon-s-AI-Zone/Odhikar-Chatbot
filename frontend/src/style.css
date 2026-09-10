@@ -308,6 +308,13 @@ body {
   color: #0369a1;
 }
 
+.quick-chip.active {
+  background: #0284c7;
+  border-color: #0284c7;
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(2, 132, 199, 0.25);
+}
+
 /* Buttons */
 .btn {
   font-family: inherit;
