@@ -273,28 +273,69 @@ def estimate_tokens(text: str) -> int:
 # Lazy-loaded faster-whisper instance
 whisper_model = None
 
+BANGLA_WHISPER_PROMPT = "নিম্নলিখিত বিবরণটি সাধারণ মানুষের কথ্য বাংলা ভাষায় প্রতিলিপি: কাবিন, দেনমোহর, ভরণপোষণ, যৌতুক, বিবাহ, তালাক, বকেয়া মজুরি, জমিজমা সংক্রান্ত বিরোধ।"
+
 def get_whisper():
     global whisper_model
     if whisper_model is None:
         try:
             from faster_whisper import WhisperModel
-            whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+            whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
         except Exception as e:
             print(f"[Whisper Warning] Could not load local model: {e}")
             whisper_model = False
     return whisper_model
 
+def normalize_bangla_transcript(raw_text: str) -> str:
+    """
+    Cleans and restores raw/phonetic speech transcription into pure, standard Bengali script.
+    Fixes Devanagari, Urdu, or phonetic distortions caused by multilingual ASR models.
+    """
+    if not raw_text or not raw_text.strip():
+        return ""
+    
+    # Check if text already looks like pure Bengali without foreign scripts
+    has_foreign_script = any(('\u0900' <= c <= '\u097F') or ('\u0600' <= c <= '\u06FF') for c in raw_text)
+    bengali_chars = [c for c in raw_text if ('\u0980' <= c <= '\u09ff')]
+    alnum_chars = [c for c in raw_text if c.isalnum()]
+    
+    if not has_foreign_script and len(bengali_chars) > 6 and len(bengali_chars) / max(len(alnum_chars), 1) > 0.85:
+        return raw_text.strip()
+
+    try:
+        from langchain_core.messages import HumanMessage
+        prompt = (
+            "You are an expert Bengali audio transcriber and legal intake assistant. "
+            "The following text was transcribed from a voice recording of an everyday Bengali speaker, but contains phonetic, Devanagari, or transliteration errors:\n\n"
+            f"\"{raw_text}\"\n\n"
+            "Restore and output ONLY the clean, natural everyday Bengali sentence in pure Bengali script (বাংলা বর্ণমালা). "
+            "Output nothing else, no quotes, no explanations."
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        cleaned = response.content.strip().strip('"').strip("'")
+        return cleaned if cleaned else raw_text
+    except Exception as ex:
+        print(f"[Transcript Normalization Warning] {ex}")
+        return raw_text
+
+
 # ----------------- GRAPH NODES -----------------
 
 def transcribe_node(state: IntakeState) -> Dict[str, Any]:
-    """Transcribes audio using faster-whisper or preserves text input fallback."""
+    """Transcribes audio using faster-whisper and restores pure Bangla script."""
     audio_path = state.get("audio_path")
     if audio_path and os.path.exists(audio_path):
         model = get_whisper()
         if model:
             try:
-                segments, info = model.transcribe(audio_path, language="bn")
-                text = " ".join([seg.text for seg in segments]).strip()
+                segments, info = model.transcribe(
+                    audio_path, 
+                    language="bn", 
+                    task="transcribe",
+                    beam_size=5
+                )
+                raw_text = " ".join([seg.text for seg in segments]).strip()
+                text = normalize_bangla_transcript(raw_text)
                 prev_text = state.get("client_own_words", "")
                 combined = f"{prev_text}\n{text}".strip() if prev_text else text
                 return {

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import axios from 'axios';
 import { 
   AlertCircle, Clock, Check, Edit3, MessageSquare, 
-  User, Bot, ShieldCheck, ChevronDown, ChevronUp 
+  User, Bot, ShieldCheck, ChevronDown, ChevronUp,
+  Volume2, VolumeX
 } from 'lucide-react';
 
 interface ChatMessage {
@@ -44,6 +45,80 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
   const [editedDraft, setEditedDraft] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
   const [showFullChat, setShowFullChat] = useState(true);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [currentPlayingText, setCurrentPlayingText] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const stopVoice = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsPlayingAudio(false);
+    setCurrentPlayingText(null);
+  };
+
+  const playVoice = (text: string) => {
+    if (!text || !text.trim()) return;
+
+    if (isPlayingAudio && currentPlayingText === text) {
+      stopVoice();
+      return;
+    }
+
+    stopVoice();
+    setIsPlayingAudio(true);
+    setCurrentPlayingText(text);
+
+    try {
+      const audioUrl = `/api/tts?text=${encodeURIComponent(text.trim())}`;
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setIsPlayingAudio(false);
+        setCurrentPlayingText(null);
+        audioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        playBrowserSpeechFallback(text);
+      };
+
+      audio.play().catch(() => {
+        playBrowserSpeechFallback(text);
+      });
+    } catch {
+      playBrowserSpeechFallback(text);
+    }
+  };
+
+  const playBrowserSpeechFallback = (text: string) => {
+    if (!('speechSynthesis' in window)) {
+      setIsPlayingAudio(false);
+      setCurrentPlayingText(null);
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'bn-BD';
+    const voices = window.speechSynthesis.getVoices();
+    const bnVoice = voices.find((v) => v.lang.startsWith('bn'));
+    if (bnVoice) utterance.voice = bnVoice;
+    utterance.rate = 0.92;
+    utterance.onend = () => {
+      setIsPlayingAudio(false);
+      setCurrentPlayingText(null);
+    };
+    utterance.onerror = () => {
+      setIsPlayingAudio(false);
+      setCurrentPlayingText(null);
+    };
+    window.speechSynthesis.speak(utterance);
+  };
 
   const handleSelectCase = (c: CaseItem) => {
     setSelectedCase(c);
@@ -260,16 +335,45 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
                             fontSize: '13px',
                             maxWidth: '88%',
                             lineHeight: '1.5',
-                            whiteSpace: 'pre-wrap'
+                            whiteSpace: 'pre-wrap',
+                            display: 'flex',
+                            gap: '8px',
+                            alignItems: 'flex-start'
                           }}
                         >
-                          {msg.content}
+                          <div style={{ flex: 1 }}>{msg.content}</div>
+                          <button
+                            onClick={() => playVoice(msg.content)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              color: isPlayingAudio && currentPlayingText === msg.content ? '#e11d48' : '#0284c7',
+                              display: 'flex',
+                              alignItems: 'center',
+                              flexShrink: 0
+                            }}
+                            title="ভয়েস শুনুন"
+                          >
+                            {isPlayingAudio && currentPlayingText === msg.content ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                          </button>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div style={{ fontSize: '13px', color: '#64748b', fontStyle: 'italic' }}>
-                      "{selectedCase.original_transcript}"
+                    <div style={{ fontSize: '13px', color: '#64748b', fontStyle: 'italic', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>"{selectedCase.original_transcript}"</span>
+                      {selectedCase.original_transcript && (
+                        <button
+                          className="btn btn-outline"
+                          style={{ fontSize: '12px', padding: '3px 8px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          onClick={() => playVoice(selectedCase.original_transcript || '')}
+                        >
+                          {isPlayingAudio && currentPlayingText === selectedCase.original_transcript ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                          <span>{isPlayingAudio && currentPlayingText === selectedCase.original_transcript ? 'থামান' : 'শুনুন'}</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

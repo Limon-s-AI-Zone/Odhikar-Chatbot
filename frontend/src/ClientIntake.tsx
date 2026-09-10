@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import axios from 'axios';
 import { 
-  Mic, MicOff, Send, AlertTriangle, PhoneCall, 
+  Send, AlertTriangle, PhoneCall, 
   CheckCircle2, ChevronRight, RefreshCw, ArrowRightCircle,
-  MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle
+  MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
+  Volume2, VolumeX, FileText
 } from 'lucide-react';
 
 interface IntakeProps {
@@ -26,9 +27,6 @@ export interface LlmErrorInfo {
 
 export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [step, setStep] = useState<'welcome' | 'recording' | 'follow_up' | 'continuation' | 'rights' | 'referral' | 'safety'>('welcome');
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordSeconds, setRecordSeconds] = useState(0);
-  const [inputMode, setInputMode] = useState<'voice' | 'text'>('voice');
   const [textNarrative, setTextNarrative] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -49,34 +47,130 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [referralInfo, setReferralInfo] = useState<{ clinic: string; slot: string } | null>(null);
   const [caseId, setCaseId] = useState<number | null>(null);
 
-  // Simulated recording timer
-  const handleStartRecording = () => {
-    setIsRecording(true);
-    setRecordSeconds(0);
-    const interval = setInterval(() => {
-      setRecordSeconds((prev) => {
-        if (prev >= 30) {
-          clearInterval(interval);
-          return 30;
-        }
-        return prev + 1;
-      });
-    }, 1000);
+  // Audio Playback / Voice Output (TTS) State
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [currentPlayingText, setCurrentPlayingText] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const stopVoice = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsPlayingAudio(false);
+    setIsLoadingAudio(false);
+    setCurrentPlayingText(null);
   };
 
-  const handleStopRecording = () => {
-    setIsRecording(false);
-    if (!textNarrative) {
-      setTextNarrative(
-        "চার বছর আগে আমার বিয়ে হয়েছে। বিয়ের পর থেকে ওরা আমার বাবার কাছে টাকা চাইতে থাকে। বাবা জমি বিক্রি করে কিছু টাকা দিয়েছেন, তারপরও ওদের চাওয়া শেষ হয় না। কাবিনের টাকা আজও পাইনি। এখন বলছে বাড়ি ছেড়ে চলে যেতে। আমার একটা ছোট মেয়ে আছে, আমি কোথায় যাব?"
-      );
+  const playVoice = async (text: string) => {
+    if (!text || !text.trim()) return;
+
+    // Toggle stop if already playing or loading the same text
+    if ((isPlayingAudio || isLoadingAudio) && currentPlayingText === text) {
+      stopVoice();
+      return;
     }
+
+    stopVoice();
+    setIsLoadingAudio(true);
+    setCurrentPlayingText(text);
+
+    try {
+      // 1. Prepare stream via POST to avoid HTTP 431 URL length limits on long text
+      const res = await axios.post('/api/tts/prepare', { text: text.trim() });
+      const streamUrl = res.data.audio_url;
+
+      const audio = new Audio(streamUrl);
+      audioRef.current = audio;
+
+      audio.onplay = () => {
+        setIsLoadingAudio(false);
+        setIsPlayingAudio(true);
+      };
+
+      audio.onended = () => {
+        setIsPlayingAudio(false);
+        setIsLoadingAudio(false);
+        setCurrentPlayingText(null);
+        audioRef.current = null;
+      };
+
+      audio.onerror = (e) => {
+        console.warn('Audio streaming failed, trying fallback:', e);
+        setIsLoadingAudio(false);
+        playBrowserSpeechFallback(text);
+      };
+
+      await audio.play();
+    } catch (err) {
+      console.warn('TTS prepare failed, falling back to direct GET:', err);
+      try {
+        const audioUrl = `/api/tts?text=${encodeURIComponent(text.trim().slice(0, 500))}`;
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+
+        audio.onplay = () => {
+          setIsLoadingAudio(false);
+          setIsPlayingAudio(true);
+        };
+
+        audio.onended = () => {
+          setIsPlayingAudio(false);
+          setIsLoadingAudio(false);
+          setCurrentPlayingText(null);
+          audioRef.current = null;
+        };
+
+        audio.onerror = () => {
+          setIsLoadingAudio(false);
+          playBrowserSpeechFallback(text);
+        };
+
+        await audio.play();
+      } catch {
+        setIsLoadingAudio(false);
+        playBrowserSpeechFallback(text);
+      }
+    }
+  };
+
+  const playBrowserSpeechFallback = (text: string) => {
+    if (!('speechSynthesis' in window)) {
+      setIsPlayingAudio(false);
+      setIsLoadingAudio(false);
+      setCurrentPlayingText(null);
+      return;
+    }
+    const cleanText = text.replace(/[*#_`]/g, '').slice(0, 300);
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = 'bn-BD';
+    const voices = window.speechSynthesis.getVoices();
+    const bnVoice = voices.find((v) => v.lang.startsWith('bn'));
+    if (bnVoice) utterance.voice = bnVoice;
+    utterance.rate = 0.92;
+    utterance.onend = () => {
+      setIsPlayingAudio(false);
+      setIsLoadingAudio(false);
+      setCurrentPlayingText(null);
+    };
+    utterance.onerror = () => {
+      setIsPlayingAudio(false);
+      setIsLoadingAudio(false);
+      setCurrentPlayingText(null);
+    };
+    window.speechSynthesis.speak(utterance);
   };
 
   const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false) => {
     const message = textToSend !== undefined ? textToSend : textNarrative;
     if (!message.trim() && !isContinuation) return;
 
+    stopVoice();
     setLlmError(null);
     setLastAttemptedMessage(message || "");
     setIsLoading(true);
@@ -464,9 +558,33 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN: SAFETY BREAKOUT */}
       {step === 'safety' && (
         <div className="card" style={{ border: '2px solid #e11d48', backgroundColor: '#fff1f2' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#e11d48', marginBottom: '16px' }}>
-            <AlertTriangle size={32} />
-            <h2 style={{ fontSize: '22px', fontWeight: '700' }}>জরুরি সহায়তা · BREAK-OUT</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#e11d48' }}>
+              <AlertTriangle size={32} />
+              <h2 style={{ fontSize: '22px', fontWeight: '700', margin: 0 }}>জরুরি সহায়তা · BREAK-OUT</h2>
+            </div>
+            <button
+              className="btn btn-outline"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '13px',
+                padding: '6px 12px',
+                borderColor: '#fda4af',
+                color: '#be123c',
+                backgroundColor: 'white'
+              }}
+              onClick={() => playVoice(safetyMessage || "আপনি এখনই বিপদে আছেন বলে মনে হচ্ছে। আপনার নিরাপত্তা সবার আগে।")}
+            >
+              {isLoadingAudio && currentPlayingText?.includes(safetyMessage || '') ? (
+                <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
+              ) : isPlayingAudio && currentPlayingText?.includes(safetyMessage || '') ? (
+                <><VolumeX size={16} /> <span>থামান</span></>
+              ) : (
+                <><Volume2 size={16} /> <span>শুনুন</span></>
+              )}
+            </button>
           </div>
           <p style={{ fontSize: '16px', lineHeight: '1.7', marginBottom: '20px', color: '#881337', whiteSpace: 'pre-line' }}>
             {safetyMessage || "আপনি এখনই বিপদে আছেন বলে মনে হচ্ছে। আপনার নিরাপত্তা সবার আগে।"}
@@ -493,9 +611,35 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN: TOKEN BUDGET CONTINUATION DIALOG */}
       {step === 'continuation' && (
         <div className="card" style={{ border: '2px solid #0284c7', backgroundColor: '#f0f9ff' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#0284c7', marginBottom: '16px' }}>
-            <ArrowRightCircle size={32} />
-            <h2 style={{ fontSize: '20px', fontWeight: '700' }}>টোকেন ও বিস্তারিত বিশ্লেষণ সম্মতি</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#0284c7' }}>
+              <ArrowRightCircle size={32} />
+              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>টোকেন ও বিস্তারিত বিশ্লেষণ সম্মতি</h2>
+            </div>
+            {continuationPrompt && (
+              <button
+                className="btn btn-outline"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '13px',
+                  padding: '6px 12px',
+                  borderColor: '#bae6fd',
+                  color: '#0284c7',
+                  backgroundColor: 'white'
+                }}
+                onClick={() => playVoice(continuationPrompt)}
+              >
+                {isLoadingAudio && currentPlayingText === continuationPrompt ? (
+                  <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
+                ) : isPlayingAudio && currentPlayingText === continuationPrompt ? (
+                  <><VolumeX size={16} /> <span>থামান</span></>
+                ) : (
+                  <><Volume2 size={16} /> <span>শুনুন</span></>
+                )}
+              </button>
+            )}
           </div>
           <p style={{ fontSize: '15px', lineHeight: '1.7', marginBottom: '20px', color: '#0c4a6e' }}>
             {continuationPrompt}
@@ -505,6 +649,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               className="btn btn-outline"
               style={{ flex: 1 }}
               onClick={() => {
+                stopVoice();
                 setStep('recording');
                 setTextNarrative('');
               }}
@@ -515,7 +660,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               className="btn btn-primary"
               style={{ flex: 1.5, backgroundColor: '#0284c7' }}
               disabled={isLoading}
-              onClick={() => handleSendMessage("", true)}
+              onClick={() => {
+                stopVoice();
+                handleSendMessage("", true);
+              }}
             >
               {isLoading ? <RefreshCw className="animate-spin" size={18} /> : 'হ্যাঁ, পরবর্তী টোকেন সম্পন্ন করুন'}
             </button>
@@ -526,99 +674,94 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN 1: WELCOME */}
       {step === 'welcome' && (
         <div className="card" style={{ textAlign: 'center', padding: '40px 24px' }}>
-          <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#ffe4e6', color: '#e11d48', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
-            <Mic size={32} />
+          <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+            <FileText size={32} />
           </div>
           <h1 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '12px' }}>অধিকার (Odhikar)</h1>
           <p style={{ fontSize: '16px', color: '#475569', marginBottom: '24px', lineHeight: '1.6' }}>
             এটি একটি স্বয়ংক্রিয় আইন সহায়তা সেবা — কোনো আইনজীবী নয়।<br />
-            আপনার কথা রেকর্ড করা হবে। আপনি কি বলতে সম্মত আছেন?
+            আপনার আইনি সমস্যা বা ঘটনার বিবরণ নিজের ভাষায় লিখুন।
           </p>
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-            <button className="btn btn-primary" style={{ padding: '12px 28px', fontSize: '16px' }} onClick={() => setStep('recording')}>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-outline"
+              style={{
+                padding: '12px 20px',
+                fontSize: '15px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? '#e11d48' : '#0284c7',
+                color: (isPlayingAudio || isLoadingAudio) && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? '#e11d48' : '#0284c7'
+              }}
+              onClick={() => playVoice('অধিকার। এটি একটি স্বয়ংক্রিয় আইন সহায়তা সেবা — কোনো আইনজীবী নয়। আপনার আইনি সমস্যা বা ঘটনার বিবরণ নিজের ভাষায় লিখুন।')}
+            >
+              {isLoadingAudio && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? (
+                <><RefreshCw className="animate-spin" size={18} /> <span>প্রস্তুত হচ্ছে...</span></>
+              ) : isPlayingAudio && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? (
+                <><VolumeX size={18} /> <span>থামান</span></>
+              ) : (
+                <><Volume2 size={18} /> <span>শুনুন (Voice)</span></>
+              )}
+            </button>
+            <button
+              className="btn btn-primary"
+              style={{ padding: '12px 28px', fontSize: '16px' }}
+              onClick={() => {
+                stopVoice();
+                setStep('recording');
+              }}
+            >
               হ্যাঁ, শুরু করুন
             </button>
           </div>
         </div>
       )}
 
-      {/* SCREEN 2: RECORDING / INTAKE */}
+      {/* SCREEN 2: INTAKE / NARRATIVE INPUT */}
       {step === 'recording' && (
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '600' }}>যা ঘটেছে, নিজের ভাষায় বলুন</h2>
-            <button 
-              className="btn btn-outline" 
-              style={{ fontSize: '12px', padding: '4px 10px' }}
-              onClick={() => setInputMode(inputMode === 'voice' ? 'text' : 'voice')}
-            >
-              {inputMode === 'voice' ? 'কিবোর্ড দিয়ে লিখুন' : 'ভয়েস রেকর্ডার'}
-            </button>
+          <div style={{ marginBottom: '16px' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '6px' }}>যা ঘটেছে, নিজের ভাষায় লিখুন</h2>
+            <p style={{ fontSize: '13px', color: '#64748b', margin: 0 }}>
+              আপনার আইনি সমস্যা বা ঘটনার বিবরণ নিচে বিস্তারিতভাবে বাংলায় লিখুন:
+            </p>
           </div>
 
-          {inputMode === 'voice' ? (
-            <div style={{ textAlign: 'center', padding: '30px 10px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1', marginBottom: '20px' }}>
-              <button
-                onClick={isRecording ? handleStopRecording : handleStartRecording}
-                style={{
-                  width: '80px',
-                  height: '80px',
-                  borderRadius: '50%',
-                  backgroundColor: isRecording ? '#e11d48' : '#d92d20',
-                  color: 'white',
-                  border: 'none',
-                  cursor: 'pointer',
-                  boxShadow: isRecording ? '0 0 0 10px rgba(225, 29, 72, 0.2)' : 'none',
-                  transition: 'all 0.3s'
-                }}
-              >
-                {isRecording ? <MicOff size={36} /> : <Mic size={36} />}
-              </button>
-              <div style={{ marginTop: '16px', fontSize: '15px', fontWeight: '600', color: isRecording ? '#e11d48' : '#64748b' }}>
-                {isRecording ? `রেকর্ড হচ্ছে... (00:${recordSeconds.toString().padStart(2, '0')})` : 'রেকর্ড করতে বাটনে চাপ দিন'}
-              </div>
-            </div>
-          ) : (
-            <textarea
-              rows={4}
-              value={textNarrative}
-              onChange={(e) => setTextNarrative(e.target.value)}
-              placeholder="আপনার সমস্যা বিস্তারিতভাবে বাংলায় লিখুন..."
-              style={{
-                width: '100%',
-                padding: '12px',
-                borderRadius: '8px',
-                border: '1px solid #cbd5e1',
-                fontFamily: 'inherit',
-                fontSize: '15px',
-                marginBottom: '16px'
-              }}
-            />
-          )}
-
-          {textNarrative && (
-            <div style={{ backgroundColor: '#f1f5f9', padding: '12px', borderRadius: '8px', marginBottom: '16px', fontSize: '14px' }}>
-              <div style={{ fontWeight: '600', color: '#475569', marginBottom: '4px' }}>রেকর্ডকৃত বার্তা:</div>
-              <div>{textNarrative}</div>
-            </div>
-          )}
+          <textarea
+            rows={5}
+            value={textNarrative}
+            onChange={(e) => setTextNarrative(e.target.value)}
+            placeholder="আপনার সমস্যা বা ঘটনার বিবরণ বিস্তারিতভাবে বাংলায় লিখুন..."
+            style={{
+              width: '100%',
+              padding: '14px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              fontFamily: 'inherit',
+              fontSize: '15px',
+              lineHeight: '1.6',
+              marginBottom: '16px',
+              boxSizing: 'border-box'
+            }}
+          />
 
           {/* Demo Scenario Selectors */}
-          <div style={{ marginBottom: '20px', padding: '10px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+          <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
             <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '8px' }}>
-              সরাসরি ডেমো পরিস্থিতি সিলেক্ট করুন:
+              অথবা সরাসরি ডেমো পরিস্থিতি বাছাই করুন:
             </span>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '4px 8px' }} onClick={() => handleLoadSample('dower')}>
+              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => handleLoadSample('dower')}>
                 দেনমোহর ও ভরণপোষণ (N1)
               </button>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '4px 8px' }} onClick={() => handleLoadSample('wages')}>
+              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => handleLoadSample('wages')}>
                 বকেয়া মজুরি (N4)
               </button>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '4px 8px', borderColor: '#fca5a5', color: '#b91c1c' }} onClick={() => handleLoadSample('violence')}>
+              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px', borderColor: '#fca5a5', color: '#b91c1c' }} onClick={() => handleLoadSample('violence')}>
                 সহিংসতা ব্রেক-আউট (N6)
               </button>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '4px 8px', borderColor: '#bae6fd', color: '#0284c7' }} onClick={() => handleLoadSample('long')}>
+              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px', borderColor: '#bae6fd', color: '#0284c7' }} onClick={() => handleLoadSample('long')}>
                 দীর্ঘ বিবরণ (টোকেন কন্টিনিউয়েশন টেস্ট)
               </button>
             </div>
@@ -626,8 +769,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
           <button
             className="btn btn-primary"
-            style={{ width: '100%', padding: '12px' }}
-            disabled={isLoading || (!textNarrative && !isRecording)}
+            style={{ width: '100%', padding: '12px', fontSize: '15px' }}
+            disabled={isLoading || !textNarrative.trim()}
             onClick={() => handleSendMessage()}
           >
             {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Send size={18} />}
@@ -667,12 +810,37 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                       }}
                     >
                       {msg.content ? (
-                        <span>
-                          {msg.content}
-                          {isStreaming && idx === chatHistory.length - 1 && msg.role === 'assistant' && (
-                            <span style={{ display: 'inline-block', width: '6px', height: '14px', backgroundColor: '#0284c7', marginLeft: '4px', verticalAlign: 'middle', animation: 'pulse 1s infinite' }}></span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                          <span>
+                            {msg.content}
+                            {isStreaming && idx === chatHistory.length - 1 && msg.role === 'assistant' && (
+                              <span style={{ display: 'inline-block', width: '6px', height: '14px', backgroundColor: '#0284c7', marginLeft: '4px', verticalAlign: 'middle', animation: 'pulse 1s infinite' }}></span>
+                            )}
+                          </span>
+                          {msg.role === 'assistant' && msg.content && !isStreaming && (
+                            <button
+                              onClick={() => playVoice(msg.content)}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                padding: '2px',
+                                color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === msg.content ? '#e11d48' : '#0284c7',
+                                display: 'flex',
+                                alignItems: 'center'
+                              }}
+                              title="বার্তাটি শুনুন"
+                            >
+                              {isLoadingAudio && currentPlayingText === msg.content ? (
+                                <RefreshCw className="animate-spin" size={14} />
+                              ) : isPlayingAudio && currentPlayingText === msg.content ? (
+                                <VolumeX size={14} />
+                              ) : (
+                                <Volume2 size={14} />
+                              )}
+                            </button>
                           )}
-                        </span>
+                        </div>
                       ) : (
                         <span style={{ color: '#64748b', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <RefreshCw className="animate-spin" size={14} /> {streamStatus || 'আইনি তথ্য বিশ্লেষণ করা হচ্ছে...'}
@@ -685,18 +853,47 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             </div>
           )}
 
-          <div style={{ fontSize: '13px', color: '#0284c7', fontWeight: '600', marginBottom: '8px' }}>
-            অতিরিক্ত তথ্য প্রয়োজন (Follow-up)
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ fontSize: '13px', color: '#0284c7', fontWeight: '600', marginBottom: '8px' }}>
+                অতিরিক্ত তথ্য প্রয়োজন (Follow-up)
+              </div>
+              <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1e293b', margin: 0 }}>
+                {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
+              </h2>
+            </div>
+            {followUpQuestion && (
+              <button
+                className="btn btn-outline"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '13px',
+                  padding: '6px 12px',
+                  flexShrink: 0,
+                  borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
+                  color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
+                }}
+                onClick={() => playVoice(followUpQuestion)}
+                title="প্রশ্নটি শুনুন"
+              >
+                {isLoadingAudio && currentPlayingText === followUpQuestion ? (
+                  <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
+                ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
+                  <><VolumeX size={16} /> <span>থামান</span></>
+                ) : (
+                  <><Volume2 size={16} /> <span>শুনুন</span></>
+                )}
+              </button>
+            )}
           </div>
-          <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: '#1e293b' }}>
-            {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
-          </h2>
 
           <textarea
             rows={3}
             value={textNarrative}
             onChange={(e) => setTextNarrative(e.target.value)}
-            placeholder="উত্তর এখানে বলুন বা লিখুন..."
+            placeholder="উত্তর এখানে লিখুন..."
             style={{
               width: '100%',
               padding: '12px',
@@ -712,7 +909,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             <button
               className="btn btn-outline"
               style={{ flex: 1 }}
-              onClick={() => handleSendMessage("জানি না / মনে নেই")}
+              onClick={() => {
+                stopVoice();
+                handleSendMessage("জানি না / মনে নেই");
+              }}
             >
               জানি না / মনে নেই
             </button>
@@ -720,7 +920,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               className="btn btn-primary"
               style={{ flex: 1 }}
               disabled={isLoading || !textNarrative.trim()}
-              onClick={() => handleSendMessage()}
+              onClick={() => {
+                stopVoice();
+                handleSendMessage();
+              }}
             >
               {isLoading ? <RefreshCw className="animate-spin" size={18} /> : 'উত্তর দিন'}
             </button>
@@ -731,16 +934,41 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN 4: YOUR RIGHTS */}
       {step === 'rights' && (
         <div className="card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0e7090', marginBottom: '12px' }}>
-            <CheckCircle2 size={24} />
-            <h2 style={{ fontSize: '20px', fontWeight: '700' }}>আপনার আইনি অধিকার ও পথ</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0e7090' }}>
+              <CheckCircle2 size={24} />
+              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>আপনার আইনি অধিকার ও পথ</h2>
+            </div>
+            {rightsExplanation && (
+              <button
+                className="btn btn-outline"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '13px',
+                  padding: '6px 14px',
+                  borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#0e7090',
+                  color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#0e7090'
+                }}
+                onClick={() => playVoice(rightsExplanation)}
+              >
+                {isLoadingAudio && currentPlayingText === rightsExplanation ? (
+                  <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
+                ) : isPlayingAudio && currentPlayingText === rightsExplanation ? (
+                  <><VolumeX size={16} /> <span>থামান</span></>
+                ) : (
+                  <><Volume2 size={16} /> <span>আবার শুনুন (Listen)</span></>
+                )}
+              </button>
+            )}
           </div>
           <p style={{ fontSize: '15px', lineHeight: '1.7', whiteSpace: 'pre-line', color: '#334155', marginBottom: '24px' }}>
             {rightsExplanation}
           </p>
 
           <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" onClick={() => setStep('referral')}>
+            <button className="btn btn-primary" onClick={() => { stopVoice(); setStep('referral'); }}>
               এগিয়ে যান (ক্লিনিক ও আবেদন) <ChevronRight size={18} />
             </button>
           </div>
@@ -750,7 +978,31 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN 5: REFERRAL & DRAFT COMPLAINT */}
       {step === 'referral' && (
         <div className="card">
-          <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '16px' }}>নিকটতম আইন সহায়তা কেন্দ্র</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+            <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>নিকটতম আইন সহায়তা কেন্দ্র</h2>
+            <button
+              className="btn btn-outline"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '13px',
+                padding: '6px 12px',
+                borderColor: '#bbf7d0',
+                color: '#15803d',
+                backgroundColor: 'white'
+              }}
+              onClick={() => playVoice(`আপনার নিকটতম আইন সহায়তা কেন্দ্র ${referralInfo?.clinic || ''}। নির্ধারিত সাক্ষাৎ ${referralInfo?.slot || ''}। আপনার তথ্যের ভিত্তিতে প্রাথমিক সারসংক্ষেপ ও খসড়া তৈরি করে প্যারালেগ্যাল বরাবর পাঠানো হয়েছে।`)}
+            >
+              {isLoadingAudio && currentPlayingText?.includes('নিকটতম আইন সহায়তা কেন্দ্র') ? (
+                <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
+              ) : isPlayingAudio && currentPlayingText?.includes('নিকটতম আইন সহায়তা কেন্দ্র') ? (
+                <><VolumeX size={16} /> <span>থামান</span></>
+              ) : (
+                <><Volume2 size={16} /> <span>শুনুন</span></>
+              )}
+            </button>
+          </div>
           <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px', borderRadius: '8px', marginBottom: '20px' }}>
             <div style={{ fontWeight: '700', fontSize: '17px', color: '#166534', marginBottom: '4px' }}>
               {referralInfo?.clinic}
@@ -774,6 +1026,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             className="btn btn-primary" 
             style={{ width: '100%' }}
             onClick={() => {
+              stopVoice();
               setStep('welcome');
               setTextNarrative('');
               setSessionState(null);

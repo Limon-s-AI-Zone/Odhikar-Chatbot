@@ -3,12 +3,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import shutil
 import json
 import asyncio
+import io
+import edge_tts
+import uuid
+import time
+import re
+from pydantic import BaseModel
 
 import models
 import schemas
@@ -325,10 +331,8 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-
-# Audio upload endpoint
+# Audio upload endpoint (Speech-to-Text & Intake)
 @app.post("/intake/audio")
 async def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
     os.makedirs("uploads", exist_ok=True)
@@ -338,3 +342,111 @@ async def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_d
     
     result = ai_pipeline.run_intake(transcript="", audio_path=file_location)
     return result
+
+
+# In-memory TTS store for audio streaming tokens
+tts_store: dict = {}
+
+def clean_markdown_for_tts(text: str) -> str:
+    if not text:
+        return ""
+    # Strip markdown bold, italics, headers, code, bullet marks
+    t = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    t = re.sub(r'\*([^*]+)\*', r'\1', t)
+    t = re.sub(r'__([^_]+)__', r'\1', t)
+    t = re.sub(r'_([^_]+)_', r'\1', t)
+    t = re.sub(r'#+\s*', '', t)
+    t = re.sub(r'^\s*[-*•]\s+', '', t, flags=re.MULTILINE)
+    t = re.sub(r'[`~]', '', t)
+    # Replace newlines with Bengali danda pause for smooth reading
+    t = re.sub(r'[\r\n]+', '। ', t)
+    t = re.sub(r'\s*।\s*।+', '।', t)
+    t = re.sub(r'[\t]+', ' ', t)
+    t = re.sub(r'\s+', ' ', t)
+    return t.strip()
+
+class TTSPrepareRequest(BaseModel):
+    text: str
+
+@app.post("/tts/prepare")
+async def prepare_tts(req: TTSPrepareRequest):
+    """
+    Stores text in-memory and returns a streaming URL with a temporary token.
+    This completely avoids HTTP 431 'Request Header Fields Too Large' errors
+    when passing long Bengali legal text through browser requests and proxies.
+    """
+    raw_text = req.text.strip() if req.text else ""
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    
+    clean_text = clean_markdown_for_tts(raw_text)
+    token = str(uuid.uuid4())
+    
+    # Cleanup tokens older than 15 minutes
+    now = time.time()
+    for k in list(tts_store.keys()):
+        if now - tts_store[k].get("created_at", 0) > 900:
+            tts_store.pop(k, None)
+            
+    tts_store[token] = {"text": clean_text, "created_at": now}
+    return {"token": token, "audio_url": f"/api/tts/stream/{token}"}
+
+@app.get("/tts/stream/{token}")
+async def stream_tts_by_token(token: str):
+    """
+    Streams neural audio chunk-by-chunk using edge-tts.
+    HTML5 Audio starts playing immediately (< 1s) as chunks arrive,
+    without waiting for the full multi-minute audio file to generate.
+    """
+    entry = tts_store.get(token)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Audio session not found or expired")
+    
+    clean_text = entry["text"]
+
+    async def audio_generator():
+        try:
+            communicate = edge_tts.Communicate(clean_text, voice="bn-BD-NabanitaNeural")
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    yield chunk["data"]
+        except Exception as e:
+            print(f"[TTS Stream Error] {e}")
+
+    return StreamingResponse(
+        audio_generator(),
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition": "inline; filename=speech.mp3",
+            "Cache-Control": "no-cache"
+        }
+    )
+
+# Text-to-Speech (TTS) endpoint (Direct GET fallback)
+@app.get("/tts")
+async def get_tts_audio(text: str):
+    """
+    Direct GET endpoint for short texts or fallback callers. Uses StreamingResponse.
+    """
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    
+    cleaned_text = clean_markdown_for_tts(text)
+    
+    async def audio_generator():
+        try:
+            communicate = edge_tts.Communicate(cleaned_text, voice="bn-BD-NabanitaNeural")
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    yield chunk["data"]
+        except Exception as e:
+            print(f"[TTS Error] {e}")
+
+    return StreamingResponse(
+        audio_generator(),
+        media_type="audio/mpeg",
+        headers={
+            "Content-Disposition": "inline; filename=speech.mp3",
+            "Cache-Control": "no-cache"
+        }
+    )

@@ -10,8 +10,9 @@ langchain-core>=0.3.0
 langchain-openai>=0.2.0
 langchain-google-vertexai>=2.0.0
 
-# Speech-to-Text (ASR)
+# Speech-to-Text (ASR) & Text-to-Speech (TTS)
 faster-whisper>=1.0.0
+edge-tts>=7.2.0
 
 # Utilities
 requests>=2.31.0
