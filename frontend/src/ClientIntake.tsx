@@ -4,7 +4,8 @@ import {
   Send, AlertTriangle, PhoneCall, 
   CheckCircle2, ChevronRight, RefreshCw, ArrowRightCircle,
   MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
-  Volume2, VolumeX, FileText, Mic, Square, Radio
+  Volume2, VolumeX, FileText, Mic, Square, Radio,
+  Shield, Trash2, Copy, Check, Sparkles, Scale, HeartHandshake
 } from 'lucide-react';
 
 interface IntakeProps {
@@ -46,6 +47,14 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [draftComplaint, setDraftComplaint] = useState<string | null>(null);
   const [referralInfo, setReferralInfo] = useState<{ clinic: string; slot: string } | null>(null);
   const [caseId, setCaseId] = useState<number | null>(null);
+  const [copiedDraft, setCopiedDraft] = useState(false);
+
+  const handleCopyDraft = (text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedDraft(true);
+    setTimeout(() => setCopiedDraft(false), 2500);
+  };
 
   // Audio Playback / Voice Output (TTS) State
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
@@ -625,7 +634,32 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   };
 
   return (
-    <div style={{ maxWidth: '640px', margin: '0 auto' }}>
+    <div style={{ maxWidth: '680px', margin: '0 auto' }}>
+      {/* STEP PROGRESS WIZARD */}
+      {step !== 'safety' && (
+        <div className="stepper-container">
+          <div className={`step-item ${step === 'welcome' ? 'active' : 'completed'}`}>
+            <div className="step-circle">{step === 'welcome' ? '১' : <Check size={14} />}</div>
+            <span className="step-label">স্বাগতম</span>
+          </div>
+          <div className={`step-line ${['recording', 'follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
+          <div className={`step-item ${step === 'recording' ? 'active' : ['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+            <div className="step-circle">{['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? <Check size={14} /> : '২'}</div>
+            <span className="step-label">বিবরণ</span>
+          </div>
+          <div className={`step-line ${['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
+          <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? 'active' : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+            <div className="step-circle">{['rights', 'referral'].includes(step) ? <Check size={14} /> : '৩'}</div>
+            <span className="step-label">প্রশ্নোত্তর</span>
+          </div>
+          <div className={`step-line ${['rights', 'referral'].includes(step) ? 'active' : ''}`} />
+          <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
+            <div className="step-circle">৪</div>
+            <span className="step-label">পরামর্শ ও ক্লিনিক</span>
+          </div>
+        </div>
+      )}
+
       {/* GLOBAL LLM ERROR BANNER (401, Disconnection, Token / Rate Limits) */}
       {llmError && (
         <div 
@@ -860,46 +894,71 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
       {/* SCREEN 1: WELCOME */}
       {step === 'welcome' && (
-        <div className="card" style={{ textAlign: 'center', padding: '40px 24px' }}>
-          <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
-            <FileText size={32} />
+        <div className="card" style={{ textAlign: 'center', padding: '44px 28px' }}>
+          <div style={{ width: '72px', height: '72px', borderRadius: '50%', backgroundColor: '#fef3f2', color: '#d92d20', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', boxShadow: '0 4px 14px rgba(217, 45, 32, 0.15)' }}>
+            <Scale size={36} />
           </div>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', marginBottom: '12px' }}>অধিকার (Odhikar)</h1>
-          <p style={{ fontSize: '16px', color: '#475569', marginBottom: '24px', lineHeight: '1.6' }}>
-            এটি একটি স্বয়ংক্রিয় আইন সহায়তা সেবা — কোনো আইনজীবী নয়।<br />
-            আপনার আইনি সমস্যা বা ঘটনার বিবরণ নিজের ভাষায় লিখুন।
+          <div style={{ display: 'inline-block', backgroundColor: '#e0f2fe', color: '#0369a1', fontSize: '12px', fontWeight: '700', padding: '4px 14px', borderRadius: '20px', marginBottom: '14px' }}>
+            ব্র্যাক মানবাধিকার ও আইনি সহায়তা
+          </div>
+          <h1 style={{ fontSize: '26px', fontWeight: '800', marginBottom: '12px', color: '#0f172a' }}>
+            অধিকার (Odhikar) — এআই প্যারালেগ্যাল
+          </h1>
+          <p style={{ fontSize: '16px', color: '#475569', marginBottom: '28px', lineHeight: '1.7', maxWidth: '500px', margin: '0 auto 28px' }}>
+            আইনি সমস্যা নিয়ে দুশ্চিন্তা করবেন না। আপনার সাথে যা ঘটেছে, কোনো কঠিন শব্দ ছাড়াই নিজের স্বাভাবিক মুখের ভাষায় বলুন।
           </p>
+
+          {/* 3 Trust Pillar Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '32px', textAlign: 'left' }}>
+            <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ color: '#0284c7', marginBottom: '8px' }}><Mic size={22} /></div>
+              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>ভয়েস টাইপিং</div>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>লিখতে না পারলে মুখে বাংলায় কথা বলুন</div>
+            </div>
+            <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ color: '#16a34a', marginBottom: '8px' }}><Shield size={22} /></div>
+              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>১০০% গোপনীয়</div>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>আপনার পরিচয় ও বিবরণ সুরক্ষিত থাকবে</div>
+            </div>
+            <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div style={{ color: '#d92d20', marginBottom: '8px' }}><HeartHandshake size={22} /></div>
+              <div style={{ fontSize: '14px', fontWeight: '700', color: '#1e293b' }}>বিনামূল্যে সহায়তা</div>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>অধিকার বিশ্লেষণ ও প্রাথমিক খসড়া</div>
+            </div>
+          </div>
+
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               className="btn btn-outline"
               style={{
-                padding: '12px 20px',
+                padding: '12px 22px',
                 fontSize: '15px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? '#e11d48' : '#0284c7',
-                color: (isPlayingAudio || isLoadingAudio) && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? '#e11d48' : '#0284c7'
+                borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText?.includes('অধিকার। এটি একটি স্বয়ংক্রিয়') ? '#e11d48' : '#0284c7',
+                color: (isPlayingAudio || isLoadingAudio) && currentPlayingText?.includes('অধিকার। এটি একটি স্বয়ংক্রিয়') ? '#e11d48' : '#0284c7'
               }}
-              onClick={() => playVoice('অধিকার। এটি একটি স্বয়ংক্রিয় আইন সহায়তা সেবা — কোনো আইনজীবী নয়। আপনার আইনি সমস্যা বা ঘটনার বিবরণ নিজের ভাষায় লিখুন।')}
+              onClick={() => playVoice('অধিকার। এটি একটি স্বয়ংক্রিয় আইন সহায়তা সেবা — কোনো আইনজীবী নয়। আপনার আইনি সমস্যা বা ঘটনার বিবরণ নিজের ভাষায় বলুন।')}
             >
-              {isLoadingAudio && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? (
+              {isLoadingAudio && currentPlayingText?.includes('অধিকার। এটি একটি স্বয়ংক্রিয়') ? (
                 <><RefreshCw className="animate-spin" size={18} /> <span>প্রস্তুত হচ্ছে...</span></>
-              ) : isPlayingAudio && currentPlayingText?.includes('এটি একটি স্বয়ংক্রিয় আইন সহায়তা') ? (
+              ) : isPlayingAudio && currentPlayingText?.includes('অধিকার। এটি একটি স্বয়ংক্রিয়') ? (
                 <><VolumeX size={18} /> <span>থামান</span></>
               ) : (
-                <><Volume2 size={18} /> <span>শুনুন (Voice)</span></>
+                <><Volume2 size={18} /> <span>নির্দেশনা শুনুন (Audio)</span></>
               )}
             </button>
             <button
               className="btn btn-primary"
-              style={{ padding: '12px 28px', fontSize: '16px' }}
+              style={{ padding: '12px 32px', fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}
               onClick={() => {
                 stopVoice();
                 setStep('recording');
               }}
             >
-              হ্যাঁ, শুরু করুন
+              <span>শুরু করুন</span>
+              <ChevronRight size={18} />
             </button>
           </div>
         </div>
@@ -908,83 +967,110 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN 2: INTAKE / NARRATIVE INPUT */}
       {step === 'recording' && (
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
             <div>
-              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>যা ঘটেছে, নিজের ভাষায় বলুন বা লিখুন</h2>
+              <h2 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '4px', color: '#0f172a' }}>
+                যা ঘটেছে, নিজের ভাষায় বলুন বা লিখুন
+              </h2>
               <p style={{ fontSize: '13px', color: '#64748b', margin: 0 }}>
-                আপনার আইনি সমস্যা মুখে বলুন (সরাসরি লেখা হবে) অথবা বাংলায় টাইপ করুন:
+                টাইপ করতে কষ্ট হলে নীল <strong>"মুখে বলুন"</strong> বাটনে চাপ দিয়ে কথা বলুন:
               </p>
             </div>
             {renderVoiceTypingButton()}
           </div>
 
+          {/* Voice Status Alert Box */}
           {voiceStatus && (
             <div style={{
-              fontSize: '12px',
-              padding: '8px 12px',
-              borderRadius: '6px',
+              fontSize: '13px',
+              padding: '10px 14px',
+              borderRadius: '10px',
               marginBottom: '14px',
-              backgroundColor: isListening ? '#eff6ff' : '#f0fdf4',
-              color: isListening ? '#1e40af' : '#15803d',
-              border: `1px solid ${isListening ? '#bfdbfe' : '#bbf7d0'}`,
+              backgroundColor: isListening ? '#fef2f2' : '#f0fdf4',
+              color: isListening ? '#b91c1c' : '#15803d',
+              border: `1px solid ${isListening ? '#fca5a5' : '#86efac'}`,
               display: 'flex',
               alignItems: 'center',
-              gap: '8px'
+              gap: '10px'
             }}>
-              {isListening ? <Radio size={14} className="mic-recording-pulse" /> : <CheckCircle2 size={14} />}
-              <span>{voiceStatus}</span>
+              {isListening ? (
+                <span className="mic-recording-pulse" style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }}></span>
+              ) : (
+                <CheckCircle2 size={16} />
+              )}
+              <span style={{ fontWeight: '600' }}>{voiceStatus}</span>
             </div>
           )}
 
-          <textarea
-            rows={5}
-            value={textNarrative}
-            onChange={(e) => setTextNarrative(e.target.value)}
-            placeholder="আপনার সমস্যা বা ঘটনার বিবরণ বিস্তারিতভাবে বাংলায় বলুন বা লিখুন... (কথা বললে সরাসরি এখানে লেখা হবে)"
-            style={{
-              width: '100%',
-              padding: '14px',
-              borderRadius: '8px',
-              border: isListening ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
-              fontFamily: 'inherit',
-              fontSize: '15px',
-              lineHeight: '1.6',
-              marginBottom: '16px',
-              boxSizing: 'border-box',
-              transition: 'border-color 0.2s ease',
-              boxShadow: isListening ? '0 0 0 3px rgba(2, 132, 199, 0.15)' : 'none'
-            }}
-          />
+          <div style={{ position: 'relative', marginBottom: '16px' }}>
+            <textarea
+              rows={6}
+              value={textNarrative}
+              onChange={(e) => setTextNarrative(e.target.value)}
+              placeholder="উদাহরণ: আমার বিয়ে হয়েছে পাঁচ বছর হলো। দুই বছর ধরে স্বামী খোরপোশ দিচ্ছে না এবং কাবিনের টাকা পরিশোধ করছে না..."
+              style={{
+                width: '100%',
+                padding: '16px',
+                borderRadius: '12px',
+                border: isListening ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                fontFamily: 'inherit',
+                fontSize: '15px',
+                lineHeight: '1.7',
+                boxSizing: 'border-box',
+                transition: 'border-color 0.2s ease',
+                boxShadow: isListening ? '0 0 0 4px rgba(2, 132, 199, 0.15)' : 'none',
+                outline: 'none'
+              }}
+            />
+            {textNarrative.trim() && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+                <span>শব্দ সংখ্যা: {textNarrative.trim().split(/\s+/).length} টি</span>
+                <button
+                  type="button"
+                  onClick={() => setTextNarrative('')}
+                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}
+                  title="লেখা মুছে নতুন করে বলুন"
+                >
+                  <Trash2 size={13} /> মুছে নতুন করে লিখুন
+                </button>
+              </div>
+            )}
+          </div>
 
-          {/* Demo Scenario Selectors */}
-          <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-            <span style={{ fontSize: '12px', fontWeight: '600', color: '#64748b', display: 'block', marginBottom: '8px' }}>
-              অথবা সরাসরি ডেমো পরিস্থিতি বাছাই করুন:
-            </span>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => handleLoadSample('dower')}>
-                দেনমোহর ও ভরণপোষণ (N1)
+          {/* Demo Scenario Selectors (Accessible scenario grid) */}
+          <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: '700', color: '#475569', marginBottom: '10px' }}>
+              <Sparkles size={15} style={{ color: '#0284c7' }} />
+              <span>বা সরাসরি যেকোনো একটি নমুনা পরিস্থিতি বেছে পরীক্ষা করুন:</span>
+            </div>
+            <div className="scenario-grid">
+              <button type="button" className="scenario-card" onClick={() => handleLoadSample('dower')}>
+                <span className="scenario-title">💍 দেনমোহর ও খোরপোশ</span>
+                <span className="scenario-desc">বিয়েবিচ্ছেদ ও কাবিন বকেয়া (N1)</span>
               </button>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px' }} onClick={() => handleLoadSample('wages')}>
-                বকেয়া মজুরি (N4)
+              <button type="button" className="scenario-card" onClick={() => handleLoadSample('wages')}>
+                <span className="scenario-title">💼 বকেয়া মজুরি</span>
+                <span className="scenario-desc">১০ দিনের কাজের বকেয়া পাওনা (N4)</span>
               </button>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px', borderColor: '#fca5a5', color: '#b91c1c' }} onClick={() => handleLoadSample('violence')}>
-                সহিংসতা ব্রেক-আউট (N6)
+              <button type="button" className="scenario-card" style={{ borderColor: '#fca5a5' }} onClick={() => handleLoadSample('violence')}>
+                <span className="scenario-title" style={{ color: '#b91c1c' }}>🚨 সহিংসতা সতর্কতা</span>
+                <span className="scenario-desc">জরুরি শারীরিক নির্যাতন (N6)</span>
               </button>
-              <button className="btn btn-outline" style={{ fontSize: '12px', padding: '5px 10px', borderColor: '#bae6fd', color: '#0284c7' }} onClick={() => handleLoadSample('long')}>
-                দীর্ঘ বিবরণ (টোকেন কন্টিনিউয়েশন টেস্ট)
+              <button type="button" className="scenario-card" style={{ borderColor: '#bae6fd' }} onClick={() => handleLoadSample('long')}>
+                <span className="scenario-title" style={{ color: '#0284c7' }}>📜 দীর্ঘ বিবরণ</span>
+                <span className="scenario-desc">টোকেন কন্টিনিউয়েশন টেস্ট (N7)</span>
               </button>
             </div>
           </div>
 
           <button
             className="btn btn-primary"
-            style={{ width: '100%', padding: '12px', fontSize: '15px' }}
+            style={{ width: '100%', padding: '14px', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
             disabled={isLoading || !textNarrative.trim()}
             onClick={() => handleSendMessage()}
           >
             {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Send size={18} />}
-            {isLoading ? 'বিশ্লেষণ করা হচ্ছে...' : 'জমা দিন'}
+            <span>{isLoading ? 'তথ্য বিশ্লেষণ করা হচ্ছে...' : 'বিবরণ জমা দিন ও বিশ্লেষণ করুন'}</span>
           </button>
         </div>
       )}
@@ -995,10 +1081,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           {/* Ongoing Conversation History Bubble Thread */}
           {chatHistory.length > 0 && (
             <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #e2e8f0' }}>
-              <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <MessageSquare size={14} /> পূর্ববর্তী বার্তা ও প্রশ্নোত্তর
+              <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <MessageSquare size={14} /> পূর্ববর্তী কথোপকথন ও তথ্য
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '180px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
                 {chatHistory.map((msg, idx) => (
                   <div 
                     key={idx}
@@ -1010,17 +1096,19 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                   >
                     <div 
                       style={{
-                        backgroundColor: msg.role === 'user' ? '#e0f2fe' : '#f8fafc',
-                        color: msg.role === 'user' ? '#0369a1' : '#334155',
-                        border: msg.role === 'user' ? '1px solid #bae6fd' : '1px solid #e2e8f0',
-                        padding: '8px 12px',
-                        borderRadius: msg.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                        fontSize: '13px',
-                        maxWidth: '90%'
+                        backgroundColor: msg.role === 'user' ? '#0284c7' : '#ffffff',
+                        color: msg.role === 'user' ? '#ffffff' : '#1e293b',
+                        border: msg.role === 'user' ? 'none' : '1px solid #e2e8f0',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                        padding: '10px 14px',
+                        borderRadius: msg.role === 'user' ? '16px 16px 2px 16px' : '16px 16px 16px 2px',
+                        fontSize: '14px',
+                        lineHeight: '1.6',
+                        maxWidth: '85%'
                       }}
                     >
                       {msg.content ? (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
                           <span>
                             {msg.content}
                             {isStreaming && idx === chatHistory.length - 1 && msg.role === 'assistant' && (
@@ -1063,61 +1151,68 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '16px' }}>
-            <div>
-              <div style={{ fontSize: '13px', color: '#0284c7', fontWeight: '600', marginBottom: '8px' }}>
-                অতিরিক্ত তথ্য প্রয়োজন (Follow-up)
-              </div>
-              <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#1e293b', margin: 0 }}>
-                {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
-              </h2>
+          {/* Active Question Highlight Box */}
+          <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
+              <span style={{ fontSize: '12px', fontWeight: '700', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                আইনি পরামর্শের জন্য প্রয়োজনীয় প্রশ্ন:
+              </span>
+              {followUpQuestion && (
+                <button
+                  className="btn btn-outline"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    flexShrink: 0,
+                    backgroundColor: 'white',
+                    borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
+                    color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
+                  }}
+                  onClick={() => playVoice(followUpQuestion)}
+                  title="প্রশ্নটি শুনুন"
+                >
+                  {isLoadingAudio && currentPlayingText === followUpQuestion ? (
+                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                  ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
+                    <><VolumeX size={14} /> <span>থামান</span></>
+                  ) : (
+                    <><Volume2 size={14} /> <span>প্রশ্ন শুনুন</span></>
+                  )}
+                </button>
+              )}
             </div>
-            {followUpQuestion && (
-              <button
-                className="btn btn-outline"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '13px',
-                  padding: '6px 12px',
-                  flexShrink: 0,
-                  borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
-                  color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
-                }}
-                onClick={() => playVoice(followUpQuestion)}
-                title="প্রশ্নটি শুনুন"
-              >
-                {isLoadingAudio && currentPlayingText === followUpQuestion ? (
-                  <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
-                ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
-                  <><VolumeX size={16} /> <span>থামান</span></>
-                ) : (
-                  <><Volume2 size={16} /> <span>শুনুন</span></>
-                )}
-              </button>
-            )}
+            <h2 style={{ fontSize: '17px', fontWeight: '700', color: '#0c4a6e', margin: 0, lineHeight: '1.6' }}>
+              {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
+            </h2>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <span style={{ fontSize: '13px', fontWeight: '600', color: '#475569' }}>আপনার উত্তর মুখে বলুন বা লিখুন:</span>
+          {/* Answer Input Header with Voice Typing Button */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <span style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>আপনার উত্তর:</span>
             {renderVoiceTypingButton()}
           </div>
 
           {voiceStatus && (
             <div style={{
               fontSize: '12px',
-              padding: '6px 12px',
-              borderRadius: '6px',
+              padding: '8px 12px',
+              borderRadius: '8px',
               marginBottom: '10px',
-              backgroundColor: isListening ? '#eff6ff' : '#f0fdf4',
-              color: isListening ? '#1e40af' : '#15803d',
-              border: `1px solid ${isListening ? '#bfdbfe' : '#bbf7d0'}`,
+              backgroundColor: isListening ? '#fef2f2' : '#f0fdf4',
+              color: isListening ? '#b91c1c' : '#15803d',
+              border: `1px solid ${isListening ? '#fca5a5' : '#86efac'}`,
               display: 'flex',
               alignItems: 'center',
-              gap: '6px'
+              gap: '8px'
             }}>
-              {isListening ? <Radio size={13} className="mic-recording-pulse" /> : <CheckCircle2 size={13} />}
+              {isListening ? (
+                <span className="mic-recording-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }}></span>
+              ) : (
+                <CheckCircle2 size={14} />
+              )}
               <span>{voiceStatus}</span>
             </div>
           )}
@@ -1129,19 +1224,36 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             placeholder="উত্তর মুখে বলুন বা এখানে লিখুন... (কথা বললে সরাসরি লেখা হবে)"
             style={{
               width: '100%',
-              padding: '12px',
-              borderRadius: '8px',
-              border: isListening ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
+              padding: '14px',
+              borderRadius: '10px',
+              border: isListening ? '2px solid #0284c7' : '1px solid #cbd5e1',
               fontFamily: 'inherit',
               fontSize: '15px',
-              marginBottom: '16px',
+              marginBottom: '12px',
               boxSizing: 'border-box',
-              transition: 'border-color 0.2s ease',
-              boxShadow: isListening ? '0 0 0 3px rgba(2, 132, 199, 0.15)' : 'none'
+              outline: 'none',
+              lineHeight: '1.6'
             }}
           />
 
-          <div style={{ display: 'flex', gap: '12px' }}>
+          {/* Quick Answer Shortcut Chips */}
+          <div className="quick-chips-wrapper">
+            <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>দ্রুত উত্তর:</span>
+            <button type="button" className="quick-chip" onClick={() => handleSendMessage("জানি না / মনে নেই")}>
+              মনে নেই
+            </button>
+            <button type="button" className="quick-chip" onClick={() => setTextNarrative("কোনো লিখিত প্রমাণ বা কাগজ নেই")}>
+              কোনো কাগজ নেই
+            </button>
+            <button type="button" className="quick-chip" onClick={() => setTextNarrative("হ্যাঁ, সব প্রমাণ আছে")}>
+              হ্যাঁ, আছে
+            </button>
+            <button type="button" className="quick-chip" onClick={() => setTextNarrative("না, এরকম কিছু হয়নি")}>
+              না, হয়নি
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', gap: '12px', marginTop: '14px' }}>
             <button
               className="btn btn-outline"
               style={{ flex: 1 }}
@@ -1154,14 +1266,15 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             </button>
             <button
               className="btn btn-primary"
-              style={{ flex: 1 }}
+              style={{ flex: 1.5 }}
               disabled={isLoading || !textNarrative.trim()}
               onClick={() => {
                 stopVoice();
                 handleSendMessage();
               }}
             >
-              {isLoading ? <RefreshCw className="animate-spin" size={18} /> : 'উত্তর দিন'}
+              {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Send size={16} />}
+              <span>উত্তর জমা দিন</span>
             </button>
           </div>
         </div>
@@ -1170,12 +1283,18 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN 4: YOUR RIGHTS */}
       {step === 'rights' && (
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0e7090' }}>
-              <CheckCircle2 size={24} />
-              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>আপনার আইনি অধিকার ও পথ</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
+            <div style={{ backgroundColor: '#e0f2fe', color: '#0284c7', padding: '10px', borderRadius: '12px' }}>
+              <Scale size={26} />
             </div>
-            {rightsExplanation && (
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: '700', color: '#0284c7', textTransform: 'uppercase' }}>আইনি পথ ও সমাধান</div>
+              <h2 style={{ fontSize: '22px', fontWeight: '800', margin: 0, color: '#0f172a' }}>আপনার আইনগত অধিকার</h2>
+            </div>
+          </div>
+
+          {rightsExplanation && (
+            <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'flex-end' }}>
               <button
                 className="btn btn-outline"
                 style={{
@@ -1183,9 +1302,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                   alignItems: 'center',
                   gap: '6px',
                   fontSize: '13px',
-                  padding: '6px 14px',
-                  borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#0e7090',
-                  color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#0e7090'
+                  padding: '7px 16px',
+                  borderRadius: '20px',
+                  borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#0284c7',
+                  color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#0284c7'
                 }}
                 onClick={() => playVoice(rightsExplanation)}
               >
@@ -1194,18 +1314,21 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                 ) : isPlayingAudio && currentPlayingText === rightsExplanation ? (
                   <><VolumeX size={16} /> <span>থামান</span></>
                 ) : (
-                  <><Volume2 size={16} /> <span>আবার শুনুন (Listen)</span></>
+                  <><Volume2 size={16} /> <span>পরামর্শ শুনুন (Audio)</span></>
                 )}
               </button>
-            )}
-          </div>
-          <p style={{ fontSize: '15px', lineHeight: '1.7', whiteSpace: 'pre-line', color: '#334155', marginBottom: '24px' }}>
-            {rightsExplanation}
-          </p>
+            </div>
+          )}
 
-          <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" onClick={() => { stopVoice(); setStep('referral'); }}>
-              এগিয়ে যান (ক্লিনিক ও আবেদন) <ChevronRight size={18} />
+          <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '20px', marginBottom: '24px' }}>
+            <p style={{ fontSize: '15px', lineHeight: '1.8', whiteSpace: 'pre-line', color: '#334155', margin: 0 }}>
+              {rightsExplanation}
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" style={{ padding: '12px 28px', fontSize: '15px' }} onClick={() => { stopVoice(); setStep('referral'); }}>
+              <span>ক্লিনিক ও আবেদনের খসড়া দেখুন</span> <ChevronRight size={18} />
             </button>
           </div>
         </div>
@@ -1214,53 +1337,79 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN 5: REFERRAL & DRAFT COMPLAINT */}
       {step === 'referral' && (
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>নিকটতম আইন সহায়তা কেন্দ্র</h2>
-            <button
-              className="btn btn-outline"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '13px',
-                padding: '6px 12px',
-                borderColor: '#bbf7d0',
-                color: '#15803d',
-                backgroundColor: 'white'
-              }}
-              onClick={() => playVoice(`আপনার নিকটতম আইন সহায়তা কেন্দ্র ${referralInfo?.clinic || ''}। নির্ধারিত সাক্ষাৎ ${referralInfo?.slot || ''}। আপনার তথ্যের ভিত্তিতে প্রাথমিক সারসংক্ষেপ ও খসড়া তৈরি করে প্যারালেগ্যাল বরাবর পাঠানো হয়েছে।`)}
-            >
-              {isLoadingAudio && currentPlayingText?.includes('নিকটতম আইন সহায়তা কেন্দ্র') ? (
-                <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
-              ) : isPlayingAudio && currentPlayingText?.includes('নিকটতম আইন সহায়তা কেন্দ্র') ? (
-                <><VolumeX size={16} /> <span>থামান</span></>
-              ) : (
-                <><Volume2 size={16} /> <span>শুনুন</span></>
-              )}
-            </button>
-          </div>
-          <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '16px', borderRadius: '8px', marginBottom: '20px' }}>
-            <div style={{ fontWeight: '700', fontSize: '17px', color: '#166534', marginBottom: '4px' }}>
-              {referralInfo?.clinic}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+            <div style={{ backgroundColor: '#dcfce7', color: '#16a34a', padding: '10px', borderRadius: '12px' }}>
+              <CheckCircle2 size={26} />
             </div>
-            <div style={{ fontSize: '14px', color: '#15803d' }}>
-              নির্ধারিত সাক্ষাৎ: {referralInfo?.slot}
-            </div>
-            <div style={{ fontSize: '13px', color: '#475569', marginTop: '8px' }}>
-              আপনার তথ্যের ভিত্তিতে প্রাথমিক সারসংক্ষেপ ও খসড়া তৈরি করে প্যারালেগ্যাল বরাবর পাঠানো হয়েছে (মামলা আইডি: #{caseId})।
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: '700', color: '#16a34a', textTransform: 'uppercase' }}>মামলা আইডি #{caseId || 'NEW'}</div>
+              <h2 style={{ fontSize: '22px', fontWeight: '800', margin: 0, color: '#0f172a' }}>নিকটস্থ আইন সহায়তা কেন্দ্র</h2>
             </div>
           </div>
 
-          <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>
-            প্রাথমিক অভিযোগের খসড়া (প্যারালেগ্যাল পর্যালোচনার জন্য):
-          </h3>
-          <div style={{ backgroundColor: '#f8fafc', padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px', whiteSpace: 'pre-line', color: '#334155', maxHeight: '200px', overflowY: 'auto', marginBottom: '20px' }}>
+          {/* Referral Appointment Card */}
+          <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', padding: '20px', borderRadius: '14px', marginBottom: '24px', boxShadow: '0 2px 8px rgba(22, 163, 74, 0.08)' }}>
+            <div style={{ fontWeight: '800', fontSize: '18px', color: '#14532d', marginBottom: '6px' }}>
+              {referralInfo?.clinic}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '15px', color: '#166534', fontWeight: '600', marginBottom: '10px' }}>
+              <Check size={16} />
+              <span>নির্ধারিত সাক্ষাত: {referralInfo?.slot}</span>
+            </div>
+            <p style={{ fontSize: '13px', color: '#475569', lineHeight: '1.6', margin: '0 0 14px' }}>
+              আপনার তথ্যের ভিত্তিতে প্রাথমিক অভিযোগের খসড়া প্রস্তুত করা হয়েছে এবং ব্র্যাক প্যারালিগ্যাল ড্যাশবোর্ডে ফরোয়ার্ড করা হয়েছে।
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                className="btn btn-outline"
+                style={{ backgroundColor: 'white', borderColor: '#86efac', color: '#15803d', fontSize: '13px', padding: '7px 14px' }}
+                onClick={() => playVoice(`আপনার নিকটতম আইন সহায়তা কেন্দ্র ${referralInfo?.clinic || ''}। নির্ধারিত সাক্ষাৎ ${referralInfo?.slot || ''}।`)}
+              >
+                <Volume2 size={15} /> ঠিকানা শুনুন
+              </button>
+              <a
+                href="tel:16430"
+                className="btn btn-primary"
+                style={{ backgroundColor: '#16a34a', fontSize: '13px', padding: '7px 16px', textDecoration: 'none' }}
+              >
+                <PhoneCall size={15} /> হেল্পলাইনে কল দিন (১৬৪৩০)
+              </a>
+            </div>
+          </div>
+
+          {/* Draft Complaint Preview */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: 0 }}>
+              প্রাথমিক অভিযোগের খসড়া (Draft First Complaint):
+            </h3>
+            {draftComplaint && (
+              <button
+                onClick={() => handleCopyDraft(draftComplaint)}
+                style={{
+                  background: 'none',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  padding: '4px 10px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  color: copiedDraft ? '#16a34a' : '#475569'
+                }}
+              >
+                {copiedDraft ? <Check size={13} /> : <Copy size={13} />}
+                <span>{copiedDraft ? 'কপি হয়েছে!' : 'খসড়া কপি করুন'}</span>
+              </button>
+            )}
+          </div>
+          <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', whiteSpace: 'pre-line', color: '#334155', maxHeight: '220px', overflowY: 'auto', marginBottom: '24px', lineHeight: '1.7', fontFamily: 'monospace' }}>
             {draftComplaint}
           </div>
 
           <button 
             className="btn btn-primary" 
-            style={{ width: '100%' }}
+            style={{ width: '100%', padding: '14px', fontSize: '16px' }}
             onClick={() => {
               stopVoice();
               setStep('welcome');
@@ -1269,7 +1418,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               setChatHistory([]);
             }}
           >
-            নতুন আবেদন শুরু করুন
+            নতুন আরেকটি আবেদন শুরু করুন
           </button>
         </div>
       )}

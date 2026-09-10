@@ -147,7 +147,7 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.7fr', gap: '24px' }}>
+    <div className="dashboard-grid">
       {/* LEFT COLUMN: CASE QUEUE */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
