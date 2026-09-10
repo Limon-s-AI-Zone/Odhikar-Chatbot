@@ -380,15 +380,26 @@ def classification_node(state: IntakeState) -> Dict[str, Any]:
         ("user", "{text}")
     ])
     try:
-        res: ClassificationOutput = classification_llm.invoke(prompt.format_messages(text=text_to_eval))
-        cat = res.category
-        conf = res.confidence
+        res = classification_llm.invoke(prompt.format_messages(text=text_to_eval))
+        if res is None:
+            cat = "unclassifiable"
+            conf = 0
+            reasoning = "স্বয়ংক্রিয় শ্রেণিবিভাগ করা যায়নি"
+        elif isinstance(res, dict):
+            cat = res.get("category", "unclassifiable")
+            conf = int(res.get("confidence", 0) or 0)
+            reasoning = res.get("reasoning", "")
+        else:
+            cat = getattr(res, "category", "unclassifiable")
+            conf = int(getattr(res, "confidence", 0) or 0)
+            reasoning = getattr(res, "reasoning", "")
+
         disambiguation = (conf < 65) or (cat == "unclassifiable")
         
         return {
             "category": cat,
             "confidence": conf,
-            "classification_reason": res.reasoning,
+            "classification_reason": reasoning,
             "disambiguation_needed": disambiguation
         }
     except Exception as e:
@@ -415,11 +426,24 @@ def extraction_node(state: IntakeState) -> Dict[str, Any]:
         ("user", "Category: {category}\nNarrative: {text}")
     ])
     try:
-        res: ExtractedFactsOutput = extraction_llm.invoke(
+        res = extraction_llm.invoke(
             prompt.format_messages(category=cat, text=text_to_eval)
         )
-        data = res.model_dump()
-        return {k: v for k, v in data.items() if v is not None}
+        if res is None:
+            data = {}
+        elif isinstance(res, dict):
+            data = res
+        elif hasattr(res, "model_dump"):
+            data = res.model_dump()
+        elif hasattr(res, "dict"):
+            data = res.dict()
+        else:
+            data = {}
+
+        return {
+            k: v for k, v in data.items() 
+            if v is not None and str(v).strip().lower() != "null" and str(v).strip() != ""
+        }
     except Exception as e:
         print(f"[Extraction Error] {e}")
         err_info = parse_llm_error(e)

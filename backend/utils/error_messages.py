@@ -410,7 +410,11 @@ def parse_llm_error(exc: Exception, provider_info: Optional[Dict[str, Any]] = No
         "context_length" in err_lower
         or "maximum context length" in err_lower
         or "token limit" in err_lower
+        or "length limit" in err_lower
+        or "length limit was reached" in err_lower
+        or "finish_reason: length" in err_lower
         or "too many tokens" in err_lower
+        or "max_tokens" in err_lower
     ):
         template = templates.get("context_limit_error", templates["general_error"])
         return {

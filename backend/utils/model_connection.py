@@ -40,27 +40,56 @@ REASONING_MAX_TOKENS = int(os.getenv("REASONING_MAX_TOKENS", "0"))
 TOKEN_BUDGET_LIMIT = int(os.getenv("TOKEN_BUDGET_LIMIT", "180"))
 
 
+
+def get_service_account_path() -> Optional[str]:
+    """Resolves path to service_account.json if present in env, backend, or project root."""
+    env_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    candidates = [
+        env_path,
+        "service_account.json",
+        os.path.join(os.path.dirname(__file__), "..", "service_account.json"),
+        os.path.join(os.path.dirname(__file__), "..", "..", "service_account.json"),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return os.path.abspath(path)
+    return None
+
+
 def resolve_vertex_token() -> str:
-    """
-    Resolves the Vertex AI access token.
-    First checks if explicit GOOGLE_API_KEY/VERTEX_API_KEY is provided.
-    If not or if using service account, attempts resolving OAuth 2 credentials via google.auth.
-    """
-    key = GOOGLE_API_KEY or LLM_API_KEY_RAW
+    """Resolves Vertex AI token if needed."""
+    sa_path = get_service_account_path()
+    if sa_path:
+        try:
+            import google.auth
+            from google.auth.transport.requests import Request
+            creds, _ = google.auth.load_credentials_from_file(sa_path, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            creds.refresh(Request())
+            return creds.token or ""
+        except Exception:
+            pass
+    return GOOGLE_API_KEY or LLM_API_KEY_RAW
 
-    # Try resolving ADC or service account credentials via google.auth
-    try:
-        import google.auth
-        from google.auth.transport.requests import Request
-        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        if not credentials.valid:
-            credentials.refresh(Request())
-        if credentials.token:
-            return credentials.token
-    except Exception:
-        pass
 
-    return key
+def resolve_vertex_project() -> str:
+    """Detects GCP Project ID from env or service_account.json."""
+    proj = (
+        os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+        or os.getenv("VERTEX_PROJECT_ID", "").strip()
+        or os.getenv("PROJECT_ID", "").strip()
+    )
+    if proj:
+        return proj
+    sa_path = get_service_account_path()
+    if sa_path:
+        try:
+            import json
+            with open(sa_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("project_id") or data.get("quota_project_id") or ""
+        except Exception:
+            pass
+    return ""
 
 
 def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]:
@@ -73,28 +102,22 @@ def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]
 
     # 1. Google Cloud Vertex AI
     if prov in ("vertex", "vertexai"):
-        key = resolve_vertex_token()
-        model = MODEL_NAME or "google/gemini-2.0-flash"
+        model = MODEL_NAME or "gemini-2.5-flash"
         region = GOOGLE_CLOUD_REGION or "us-central1"
-        project = GOOGLE_CLOUD_PROJECT or ""
-
-        if base_url:
-            url = base_url
-        elif project:
-            url = f"https://{region}-aiplatform.googleapis.com/v1beta1/projects/{project}/locations/{region}/endpoints/openapi/"
-        else:
-            url = f"https://{region}-aiplatform.googleapis.com/v1beta1/locations/{region}/endpoints/openapi/"
+        project = resolve_vertex_project()
+        sa_path = get_service_account_path()
 
         return {
             "provider": "vertex",
             "display_name": "Google Cloud Vertex AI",
-            "requires_api_key": True,
-            "api_key_env": "GOOGLE_API_KEY",
-            "api_key": key,
-            "base_url": url,
+            "requires_api_key": not bool(sa_path),
+            "api_key_env": "GOOGLE_APPLICATION_CREDENTIALS" if sa_path else "GOOGLE_API_KEY",
+            "api_key": sa_path or GOOGLE_API_KEY or LLM_API_KEY_RAW or "service_account.json",
+            "base_url": base_url,
             "model": model,
             "project": project,
-            "region": region
+            "region": region,
+            "service_account_path": sa_path
         }
 
     # 2. Local LLM (Ollama, LM Studio, vLLM - No API Key Required)
@@ -199,17 +222,39 @@ def create_llm_client(
     tokens = max_tokens if max_tokens is not None else MAX_TOKENS
     temp = temperature if temperature is not None else TEMPERATURE
 
+    # 1. Google Cloud Vertex AI (Native ChatVertexAI with service_account.json)
+    if provider == "vertex":
+        from langchain_google_vertexai import ChatVertexAI
+
+        sa_path = get_service_account_path()
+        if sa_path:
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = sa_path
+
+        clean_model = model.replace("google/", "") if model.startswith("google/") else model
+        if not clean_model:
+            clean_model = "gemini-2.5-flash"
+
+        region = info.get("region") or GOOGLE_CLOUD_REGION or "us-central1"
+        project = info.get("project") or resolve_vertex_project() or "routemap-235819"
+
+        vertex_kwargs: Dict[str, Any] = {
+            "model": clean_model,
+            "location": region,
+            "temperature": temp,
+            "max_output_tokens": tokens,
+        }
+        if project:
+            vertex_kwargs["project"] = project
+
+        return ChatVertexAI(**vertex_kwargs)
+
     # Reasoning tokens for OpenRouter models that support it
     eb = extra_body_params
     if eb is None and REASONING_MAX_TOKENS > 0 and provider == "openrouter":
         eb = {"reasoning": {"max_tokens": REASONING_MAX_TOKENS}}
 
     default_url = "https://openrouter.ai/api/v1"
-    if provider == "vertex":
-        region = info.get("region") or GOOGLE_CLOUD_REGION or "us-central1"
-        project = info.get("project") or GOOGLE_CLOUD_PROJECT or ""
-        default_url = f"https://{region}-aiplatform.googleapis.com/v1beta1/projects/{project}/locations/{region}/endpoints/openapi/" if project else f"https://{region}-aiplatform.googleapis.com/v1beta1/locations/{region}/endpoints/openapi/"
-    elif provider == "local":
+    if provider == "local":
         default_url = "http://localhost:11434/v1"
 
     target_base_url = url or default_url
@@ -241,6 +286,13 @@ def is_model_configured() -> bool:
     info = get_provider_info()
     if not info.get("requires_api_key", True):
         return True
+
+    if info.get("provider") == "vertex":
+        sa_path = get_service_account_path()
+        if sa_path and os.path.exists(sa_path):
+            return True
+        key = (info.get("api_key") or "").strip()
+        return bool(key and key not in ("sk-or-v1-...", "your-key-here", "dummy", "local"))
 
     key = (info.get("api_key") or "").strip()
     if not key:

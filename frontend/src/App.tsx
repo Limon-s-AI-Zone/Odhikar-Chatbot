@@ -35,6 +35,8 @@ export const App: React.FC = () => {
   };
 
   const fetchLlmStatus = async () => {
+    // API calling for LLM connection commented out to prevent pinging the model
+    /*
     setIsCheckingLlm(true);
     try {
       const res = await axios.get('/api/llm/status');
@@ -60,15 +62,16 @@ export const App: React.FC = () => {
     } finally {
       setIsCheckingLlm(false);
     }
+    */
   };
 
   useEffect(() => {
     fetchCases();
-    fetchLlmStatus();
-    // Poll cases and LLM status every 15 seconds
+    // fetchLlmStatus();
+    // Poll cases every 15 seconds
     const interval = setInterval(() => {
       fetchCases();
-      fetchLlmStatus();
+      // fetchLlmStatus();
     }, 15000);
     return () => clearInterval(interval);
   }, []);

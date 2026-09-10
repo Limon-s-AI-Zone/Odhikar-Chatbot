@@ -8,6 +8,7 @@ python-multipart>=0.0.9
 langgraph>=0.2.0
 langchain-core>=0.3.0
 langchain-openai>=0.2.0
+langchain-google-vertexai>=2.0.0
 
 # Speech-to-Text (ASR)
 faster-whisper>=1.0.0
