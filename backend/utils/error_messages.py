@@ -1,8 +1,11 @@
 """
 Error message definitions and error handling utilities for LLM operations.
 Provides standardized, user-facing bilingual (Bengali and English) error messages
-for 401 Unauthorized, disconnection/network, token/quota issues, and provider-specific errors
-(Google Gemini, Local LLMs like Ollama / LM Studio, OpenAI, OpenRouter, etc.).
+for 401 Unauthorized, disconnection/network, token/quota issues, and provider-specific errors.
+Supported Providers:
+1. Local LLMs (Ollama, LM Studio, vLLM - requires no API key)
+2. Google Cloud Vertex AI (GCP enterprise platform)
+3. OpenRouter (multi-model gateway)
 """
 
 from typing import Dict, Any, Optional, List
@@ -11,7 +14,7 @@ from typing import Dict, Any, Optional, List
 def get_provider_templates(provider_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Generates tailored error message templates based on the active provider.
-    Supports Google Gemini, Ollama, LM Studio / Local LLMs, OpenAI, OpenRouter, and Custom endpoints.
+    Strictly supports: Local LLMs (Ollama / LM Studio), Vertex AI, and OpenRouter.
     """
     if provider_info is None:
         try:
@@ -28,43 +31,43 @@ def get_provider_templates(provider_info: Optional[Dict[str, Any]] = None) -> Di
     model_name = info.get("model") or "selected model"
 
     # 1. Local LLM / Ollama Templates
-    if provider == "ollama":
+    if provider in ("local", "ollama", "lmstudio"):
         url_display = base_url or "http://localhost:11434"
         return {
             "authentication_error": {
                 "status_code": 401,
-                "title": "লোকাল এলএলএম এক্সেস ত্রুটি (Ollama Access Error)",
-                "message_bn": f"লোকাল Ollama সার্ভার অনুরোধটি প্রত্যাখ্যান করেছে ({url_display})।",
-                "message_en": f"Local Ollama server rejected the request at {url_display}.",
+                "title": "লোকাল এলএলএম এক্সেস ত্রুটি (Error 401 Unauthorized)",
+                "message_bn": f"লোকাল এলএলএম (Ollama/LM Studio) সার্ভার অনুরোধটি প্রত্যাখ্যান করেছে ({url_display})।",
+                "message_en": f"Local LLM server rejected the request at {url_display}.",
                 "troubleshooting_bn": [
-                    f"আপনার কম্পিউটারে Ollama চালু আছে কি না পরীক্ষা করুন ({url_display})।",
-                    f"টার্মিনালে 'ollama list' দিয়ে মডেলটি ইনস্টল আছে কি না দেখুন।"
+                    f"আপনার কম্পিউটারে লোকাল মডেল সার্ভার চালু আছে কি না পরীক্ষা করুন ({url_display})।",
+                    "Ollama ব্যবহার করলে টার্মিনালে 'ollama list' দিয়ে মডেলটি ইনস্টল আছে কি না দেখুন।"
                 ]
             },
             "connection_error": {
                 "status_code": 503,
-                "title": "লোকাল এলএলএম সংযোগ বিচ্ছিন্ন (Ollama Not Connected)",
-                "message_bn": f"লোকাল Ollama সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না ({url_display})।",
-                "message_en": f"Could not connect to local Ollama server at {url_display}. Please check if Ollama is running.",
+                "title": "লোকাল এলএলএম সংযোগ বিচ্ছিন্ন (Ollama / Local Not Connected)",
+                "message_bn": f"লোকাল এলএলএম (Ollama/LM Studio) সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না ({url_display})।",
+                "message_en": f"Could not connect to local LLM server at {url_display}. Please check if server is running.",
                 "troubleshooting_bn": [
-                    "টার্মিনালে 'ollama serve' অথবা 'ollama run <model>' চালান।",
-                    f"Ollama পোর্ট সচল আছে কি না পরীক্ষা করুন ({url_display})।",
+                    "টার্মিনালে 'ollama serve' অথবা LM Studio Local Server চালু করুন।",
+                    f"সার্ভার পোর্ট সচল আছে কি না পরীক্ষা করুন ({url_display})।",
                     "ইন্টারনেট সংযোগের প্রয়োজন নেই, শুধু লোকাল সার্ভিসটি সচল রাখুন।"
                 ]
             },
             "not_found_error": {
                 "status_code": 404,
                 "title": "লোকাল মডেল পাওয়া যায়নি (Model Not Found)",
-                "message_bn": f"মডেল '{model_name}' লোকাল Ollama-তে পাওয়া যায়নি।",
-                "message_en": f"Model '{model_name}' was not found in Ollama.",
+                "message_bn": f"মডেল '{model_name}' লোকাল সার্ভারে পাওয়া যায়নি বা লোড করা নেই।",
+                "message_en": f"Model '{model_name}' was not found on local server.",
                 "troubleshooting_bn": [
-                    f"টার্মিনালে কমান্ডটি চালান: ollama pull {model_name}",
-                    "ইনস্টল করা মডেলের তালিকা দেখতে চালান: ollama list"
+                    f"Ollama হলে টার্মিনালে কমান্ডটি চালান: ollama pull {model_name}",
+                    "LM Studio হলে মডেলটি লোড করে 'Start Server' করুন।"
                 ]
             },
             "rate_limit_error": {
                 "status_code": 429,
-                "title": "লোকাল সিস্টেম মেমরি বা কিউ সীমাবদ্ধতা",
+                "title": "লোকাল সিস্টেম মেমরি বা কিউ সীমাবদ্ধতা (Error 429)",
                 "message_bn": "লোকাল এলএলএম সার্ভারের প্রসেসিং ক্ষমতা সাময়িক সীমাবদ্ধতায় পৌঁছেছে। কিছুক্ষণ পর চেষ্টা করুন।",
                 "message_en": "Local LLM concurrency or resource limit reached. Please retry.",
                 "troubleshooting_bn": [
@@ -89,7 +92,7 @@ def get_provider_templates(provider_info: Optional[Dict[str, Any]] = None) -> Di
             "missing_api_key": {
                 "status_code": 500,
                 "title": "লোকাল সার্ভার কনফিগারেশন ত্রুটি",
-                "message_bn": f"লোকাল Ollama সার্ভার URL ({url_display}) কনফিগারেশনে সমস্যা রয়েছে।",
+                "message_bn": f"লোকাল সার্ভার URL ({url_display}) কনফিগারেশনে সমস্যা রয়েছে।",
                 "message_en": "Local server URL is misconfigured in backend/.env.",
                 "troubleshooting_bn": [f"backend/.env ফাইলে LLM_BASE_URL={url_display} নিশ্চিত করুন।"]
             },
@@ -98,293 +101,92 @@ def get_provider_templates(provider_info: Optional[Dict[str, Any]] = None) -> Di
                 "title": "লোকাল এলএলএম ত্রুটি (Local Processing Error)",
                 "message_bn": "লোকাল মডেল থেকে প্রতিক্রিয়া প্রক্রিয়া করার সময় একটি অপ্রত্যাশিত ত্রুটি ঘটেছে।",
                 "message_en": "An error occurred while communicating with the local LLM.",
-                "troubleshooting_bn": ["Ollama টার্মিনাল লগ পরীক্ষা করুন।"]
+                "troubleshooting_bn": ["লোকাল টার্মিনাল লগ পরীক্ষা করুন।"]
             }
         }
 
-    # 2. LM Studio / General Local LLM Templates
-    if provider == "local":
-        url_display = base_url or "http://localhost:1234/v1"
+    # 2. Google Cloud Vertex AI
+    if provider in ("vertex", "vertexai"):
+        region_display = info.get("region") or "us-central1"
+        project_display = info.get("project") or "GOOGLE_CLOUD_PROJECT"
         return {
             "authentication_error": {
                 "status_code": 401,
-                "title": "লোকাল সার্ভার এক্সেস ত্রুটি (Local LLM Error)",
-                "message_bn": f"লোকাল এলএলএম সার্ভার অনুরোধটি প্রত্যাখ্যান করেছে ({url_display})।",
-                "message_en": f"Local LLM server rejected the request at {url_display}.",
+                "title": "Vertex AI অথেন্টিকেশন ত্রুটি (Error 401 Unauthorized)",
+                "message_bn": f"Google Cloud Vertex AI এপিআই কী (API Key) বা এক্সেস টোকেন সঠিক নয়। backend/.env ফাইলে {key_env} ও GOOGLE_CLOUD_PROJECT পরীক্ষা করুন।",
+                "message_en": f"Vertex AI Authentication Error: Check {key_env} and GOOGLE_CLOUD_PROJECT in backend/.env.",
                 "troubleshooting_bn": [
-                    f"LM Studio বা লোকাল সার্ভার চালু আছে কি না পরীক্ষা করুন ({url_display})।"
+                    f"backend/.env ফাইলে {key_env} (OAuth 2 Access Token) অথবা GOOGLE_APPLICATION_CREDENTIALS সঠিক আছে কি না পরীক্ষা করুন।",
+                    f"প্রজেক্ট আইডি GOOGLE_CLOUD_PROJECT={project_display} সঠিক কি না যাচাই করুন।",
+                    f"রিজিয়ন GOOGLE_CLOUD_REGION={region_display} মডেল ডেপ্লয়মেন্টের সাথে মিল আছে কি না দেখুন।"
                 ]
             },
             "connection_error": {
                 "status_code": 503,
-                "title": "লোকাল সার্ভার সংযোগ বিচ্ছিন্ন (Local Server Not Connected)",
-                "message_bn": f"লোকাল এলএলএম সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না ({url_display})।",
-                "message_en": f"Could not connect to local LLM server at {url_display}. Ensure local server is running.",
+                "title": "Vertex AI সংযোগ বিচ্ছিন্ন (Connection Error)",
+                "message_bn": f"Google Cloud Vertex AI সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না ({base_url})।",
+                "message_en": f"Could not connect to Google Cloud Vertex AI endpoint at {base_url}.",
                 "troubleshooting_bn": [
-                    "LM Studio বা লোকাল সার্ভারে 'Start Server' চালু আছে কি না নিশ্চিত করুন।",
-                    f"সার্ভার পোর্ট ও URL ({url_display}) সঠিক কি না দেখুন।"
+                    "ইন্টারনেট সংযোগ এবং Vertex AI এন্ডপয়েন্ট স্ট্যাটাস পরীক্ষা করুন।",
+                    f"GOOGLE_CLOUD_REGION={region_display} সচল আছে কি না দেখুন।"
                 ]
             },
             "not_found_error": {
                 "status_code": 404,
-                "title": "লোকাল মডেল লোড করা হয়নি",
-                "message_bn": f"লোকাল সার্ভারে মডেল '{model_name}' লোড করা নেই।",
-                "message_en": f"Model '{model_name}' is not loaded on the local server.",
-                "troubleshooting_bn": ["LM Studio-তে মডেলটি লোড করে পুনরায় চেষ্টা করুন।"]
+                "title": "Vertex AI মডেল পাওয়া যায়নি (Model Not Found)",
+                "message_bn": f"মডেল '{model_name}' Vertex AI প্রজেক্ট বা রিজিয়নে পাওয়া যায়নি।",
+                "message_en": f"Model '{model_name}' not found on Vertex AI project {project_display}.",
+                "troubleshooting_bn": [
+                    "মডেল নামটি সঠিক কি না পরীক্ষা করুন (যেমন: google/gemini-2.0-flash বা gemini-1.5-flash)।",
+                    "মডেলটি নির্বাচিত রিজিয়নে এনেবল করা আছে কি না গুগল ক্লাউড কনসোলে দেখুন।"
+                ]
             },
             "rate_limit_error": {
                 "status_code": 429,
-                "title": "লোকাল সার্ভার ব্যস্ত",
-                "message_bn": "লোকাল সার্ভার বর্তমানে অন্য রিকোয়েস্ট প্রক্রিয়া করছে। কিছুক্ষণ অপেক্ষা করুন।",
-                "message_en": "Local server is currently busy.",
-                "troubleshooting_bn": ["কিছুক্ষণ পর পুনরায় চেষ্টা করুন।"]
+                "title": "Vertex AI কোটা অতিক্রম (Error 429 Quota Exceeded)",
+                "message_bn": "Google Cloud Vertex AI কোটা সীমা অতিক্রম করেছে।",
+                "message_en": "Google Cloud Vertex AI rate limit or quota exceeded.",
+                "troubleshooting_bn": ["গুগল ক্লাউড কনসোলে কোটা বৃদ্ধি বা রিকোয়েস্ট হার পরীক্ষা করুন।"]
             },
             "token_credit_error": {
                 "status_code": 402,
-                "title": "রিসোর্স সীমাবদ্ধতা",
-                "message_bn": "লোকাল সিস্টেমে রিসোর্স অপর্যাপ্ত।",
-                "message_en": "Insufficient local resources.",
-                "troubleshooting_bn": ["সিস্টেম মেমরি পরীক্ষা করুন।"]
-            },
-            "context_limit_error": {
-                "status_code": 400,
-                "title": "টোকেন কনটেক্সট সীমা অতিক্রম",
-                "message_bn": "ইনপুট বিবরণটি লোকাল মডেলের কনটেক্সট উইন্ডো ছাড়িয়ে গেছে।",
-                "message_en": "Input exceeds local model context window.",
-                "troubleshooting_bn": ["বিবরণটি সংক্ষেপ করুন।"]
-            },
-            "missing_api_key": {
-                "status_code": 500,
-                "title": "লোকাল সার্ভার সংযোগ ত্রুটি",
-                "message_bn": "লোকাল সার্ভার প্রস্তুত নয়।",
-                "message_en": "Local server is not ready.",
-                "troubleshooting_bn": ["LM Studio বা লোকাল সার্ভার চালু করুন।"]
-            },
-            "general_error": {
-                "status_code": 500,
-                "title": "লোকাল এলএলএম ত্রুটি",
-                "message_bn": "লোকাল মডেল থেকে প্রতিক্রিয়া পেতে সমস্যা হয়েছে।",
-                "message_en": "Error communicating with local server.",
-                "troubleshooting_bn": ["লোকাল সার্ভার কনসোল লগ পরীক্ষা করুন।"]
-            }
-        }
-
-    # 3. Google Gemini (Direct API)
-    if provider == "google":
-        return {
-            "authentication_error": {
-                "status_code": 401,
-                "title": "Google Gemini এপিআই কী ত্রুটি (API Key Error)",
-                "message_bn": f"Google Gemini API Key সঠিক নয় বা মেয়াদ শেষ হয়ে গেছে। backend/.env ফাইলে {key_env} যাচাই করুন।",
-                "message_en": f"Google Gemini API Key is invalid, missing, or expired. Please check {key_env} in backend/.env.",
-                "troubleshooting_bn": [
-                    f"backend/.env ফাইলে {key_env} সঠিক কি না তা পরীক্ষা করুন।",
-                    "Google AI Studio (https://aistudio.google.com) থেকে নতুন API Key সংগ্রহ করে ব্যাকএন্ড রিস্টার্ট করুন।"
-                ]
-            },
-            "connection_error": {
-                "status_code": 503,
-                "title": "Google Gemini সংযোগ বিচ্ছিন্ন (Not Connected)",
-                "message_bn": "Google Gemini এপিআই সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না। আপনার ইন্টারনেট সংযোগ পরীক্ষা করুন।",
-                "message_en": "Could not connect to Google Gemini API server. Please verify internet connection.",
-                "troubleshooting_bn": [
-                    "আপনার ইন্টারনেট সংযোগ সচল আছে কি না পরীক্ষা করুন।",
-                    "Google AI Studio স্ট্যাটাস চালু আছে কি না দেখুন।"
-                ]
-            },
-            "not_found_error": {
-                "status_code": 404,
-                "title": "Google Gemini মডেল পাওয়া যায়নি",
-                "message_bn": f"মডেল '{model_name}' Google Gemini এপিআই-তে পাওয়া যায়নি।",
-                "message_en": f"Model '{model_name}' was not found in Google Gemini API.",
-                "troubleshooting_bn": ["backend/.env ফাইলে MODEL_NAME=gemini-1.5-flash বা gemini-2.0-flash দিয়ে চেষ্টা করুন।"]
-            },
-            "rate_limit_error": {
-                "status_code": 429,
-                "title": "Google Gemini কোটা বা রেট লিমিট অতিক্রম (Quota Exceeded)",
-                "message_bn": "Google Gemini এপিআই-এর প্রতি মিনিটের রিকোয়েস্ট সীমা বা দৈনিক কোটা শেষ হয়েছে। অনুগ্রহ করে ১ মিনিট পর চেষ্টা করুন।",
-                "message_en": "Google Gemini API rate limit or quota exceeded (429/RESOURCE_EXHAUSTED). Please wait a moment.",
-                "troubleshooting_bn": [
-                    "Google Gemini Free Tier লিমিট শেষ হতে পারে — ১-২ মিনিট পর পুনরায় চেষ্টা করুন।",
-                    "অথবা Google Cloud কনসোলে বিলিং যুক্ত করুন।"
-                ]
-            },
-            "token_credit_error": {
-                "status_code": 402,
-                "title": "Google Cloud বিলিং কোটা ত্রুটি",
-                "message_bn": "Google Cloud / Gemini অ্যাকাউন্টে পর্যাপ্ত কোটা বা ক্রেডিট নেই।",
-                "message_en": "Google Cloud / Gemini project quota or credit exhausted.",
-                "troubleshooting_bn": ["Google Cloud কনসোলে কোটা ও বিলিং স্থিতি পরীক্ষা করুন।"]
+                "title": "Vertex AI বিলিং ত্রুটি",
+                "message_bn": "Google Cloud অ্যাকাউন্টে বিলিং বা ক্রেডিট সমস্যা দেখা দিয়েছে।",
+                "message_en": "Google Cloud billing or quota problem.",
+                "troubleshooting_bn": ["Google Cloud কনসোলে বিলিং স্ট্যাটাস সক্রিয় আছে কি না দেখুন।"]
             },
             "context_limit_error": {
                 "status_code": 400,
                 "title": "টোকেন ধারণক্ষমতা অতিক্রম",
-                "message_bn": "ইনপুট বিবরণটি Gemini মডেলের অনুমোদিত কনটেক্সট সীমা ছাড়িয়ে গেছে। সংক্ষেপ করে লিখুন।",
-                "message_en": "Input text exceeds Gemini model context window limit.",
+                "message_bn": "ইনপুট বিবরণটি Vertex AI মডেলের কনটেক্সট উইন্ডো ছাড়িয়ে গেছে।",
+                "message_en": "Input text exceeds Vertex AI model context limit.",
                 "troubleshooting_bn": ["বিবরণটি সংক্ষেপ করে পুনরায় সাবমিট করুন।"]
             },
             "missing_api_key": {
                 "status_code": 401,
-                "title": "Google Gemini এপিআই কী অনুপস্থিত (Missing API Key)",
-                "message_bn": f"Google Gemini API কী কনফিগার করা হয়নি। backend/.env ফাইলে {key_env} প্রদান করুন।",
-                "message_en": f"{key_env} is not configured in backend/.env.",
+                "title": "Vertex AI কনফিগারেশন ত্রুটি (API Key Missing)",
+                "message_bn": f"Vertex AI এর জন্য {key_env} অথবা GOOGLE_CLOUD_PROJECT কনফিগার করা হয়নি।",
+                "message_en": "Missing Vertex AI token or GOOGLE_CLOUD_PROJECT in backend/.env.",
                 "troubleshooting_bn": [
-                    f"backend/.env ফাইলে {key_env}=AIzaSy... যোগ করুন।",
-                    "https://aistudio.google.com থেকে বিনামূল্যে API কী পেতে পারেন।"
+                    f"backend/.env ফাইলে {key_env} এবং GOOGLE_CLOUD_PROJECT=আপনার_প্রজেক্ট যোগ করুন।"
                 ]
             },
             "general_error": {
                 "status_code": 500,
-                "title": "Google Gemini প্রসেসিং ত্রুটি",
-                "message_bn": "Google Gemini মডেল থেকে প্রতিক্রিয়া পেতে সমস্যা হয়েছে।",
-                "message_en": "An error occurred while communicating with Google Gemini.",
-                "troubleshooting_bn": ["কিছুক্ষণ পর পুনরায় চেষ্টা করুন।"]
+                "title": "Vertex AI প্রসেসিং ত্রুটি",
+                "message_bn": "Google Cloud Vertex AI থেকে প্রতিক্রিয়া পেতে সমস্যা হয়েছে।",
+                "message_en": "An error occurred with Vertex AI processing.",
+                "troubleshooting_bn": ["গুগল ক্লাউড কনসোল লগ পরীক্ষা করুন।"]
             }
         }
 
-    # 4. OpenAI (Direct API)
-    if provider == "openai":
-        return {
-            "authentication_error": {
-                "status_code": 401,
-                "title": "OpenAI এপিআই কী ত্রুটি (Error 401 Unauthorized)",
-                "message_bn": f"OpenAI API Key সঠিক নয় বা মেয়াদ শেষ। backend/.env ফাইলে {key_env} যাচাই করুন।",
-                "message_en": f"OpenAI API Key is invalid or expired. Check {key_env} in backend/.env.",
-                "troubleshooting_bn": [
-                    f"backend/.env ফাইলে {key_env} সঠিক আছে কি না তা যাচাই করুন।",
-                    "platform.openai.com থেকে নতুন API Key সংগ্রহ করে ব্যাকএন্ড রিস্টার্ট করুন।"
-                ]
-            },
-            "connection_error": {
-                "status_code": 503,
-                "title": "OpenAI সার্ভার সংযোগ বিচ্ছিন্ন",
-                "message_bn": "OpenAI এপিআই সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না। আপনার ইন্টারনেট সংযোগ পরীক্ষা করুন।",
-                "message_en": "Could not connect to OpenAI API server.",
-                "troubleshooting_bn": ["ইন্টারনেট সংযোগ এবং OpenAI সার্ভিস স্থিতি পরীক্ষা করুন।"]
-            },
-            "not_found_error": {
-                "status_code": 404,
-                "title": "OpenAI মডেল পাওয়া যায়নি",
-                "message_bn": f"মডেল '{model_name}' OpenAI-তে পাওয়া যায়নি।",
-                "message_en": f"Model '{model_name}' was not found in OpenAI.",
-                "troubleshooting_bn": ["backend/.env ফাইলে MODEL_NAME=gpt-4o-mini ব্যবহার করুন।"]
-            },
-            "rate_limit_error": {
-                "status_code": 429,
-                "title": "OpenAI রেট লিমিট অতিক্রম (Error 429)",
-                "message_bn": "OpenAI এপিআই রেট লিমিট অতিক্রম করেছে। অনুগ্রহ করে কিছুক্ষণ অপেক্ষা করুন।",
-                "message_en": "OpenAI rate limit exceeded. Please retry shortly.",
-                "troubleshooting_bn": ["১-২ মিনিট অপেক্ষা করে পুনরায় চেষ্টা করুন।"]
-            },
-            "token_credit_error": {
-                "status_code": 402,
-                "title": "OpenAI ক্রেডিট ব্যালেন্স শেষ (Insufficient Quota)",
-                "message_bn": "আপনার OpenAI অ্যাকাউন্টে পর্যাপ্ত ক্রেডিট ব্যালেন্স নেই। platform.openai.com থেকে ক্রেডিট রিচার্জ করুন।",
-                "message_en": "Insufficient quota or credit on OpenAI account.",
-                "troubleshooting_bn": ["platform.openai.com/account/billing থেকে ক্রেডিট যোগ করুন।"]
-            },
-            "context_limit_error": {
-                "status_code": 400,
-                "title": "টোকেন ধারণক্ষমতা অতিক্রম",
-                "message_bn": "ইনপুট বিবরণটি মডেলের টোকেন সীমা ছাড়িয়ে গেছে।",
-                "message_en": "Input exceeds OpenAI model context limit.",
-                "troubleshooting_bn": ["বিবরণটি সংক্ষেপ করে পুনরায় সাবমিট করুন।"]
-            },
-            "missing_api_key": {
-                "status_code": 401,
-                "title": "OpenAI এপিআই কী অনুপস্থিত",
-                "message_bn": f"OpenAI API Key কনফিগার করা হয়নি। backend/.env ফাইলে {key_env} প্রদান করুন।",
-                "message_en": f"{key_env} is missing in backend/.env.",
-                "troubleshooting_bn": [f"backend/.env ফাইলে {key_env}=sk-... সেট করুন।"]
-            },
-            "general_error": {
-                "status_code": 500,
-                "title": "OpenAI প্রসেসিং ত্রুটি",
-                "message_bn": "OpenAI মডেল থেকে প্রতিক্রিয়া পেতে সমস্যা হয়েছে।",
-                "message_en": "An error occurred with OpenAI processing.",
-                "troubleshooting_bn": ["কিছুক্ষণ পর পুনরায় চেষ্টা করুন।"]
-            }
-        }
-
-    # 5. OpenRouter (Multi-Model Gateway)
-    if provider == "openrouter":
-        return {
-            "authentication_error": {
-                "status_code": 401,
-                "title": "OpenRouter এপিআই কী ত্রুটি (Error 401 Unauthorized)",
-                "message_bn": f"OpenRouter API Key বা টোকেন সঠিক নয় অথবা মেয়াদ শেষ। backend/.env ফাইলে {key_env} যাচাই করুন।",
-                "message_en": f"OpenRouter API Key is invalid, missing, or expired. Please verify {key_env} in backend/.env.",
-                "troubleshooting_bn": [
-                    f"backend/.env ফাইলে {key_env} সঠিক আছে কি না তা যাচাই করুন।",
-                    "API Key পরিবর্তন করলে ব্যাকএন্ড সার্ভার রিস্টার্ট করুন।"
-                ]
-            },
-            "connection_error": {
-                "status_code": 503,
-                "title": "OpenRouter সার্ভার সংযোগ বিচ্ছিন্ন (Not Connected)",
-                "message_bn": "OpenRouter মডেল সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না। ইন্টারনেট সংযোগ ও সার্ভারের স্থিতি পরীক্ষা করুন।",
-                "message_en": "Could not connect to OpenRouter server. Please check internet connection.",
-                "troubleshooting_bn": [
-                    "আপনার কম্পিউটার ও ব্যাকএন্ড সার্ভার সচল আছে কি না পরীক্ষা করুন।",
-                    "ইন্টারনেট সংযোগ চালু আছে কি না দেখুন।"
-                ]
-            },
-            "not_found_error": {
-                "status_code": 404,
-                "title": "OpenRouter মডেল পাওয়া যায়নি",
-                "message_bn": f"মডেল '{model_name}' OpenRouter-এ পাওয়া যায়নি।",
-                "message_en": f"Model '{model_name}' was not found on OpenRouter.",
-                "troubleshooting_bn": ["openrouter.ai/models থেকে সক্রিয় মডেল নাম যাচাই করে backend/.env-এ সেট করুন।"]
-            },
-            "rate_limit_error": {
-                "status_code": 429,
-                "title": "টোকেন কোটা বা রেট লিমিট অতিক্রম (Error 429 Rate Limit)",
-                "message_bn": "টোকেন কোটা শেষ অথবা মডেলটির সাময়িক রেট লিমিট অতিক্রম করেছে। অনুগ্রহ করে কিছুক্ষণ পর পুনরায় চেষ্টা করুন।",
-                "message_en": "OpenRouter Rate Limit / Token Quota Exceeded (429). Please retry shortly.",
-                "troubleshooting_bn": [
-                    "মডেলের বর্তমান রিকোয়েস্ট লিমিট শেষ হয়েছে — ১-২ মিনিট অপেক্ষা করে পুনরায় চেষ্টা করুন।",
-                    "অথবা backend/.env ফাইলে অপর একটি সক্রিয় মডেল বা নিজস্ব API Key ব্যবহার করুন।"
-                ]
-            },
-            "token_credit_error": {
-                "status_code": 402,
-                "title": "টোকেন ব্যালেন্স ত্রুটি (Error 402 Payment Required)",
-                "message_bn": "আপনার OpenRouter অ্যাকাউন্টে পর্যাপ্ত টোকেন ব্যালেন্স বা ক্রেডিট নেই। অনুগ্রহ করে টোকেন রিচার্জ করুন।",
-                "message_en": "OpenRouter Token Balance Error (402 Payment Required): Insufficient credit or token balance.",
-                "troubleshooting_bn": [
-                    "আপনার OpenRouter অ্যাকাউন্টে টোকেন ব্যালেন্স বা ক্রেডিট যোগ করুন।"
-                ]
-            },
-            "context_limit_error": {
-                "status_code": 400,
-                "title": "টোকেন ধারণক্ষমতা অতিক্রম (Token Context Limit)",
-                "message_bn": "ইনপুট বিবরণটি মডেলের অনুমোদিত টোকেন সীমা ছাড়িয়ে গেছে। অনুগ্রহ করে সংক্ষেপ করে লিখুন।",
-                "message_en": "Input text exceeds the model maximum token context window.",
-                "troubleshooting_bn": ["বিবরণটি সংক্ষেপ করে পুনরায় সাবমিট করুন।"]
-            },
-            "missing_api_key": {
-                "status_code": 401,
-                "title": "LLM এপিআই কী অনুপস্থিত (API Key Missing)",
-                "message_bn": f"এআই মডেলের API কী কনফিগার করা হয়নি। backend/.env ফাইলে {key_env} প্রদান করুন।",
-                "message_en": f"{key_env} is missing or unconfigured in backend/.env.",
-                "troubleshooting_bn": [f"backend/.env ফাইলে {key_env} সেট করুন।"]
-            },
-            "general_error": {
-                "status_code": 500,
-                "title": "এলএলএম প্রসেসিং ত্রুটি (LLM Processing Error)",
-                "message_bn": "এআই মডেল থেকে প্রতিক্রিয়া পেতে সমস্যা হয়েছে।",
-                "message_en": "An unexpected error occurred while communicating with the AI model.",
-                "troubleshooting_bn": ["কিছুক্ষণ পর পুনরায় চেষ্টা করুন।"]
-            }
-        }
-
-    # 6. Generic / Custom OpenAI-compatible Endpoint Fallback
+    # 3. OpenRouter (Multi-Model Gateway) - Default
     return {
         "authentication_error": {
             "status_code": 401,
-            "title": f"{display_name} অথেন্টিকেশন ত্রুটি (Error 401 Unauthorized)",
-            "message_bn": f"এআই মডেলের API Key বা টোকেন সঠিক নয় অথবা মেয়াদ শেষ। backend/.env ফাইলে {key_env} যাচাই করুন।",
-            "message_en": f"{display_name} Authentication Error (401 Unauthorized): Invalid or expired API token. Check {key_env}.",
+            "title": "OpenRouter এপিআই কী ত্রুটি (Error 401 Unauthorized)",
+            "message_bn": f"এআই মডেলের OpenRouter API Key বা টোকেন সঠিক নয় অথবা মেয়াদ শেষ। backend/.env ফাইলে {key_env} যাচাই করুন।",
+            "message_en": f"OpenRouter API Key is invalid, missing, or expired. Please verify {key_env} in backend/.env.",
             "troubleshooting_bn": [
                 f"backend/.env ফাইলে {key_env} সঠিক আছে কি না তা যাচাই করুন।",
                 "API Key পরিবর্তন করলে ব্যাকএন্ড সার্ভার রিস্টার্ট করুন।"
@@ -392,34 +194,39 @@ def get_provider_templates(provider_info: Optional[Dict[str, Any]] = None) -> Di
         },
         "connection_error": {
             "status_code": 503,
-            "title": f"{display_name} সংযোগ বিচ্ছিন্ন (Not Connected)",
-            "message_bn": f"{display_name} সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না। ইন্টারনেট সংযোগ ও সার্ভারের স্থিতি পরীক্ষা করুন।",
-            "message_en": f"Could not connect to {display_name} server. Please verify connection.",
+            "title": "OpenRouter সার্ভার সংযোগ বিচ্ছিন্ন (Not Connected)",
+            "message_bn": "OpenRouter মডেল সার্ভারের সাথে সংযোগ স্থাপন করা যাচ্ছে না। ইন্টারনেট সংযোগ ও সার্ভারের স্থিতি পরীক্ষা করুন।",
+            "message_en": "Could not connect to OpenRouter server. Please check internet connection.",
             "troubleshooting_bn": [
-                "সার্ভার ও ইন্টারনেট সংযোগ সচল আছে কি না পরীক্ষা করুন।",
-                f"সার্ভার URL সঠিক কি না দেখুন: {base_url or 'default'}"
+                "আপনার কম্পিউটার ও ব্যাকএন্ড সার্ভার সচল আছে কি না পরীক্ষা করুন।",
+                "ইন্টারনেট সংযোগ চালু আছে কি না দেখুন।"
             ]
         },
         "not_found_error": {
             "status_code": 404,
-            "title": f"{display_name} মডেল পাওয়া যায়নি",
-            "message_bn": f"মডেল '{model_name}' পাওয়া যায়নি।",
-            "message_en": f"Model '{model_name}' was not found.",
-            "troubleshooting_bn": ["মডেলের নাম সঠিক কি না পরীক্ষা করুন।"]
+            "title": "OpenRouter মডেল পাওয়া যায়নি",
+            "message_bn": f"মডেল '{model_name}' OpenRouter-এ পাওয়া যায়নি।",
+            "message_en": f"Model '{model_name}' was not found on OpenRouter.",
+            "troubleshooting_bn": ["openrouter.ai/models থেকে সক্রিয় মডেল নাম যাচাই করে backend/.env-এ সেট করুন।"]
         },
         "rate_limit_error": {
             "status_code": 429,
-            "title": f"{display_name} রেট লিমিট অতিক্রম (Error 429)",
-            "message_bn": "টোকেন কোটা শেষ অথবা মডেলটির সাময়িক রেট লিমিট অতিক্রম করেছে। অনুগ্রহ করে কিছুক্ষণ পর চেষ্টা করুন।",
-            "message_en": f"{display_name} Rate Limit / Quota Exceeded (429). Please retry shortly.",
-            "troubleshooting_bn": ["১-২ মিনিট অপেক্ষা করে পুনরায় চেষ্টা করুন।"]
+            "title": "টোকেন কোটা বা রেট লিমিট অতিক্রম (Error 429 Rate Limit)",
+            "message_bn": "টোকেন কোটা শেষ অথবা মডেলটির সাময়িক রেট লিমিট অতিক্রম করেছে। অনুগ্রহ করে কিছুক্ষণ পর পুনরায় চেষ্টা করুন।",
+            "message_en": "OpenRouter Rate Limit / Token Quota Exceeded (429). Please retry shortly.",
+            "troubleshooting_bn": [
+                "মডেলের বর্তমান রিকোয়েস্ট লিমিট শেষ হয়েছে — ১-২ মিনিট অপেক্ষা করে পুনরায় চেষ্টা করুন।",
+                "অথবা backend/.env ফাইলে অপর একটি সক্রিয় মডেল বা নিজস্ব API Key ব্যবহার করুন।"
+            ]
         },
         "token_credit_error": {
             "status_code": 402,
-            "title": f"{display_name} ব্যালেন্স ত্রুটি (Error 402 Payment Required)",
-            "message_bn": f"আপনার {display_name} অ্যাকাউন্টে পর্যাপ্ত ব্যালেন্স বা ক্রেডিট নেই।",
-            "message_en": f"Insufficient credit or balance on {display_name} account.",
-            "troubleshooting_bn": ["অ্যাকাউন্টে ব্যালেন্স বা ক্রেডিট যোগ করুন।"]
+            "title": "টোকেন ব্যালেন্স ত্রুটি (Error 402 Payment Required)",
+            "message_bn": "আপনার OpenRouter অ্যাকাউন্টে পর্যাপ্ত টোকেন ব্যালেন্স বা ক্রেডিট নেই। অনুগ্রহ করে টোকেন রিচার্জ করুন।",
+            "message_en": "OpenRouter Token Balance Error (402 Payment Required): Insufficient credit or token balance.",
+            "troubleshooting_bn": [
+                "আপনার OpenRouter অ্যাকাউন্টে টোকেন ব্যালেন্স বা ক্রেডিট যোগ করুন।"
+            ]
         },
         "context_limit_error": {
             "status_code": 400,
@@ -437,9 +244,9 @@ def get_provider_templates(provider_info: Optional[Dict[str, Any]] = None) -> Di
         },
         "general_error": {
             "status_code": 500,
-            "title": f"{display_name} প্রসেসিং ত্রুটি",
-            "message_bn": f"{display_name} মডেল থেকে প্রতিক্রিয়া পেতে সমস্যা হয়েছে।",
-            "message_en": f"An unexpected error occurred while communicating with {display_name}.",
+            "title": "এলএলএম প্রসেসিং ত্রুটি (LLM Processing Error)",
+            "message_bn": "এআই মডেল থেকে প্রতিক্রিয়া পেতে সমস্যা হয়েছে।",
+            "message_en": "An unexpected error occurred while communicating with the AI model.",
             "troubleshooting_bn": ["কিছুক্ষণ পর পুনরায় চেষ্টা করুন।"]
         }
     }
@@ -453,7 +260,7 @@ def parse_llm_error(exc: Exception, provider_info: Optional[Dict[str, Any]] = No
     """
     Parses LLM exceptions and classifies them into standardized errors
     (401 Unauthorized, disconnection/network, 404 Model Not Found, 429 Rate Limit,
-    402 Payment Required, and 400 Context Limit) with dynamic provider awareness.
+    402 Payment Required, and 400 Context Limit) for Local LLMs, Vertex AI, and OpenRouter.
     """
     if provider_info is None:
         try:
@@ -470,7 +277,7 @@ def parse_llm_error(exc: Exception, provider_info: Optional[Dict[str, Any]] = No
     if not status_code and hasattr(exc, "response") and hasattr(exc.response, "status_code"):
         status_code = exc.response.status_code
 
-    # 1. Check for 404 Model Not Found (common in Ollama when model isn't pulled, or deprecated cloud model)
+    # 1. Check for 404 Model Not Found
     if (
         status_code == 404
         or "404" in err_str
@@ -481,14 +288,6 @@ def parse_llm_error(exc: Exception, provider_info: Optional[Dict[str, Any]] = No
     ):
         template = templates.get("not_found_error", templates["general_error"]).copy()
         troubleshooting = list(template.get("troubleshooting_bn", []))
-
-        # If upstream provider recommended an alternative model, extract and display it
-        if "please update your code to use" in err_lower:
-            import re
-            m = re.search(r"use\s+(models/)?([a-zA-Z0-9\.\-_]+)", err_str)
-            if m:
-                suggested_model = m.group(2)
-                troubleshooting.insert(0, f"প্রস্তাবিত মডেল: backend/.env ফাইলে MODEL_NAME={suggested_model} সেট করুন।")
 
         return {
             "error_type": "not_found_error",
@@ -506,6 +305,7 @@ def parse_llm_error(exc: Exception, provider_info: Optional[Dict[str, Any]] = No
         or "401" in err_str
         or "authentication" in err_lower
         or "unauthorized" in err_lower
+        or "unauthenticated" in err_lower
         or "api_key_invalid" in err_lower
         or "api key not valid" in err_lower
         or "invalid api key" in err_lower
@@ -583,7 +383,6 @@ def parse_llm_error(exc: Exception, provider_info: Optional[Dict[str, Any]] = No
         troubleshooting = list(template.get("troubleshooting_bn", []))
         message_bn = template["message_bn"]
 
-        # If upstream specifies a retry cooldown (e.g. Google's "Please retry in 11.32s")
         import re
         m = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)s?", err_str, re.IGNORECASE)
         if not m:
@@ -592,7 +391,7 @@ def parse_llm_error(exc: Exception, provider_info: Optional[Dict[str, Any]] = No
             try:
                 sec = int(float(m.group(1)))
                 message_bn += f" (অনুগ্রহ করে {sec} সেকেন্ড অপেক্ষা করুন)"
-                troubleshooting.insert(0, f"গুগল এপিআই কুলডাউন: ঠিক {sec} সেকেন্ড অপেক্ষা করে আবার চেষ্টা করুন।")
+                troubleshooting.insert(0, f"কুলডাউন: ঠিক {sec} সেকেন্ড অপেক্ষা করে আবার চেষ্টা করুন।")
             except Exception:
                 pass
 

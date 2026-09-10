@@ -1,11 +1,9 @@
 """
 LLM Model Connection and Health Check Utilities.
-Provides dynamic, decoupled multi-provider support:
-- Google Gemini (native direct API via langchain_google_genai)
-- Local LLMs (Ollama, LM Studio, vLLM, LocalAI - requires no API key!)
-- OpenAI (official direct API)
-- OpenRouter (multi-model gateway)
-- Custom OpenAI-compatible endpoints
+Strictly supports:
+1. Local LLMs (Ollama, LM Studio, vLLM - requires no API key!)
+2. Google Cloud Vertex AI (Google Cloud enterprise platform)
+3. OpenRouter (Multi-model gateway)
 """
 
 import os
@@ -24,10 +22,15 @@ LLM_PROVIDER_RAW = os.getenv("LLM_PROVIDER", "").strip().lower()
 LLM_API_KEY_RAW = os.getenv("LLM_API_KEY", "").strip()
 LLM_BASE_URL_RAW = (os.getenv("LLM_BASE_URL", "").strip() or os.getenv("OPENAI_API_BASE", "").strip()).rstrip("/")
 
+# 1. OpenRouter
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-GOOGLE_API_KEY = (os.getenv("GOOGLE_API_KEY", "").strip() or os.getenv("GEMINI_API_KEY", "").strip())
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 
+# 2. Google Cloud Vertex AI
+GOOGLE_CLOUD_PROJECT = (os.getenv("GOOGLE_CLOUD_PROJECT", "").strip() or os.getenv("VERTEX_PROJECT_ID", "").strip() or os.getenv("PROJECT_ID", "").strip())
+GOOGLE_CLOUD_REGION = (os.getenv("GOOGLE_CLOUD_REGION", "").strip() or os.getenv("VERTEX_LOCATION", "").strip() or "us-central1")
+GOOGLE_API_KEY = (os.getenv("GOOGLE_API_KEY", "").strip() or os.getenv("VERTEX_API_KEY", "").strip())
+
+# Shared Generation Parameters
 MODEL_NAME = os.getenv("MODEL_NAME", "").strip()
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0"))
@@ -37,75 +40,84 @@ REASONING_MAX_TOKENS = int(os.getenv("REASONING_MAX_TOKENS", "0"))
 TOKEN_BUDGET_LIMIT = int(os.getenv("TOKEN_BUDGET_LIMIT", "180"))
 
 
+def resolve_vertex_token() -> str:
+    """
+    Resolves the Vertex AI access token.
+    First checks if explicit GOOGLE_API_KEY/VERTEX_API_KEY is provided.
+    If not or if using service account, attempts resolving OAuth 2 credentials via google.auth.
+    """
+    key = GOOGLE_API_KEY or LLM_API_KEY_RAW
+
+    # Try resolving ADC or service account credentials via google.auth
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        if not credentials.valid:
+            credentials.refresh(Request())
+        if credentials.token:
+            return credentials.token
+    except Exception:
+        pass
+
+    return key
+
+
 def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]:
     """
-    Detects and returns active provider metadata including display name,
-    base URL, API key, model, and whether an API key is strictly required.
+    Detects and returns active provider metadata.
+    Supported: 'local' (Ollama/LM Studio), 'vertex' (Google Cloud), 'openrouter'.
     """
     prov = (provider_override or LLM_PROVIDER_RAW or "").lower()
     base_url = LLM_BASE_URL_RAW
 
-    # 1. Google Gemini (Official API via OpenAI-compatible endpoint)
-    if prov in ("google", "gemini"):
-        key = GOOGLE_API_KEY or LLM_API_KEY_RAW
-        model = MODEL_NAME or "gemini-2.5-pro"
-        url = base_url or "https://generativelanguage.googleapis.com/v1beta/openai/"
+    # 1. Google Cloud Vertex AI
+    if prov in ("vertex", "vertexai"):
+        key = resolve_vertex_token()
+        model = MODEL_NAME or "google/gemini-2.0-flash"
+        region = GOOGLE_CLOUD_REGION or "us-central1"
+        project = GOOGLE_CLOUD_PROJECT or ""
+
+        if base_url:
+            url = base_url
+        elif project:
+            url = f"https://{region}-aiplatform.googleapis.com/v1beta1/projects/{project}/locations/{region}/endpoints/openapi/"
+        else:
+            url = f"https://{region}-aiplatform.googleapis.com/v1beta1/locations/{region}/endpoints/openapi/"
+
         return {
-            "provider": "google",
-            "display_name": "Google Gemini",
+            "provider": "vertex",
+            "display_name": "Google Cloud Vertex AI",
             "requires_api_key": True,
             "api_key_env": "GOOGLE_API_KEY",
             "api_key": key,
             "base_url": url,
-            "model": model
+            "model": model,
+            "project": project,
+            "region": region
         }
 
-    # 2. Ollama (Local LLM, default port 11434)
-    if prov in ("ollama",):
-        url = base_url or "http://localhost:11434/v1"
-        model = MODEL_NAME or "mistral"
-        return {
-            "provider": "ollama",
-            "display_name": "Ollama (Local LLM)",
-            "requires_api_key": False,
-            "api_key_env": "LLM_API_KEY",
-            "api_key": LLM_API_KEY_RAW or "ollama",
-            "base_url": url,
-            "model": model
-        }
+    # 2. Local LLM (Ollama, LM Studio, vLLM - No API Key Required)
+    if prov in ("local", "ollama", "lmstudio", "vllm"):
+        is_ollama = (prov == "ollama") or ("11434" in base_url)
+        default_url = "http://localhost:11434/v1" if is_ollama else "http://localhost:1234/v1"
+        default_model = "mistral" if is_ollama else "local-model"
+        display = "Ollama (Local LLM)" if is_ollama else "Local LLM (LM Studio / vLLM)"
 
-    # 3. LM Studio / Local OpenAI-compatible server (default port 1234)
-    if prov in ("local", "lmstudio", "vllm"):
-        url = base_url or "http://localhost:1234/v1"
-        model = MODEL_NAME or "local-model"
         return {
             "provider": "local",
-            "display_name": "Local LLM (LM Studio / vLLM)",
+            "display_name": display,
             "requires_api_key": False,
             "api_key_env": "LLM_API_KEY",
-            "api_key": LLM_API_KEY_RAW or "lm-studio",
-            "base_url": url,
-            "model": model
+            "api_key": LLM_API_KEY_RAW or "local",
+            "base_url": base_url or default_url,
+            "model": MODEL_NAME or default_model
         }
 
-    # 4. OpenAI (Official Direct API)
-    if prov in ("openai",):
-        key = OPENAI_API_KEY or LLM_API_KEY_RAW
-        model = MODEL_NAME or "gpt-4o-mini"
-        return {
-            "provider": "openai",
-            "display_name": "OpenAI",
-            "requires_api_key": True,
-            "api_key_env": "OPENAI_API_KEY",
-            "api_key": key,
-            "base_url": base_url or "https://api.openai.com/v1",
-            "model": model
-        }
-
-    # 5. OpenRouter
+    # 3. OpenRouter
     if prov in ("openrouter",):
         key = OPENROUTER_API_KEY or LLM_API_KEY_RAW
-        model = MODEL_NAME or "google/gemini-2.0-flash-001"
+        model = MODEL_NAME or "nex-agi/nex-n2.5-mini:free"
         return {
             "provider": "openrouter",
             "display_name": "OpenRouter",
@@ -116,19 +128,9 @@ def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]
             "model": model
         }
 
-    # 6. Automatic Detection when LLM_PROVIDER is not set:
+    # Auto-detection when LLM_PROVIDER is not explicitly specified:
     if base_url:
-        if "11434" in base_url:
-            return {
-                "provider": "ollama",
-                "display_name": "Ollama (Local LLM)",
-                "requires_api_key": False,
-                "api_key_env": "LLM_API_KEY",
-                "api_key": LLM_API_KEY_RAW or "ollama",
-                "base_url": base_url,
-                "model": MODEL_NAME or "mistral"
-            }
-        if any(h in base_url for h in ("1234", "localhost", "127.0.0.1", "0.0.0.0")):
+        if any(h in base_url for h in ("localhost", "127.0.0.1", "11434", "1234")):
             return {
                 "provider": "local",
                 "display_name": "Local LLM",
@@ -136,49 +138,32 @@ def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]
                 "api_key_env": "LLM_API_KEY",
                 "api_key": LLM_API_KEY_RAW or "local",
                 "base_url": base_url,
-                "model": MODEL_NAME or "local-model"
+                "model": MODEL_NAME or "mistral"
             }
-        if "googleapis.com" in base_url:
+        if "aiplatform.googleapis.com" in base_url:
             return {
-                "provider": "google",
-                "display_name": "Google Gemini",
+                "provider": "vertex",
+                "display_name": "Google Cloud Vertex AI",
                 "requires_api_key": True,
                 "api_key_env": "GOOGLE_API_KEY",
-                "api_key": GOOGLE_API_KEY or LLM_API_KEY_RAW,
+                "api_key": resolve_vertex_token(),
                 "base_url": base_url,
-                "model": MODEL_NAME or "gemini-1.5-flash"
+                "model": MODEL_NAME or "google/gemini-2.0-flash",
+                "project": GOOGLE_CLOUD_PROJECT,
+                "region": GOOGLE_CLOUD_REGION
             }
-        return {
-            "provider": "custom",
-            "display_name": f"Custom LLM ({base_url})",
-            "requires_api_key": bool(LLM_API_KEY_RAW),
-            "api_key_env": "LLM_API_KEY",
-            "api_key": LLM_API_KEY_RAW or "custom",
-            "base_url": base_url,
-            "model": MODEL_NAME or "custom-model"
-        }
 
-    # Key-based detection:
-    if GOOGLE_API_KEY and not OPENROUTER_API_KEY:
+    if GOOGLE_CLOUD_PROJECT and not OPENROUTER_API_KEY:
         return {
-            "provider": "google",
-            "display_name": "Google Gemini",
+            "provider": "vertex",
+            "display_name": "Google Cloud Vertex AI",
             "requires_api_key": True,
             "api_key_env": "GOOGLE_API_KEY",
-            "api_key": GOOGLE_API_KEY,
-            "base_url": "",
-            "model": MODEL_NAME or "gemini-1.5-flash"
-        }
-
-    if OPENAI_API_KEY and not OPENROUTER_API_KEY:
-        return {
-            "provider": "openai",
-            "display_name": "OpenAI",
-            "requires_api_key": True,
-            "api_key_env": "OPENAI_API_KEY",
-            "api_key": OPENAI_API_KEY,
-            "base_url": "https://api.openai.com/v1",
-            "model": MODEL_NAME or "gpt-4o-mini"
+            "api_key": resolve_vertex_token(),
+            "base_url": f"https://{GOOGLE_CLOUD_REGION}-aiplatform.googleapis.com/v1beta1/projects/{GOOGLE_CLOUD_PROJECT}/locations/{GOOGLE_CLOUD_REGION}/endpoints/openapi/",
+            "model": MODEL_NAME or "google/gemini-2.0-flash",
+            "project": GOOGLE_CLOUD_PROJECT,
+            "region": GOOGLE_CLOUD_REGION
         }
 
     # Default fallback: OpenRouter
@@ -189,7 +174,7 @@ def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]
         "api_key_env": "OPENROUTER_API_KEY",
         "api_key": OPENROUTER_API_KEY or LLM_API_KEY_RAW,
         "base_url": "https://openrouter.ai/api/v1",
-        "model": MODEL_NAME or "google/gemma-4-31b-it:free"
+        "model": MODEL_NAME or "nex-agi/nex-n2.5-mini:free"
     }
 
 
@@ -203,9 +188,8 @@ def create_llm_client(
     extra_body_params: Optional[Dict[str, Any]] = None
 ) -> BaseChatModel:
     """
-    Factory function to dynamically create the appropriate LangChain chat model.
-    Instantiates ChatGoogleGenerativeAI for Google Gemini, or ChatOpenAI with appropriate
-    base_url and auth for Ollama, LM Studio, OpenAI, OpenRouter, and Custom endpoints.
+    Factory function to dynamically create the configured ChatOpenAI client.
+    Points to Local LLM, Google Cloud Vertex AI, or OpenRouter.
     """
     info = get_provider_info(provider_override)
     provider = info["provider"]
@@ -215,15 +199,21 @@ def create_llm_client(
     tokens = max_tokens if max_tokens is not None else MAX_TOKENS
     temp = temperature if temperature is not None else TEMPERATURE
 
-    # Extra body parameters (e.g. reasoning tokens)
+    # Reasoning tokens for OpenRouter models that support it
     eb = extra_body_params
-    if eb is None and REASONING_MAX_TOKENS > 0 and provider in ("openrouter", "openai"):
+    if eb is None and REASONING_MAX_TOKENS > 0 and provider == "openrouter":
         eb = {"reasoning": {"max_tokens": REASONING_MAX_TOKENS}}
 
-    # OpenAI-compatible clients (Google Gemini, Ollama, LM Studio, OpenAI, OpenRouter, Custom)
-    default_url = "https://generativelanguage.googleapis.com/v1beta/openai/" if provider == "google" else "https://openrouter.ai/api/v1"
+    default_url = "https://openrouter.ai/api/v1"
+    if provider == "vertex":
+        region = info.get("region") or GOOGLE_CLOUD_REGION or "us-central1"
+        project = info.get("project") or GOOGLE_CLOUD_PROJECT or ""
+        default_url = f"https://{region}-aiplatform.googleapis.com/v1beta1/projects/{project}/locations/{region}/endpoints/openapi/" if project else f"https://{region}-aiplatform.googleapis.com/v1beta1/locations/{region}/endpoints/openapi/"
+    elif provider == "local":
+        default_url = "http://localhost:11434/v1"
+
     target_base_url = url or default_url
-    target_api_key = key or ("ollama" if provider == "ollama" else ("local" if provider == "local" else "dummy"))
+    target_api_key = key or ("local" if provider == "local" else "dummy")
 
     kwargs: Dict[str, Any] = {
         "base_url": target_base_url,
@@ -246,7 +236,7 @@ def is_model_configured() -> bool:
     """
     Checks if the active model provider is properly configured.
     For local LLMs (Ollama, LM Studio), returns True without requiring an API key.
-    For cloud providers (Google, OpenAI, OpenRouter), ensures an API key is provided and valid.
+    For Vertex AI and OpenRouter, ensures an API key / token is provided and valid.
     """
     info = get_provider_info()
     if not info.get("requires_api_key", True):
@@ -255,7 +245,7 @@ def is_model_configured() -> bool:
     key = (info.get("api_key") or "").strip()
     if not key:
         return False
-    if key in ("sk-or-v1-...", "your-key-here", "sk-...", "AIzaSy..."):
+    if key in ("sk-or-v1-...", "your-key-here", "sk-..."):
         return False
     return True
 
@@ -277,9 +267,10 @@ def check_llm_status() -> Dict[str, Any]:
         return err
 
     try:
-        # Quick 1-token probe to verify connectivity, auth, and quota
+        # Quick 1-token probe to verify connectivity, auth, and quota using active client
+        active_llm = create_llm_client()
         probe_prompt = ChatPromptTemplate.from_messages([("user", "hi")])
-        probe_res = llm.invoke(probe_prompt.format_messages())
+        probe_res = active_llm.invoke(probe_prompt.format_messages())
         return {
             "connected": True,
             "status_code": 200,

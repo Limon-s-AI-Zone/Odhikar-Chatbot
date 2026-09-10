@@ -67,12 +67,12 @@ def test_llm_error_handling():
     assert "API Key" in parsed_401['message_bn'] or "API কী" in parsed_401['message_bn']
     print("✓ 401 Unauthorized parsed correctly with user-facing Bengali message.")
 
-    # 1b. Test Google Gemini-specific provider parsing
-    info_google = utils.get_provider_info("google")
-    parsed_google_401 = ai_pipeline.parse_llm_error(err_401, provider_info=info_google)
-    assert "Google Gemini" in parsed_google_401['title']
-    assert "GOOGLE_API_KEY" in parsed_google_401['message_bn']
-    print("✓ Google Gemini provider 401 dynamically injected.")
+    # 1b. Test Vertex AI-specific provider parsing
+    info_vertex = utils.get_provider_info("vertex")
+    parsed_vertex_401 = ai_pipeline.parse_llm_error(err_401, provider_info=info_vertex)
+    assert "Vertex AI" in parsed_vertex_401['title']
+    assert "GOOGLE_API_KEY" in parsed_vertex_401['message_bn']
+    print("✓ Vertex AI provider 401 dynamically injected.")
 
     # 1c. Test Ollama-specific provider connection error
     info_ollama = utils.get_provider_info("ollama")

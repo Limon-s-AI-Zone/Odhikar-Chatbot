@@ -1,7 +1,10 @@
 """
 Utils package for Odhikar backend.
-Provides dynamic, multi-provider model connection management and provider-aware error message handling.
-Supports Google Gemini, Ollama (Local), LM Studio / LocalAI, OpenAI, and OpenRouter.
+Provides model connection management and error message handling.
+Strictly supports:
+1. Local LLMs (Ollama / LM Studio - offline, no key needed)
+2. Google Cloud Vertex AI (GCP enterprise platform)
+3. OpenRouter (multi-model gateway)
 """
 
 from .error_messages import (
@@ -17,9 +20,11 @@ from .model_connection import (
     check_llm_status,
     is_model_configured,
     get_provider_info,
+    resolve_vertex_token,
     OPENROUTER_API_KEY,
     GOOGLE_API_KEY,
-    OPENAI_API_KEY,
+    GOOGLE_CLOUD_PROJECT,
+    GOOGLE_CLOUD_REGION,
     MODEL_NAME,
     MAX_TOKENS,
     TEMPERATURE,
@@ -32,9 +37,11 @@ __all__ = [
     "check_llm_status",
     "is_model_configured",
     "get_provider_info",
+    "resolve_vertex_token",
     "OPENROUTER_API_KEY",
     "GOOGLE_API_KEY",
-    "OPENAI_API_KEY",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_REGION",
     "MODEL_NAME",
     "MAX_TOKENS",
     "TEMPERATURE",

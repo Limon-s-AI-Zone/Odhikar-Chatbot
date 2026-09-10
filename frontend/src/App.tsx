@@ -14,6 +14,8 @@ interface LlmStatusState {
   message_en?: string;
   error_type?: string;
   raw_error?: string;
+  troubleshooting_bn?: string[];
+  provider_name?: string;
 }
 
 export const App: React.FC = () => {
@@ -225,15 +227,19 @@ export const App: React.FC = () => {
             {!llmStatus.connected && (
               <div style={{ backgroundColor: '#fff1f2', border: '1px solid #fecdd3', borderRadius: '8px', padding: '12px', marginBottom: '16px' }}>
                 <div style={{ fontSize: '12px', fontWeight: '700', color: '#9f1239', marginBottom: '4px' }}>
-                  নির্দেশনা:
+                  সম্ভাব্য সমাধান (Troubleshooting):
                 </div>
                 <ul style={{ fontSize: '12px', color: '#881337', margin: 0, paddingLeft: '18px', lineHeight: '1.6' }}>
-                  {llmStatus.status_code === 401 ? (
-                    <li><code>backend/.env</code> ফাইলে আপনার <code>OPENROUTER_API_KEY</code> পরীক্ষা করুন।</li>
+                  {llmStatus.troubleshooting_bn && llmStatus.troubleshooting_bn.length > 0 ? (
+                    llmStatus.troubleshooting_bn.map((tip, idx) => (
+                      <li key={idx}>{tip}</li>
+                    ))
+                  ) : llmStatus.status_code === 401 ? (
+                    <li><code>backend/.env</code> ফাইলে আপনার মডেল সেটিংস বা API কী (Vertex AI / OpenRouter) পরীক্ষা করুন।</li>
                   ) : llmStatus.status_code === 429 ? (
-                    <li>টোকেন রেট লিমিট বা কোটা শেষ হয়েছে। কিছুক্ষণ পর চেষ্টা করুন বা ক্রেডিট রিচার্জ করুন।</li>
+                    <li>টোকেন রেট লিমিট বা কোটা শেষ হয়েছে। কিছুক্ষণ পর পুনরায় চেষ্টা করুন।</li>
                   ) : (
-                    <li>ইন্টারনেট ও ব্যাকএন্ড সার্ভার (Port 8000) সচল আছে কি না পরীক্ষা করুন।</li>
+                    <li>ইন্টারনেট ও ব্যাকএন্ড সার্ভার (Port 8000) অথবা লোকাল এলএলএম সার্ভার সচল আছে কি না পরীক্ষা করুন।</li>
                   )}
                 </ul>
               </div>

@@ -21,6 +21,7 @@ export interface LlmErrorInfo {
   code?: string | number;
   details?: string;
   errorType?: string;
+  troubleshooting?: string[];
 }
 
 export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
@@ -274,12 +275,24 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         let errDetails = '';
         let errType = 'connection_error';
 
+        let troubleshootingList: string[] | undefined;
+
         if (fallbackErr.response) {
           const status = fallbackErr.response.status;
           errCode = status;
-          if (status === 401) {
+          const detail = fallbackErr.response.data?.detail;
+          if (detail && typeof detail === 'object') {
+            errorTitle = detail.title || errorTitle;
+            errorMsg = detail.message_bn || detail.message || errorMsg;
+            errType = detail.error_type || errType;
+            troubleshootingList = detail.troubleshooting_bn;
+            errDetails = detail.message_en || detail.error || '';
+          } else if (typeof detail === 'string') {
+            errorMsg = detail;
+            errDetails = detail;
+          } else if (status === 401) {
             errorTitle = 'এলএলএম অথেন্টিকেশন ত্রুটি (Error 401 Unauthorized)';
-            errorMsg = 'এআই মডেলের API কী বা টোকেন সঠিক নয় অথবা মেয়াদোত্তীর্ণ। backend/.env ফাইলে OPENROUTER_API_KEY যাচাই করুন।';
+            errorMsg = 'এআই মডেলের API কী বা ক্রেডেনশিয়াল সঠিক নয়। backend/.env ফাইলে সেটিংস (Local / Vertex AI / OpenRouter) যাচাই করুন।';
             errDetails = 'Invalid, missing, or expired API token (HTTP 401 Unauthorized).';
             errType = 'authentication_error';
           } else if (status === 429) {
@@ -292,11 +305,6 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             errorMsg = 'আপনার একাউন্টে পর্যাপ্ত টোকেন ব্যালেন্স বা ক্রেডিট নেই। অনুগ্রহ করে টোকেন রিচার্জ করুন।';
             errDetails = 'Insufficient token credits or balance (HTTP 402).';
             errType = 'token_credit_error';
-          } else if (fallbackErr.response.data?.detail) {
-            errorMsg = typeof fallbackErr.response.data.detail === 'string'
-              ? fallbackErr.response.data.detail
-              : JSON.stringify(fallbackErr.response.data.detail);
-            errDetails = errorMsg;
           }
         } else if (fallbackErr.request) {
           errorTitle = 'এলএলএম / সার্ভার সংযোগ বিচ্ছিন্ন (Not Connected)';
@@ -310,7 +318,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           message: errorMsg,
           code: errCode,
           details: errDetails,
-          errorType: errType
+          errorType: errType,
+          troubleshooting: troubleshootingList
         });
         setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
       }
@@ -397,23 +406,27 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                   সম্ভাব্য সমাধান (Troubleshooting):
                 </div>
                 <ul style={{ fontSize: '12px', color: '#475569', margin: 0, paddingLeft: '18px', lineHeight: '1.6' }}>
-                  {llmError.code === 401 || llmError.errorType === 'authentication_error' ? (
+                  {llmError.troubleshooting && llmError.troubleshooting.length > 0 ? (
+                    llmError.troubleshooting.map((tip, idx) => (
+                      <li key={idx}>{tip}</li>
+                    ))
+                  ) : llmError.code === 401 || llmError.errorType === 'authentication_error' ? (
                     <>
-                      <li>প্রকল্পের <code>backend/.env</code> ফাইলে <code>OPENROUTER_API_KEY</code> সঠিক আছে কি না তা যাচাই করুন।</li>
-                      <li>API Key পরিবর্তন করলে ব্যাকএন্ড সার্ভার রিস্টার্ট করুন।</li>
+                      <li>প্রকল্পের <code>backend/.env</code> ফাইলে API কী বা ক্রেডেনশিয়াল (Vertex AI / OpenRouter) সঠিক আছে কি না তা যাচাই করুন।</li>
+                      <li>কী বা সেটিংস পরিবর্তন করলে ব্যাকএন্ড সার্ভার রিস্টার্ট করুন।</li>
                     </>
                   ) : llmError.code === 429 || llmError.errorType === 'rate_limit_error' ? (
                     <>
-                      <li>মডেলের বর্তমান রিকোয়েস্ট লিমিট শেষ হয়েছে — ১-২ মিনিট অপেক্ষা করে পুনরায় চেষ্টা করুন।</li>
-                      <li>অথবা <code>backend/.env</code> ফাইলে অপর একটি সক্রিয় মডেল বা নিজস্ব API Key ব্যবহার করুন।</li>
+                      <li>মডেলের বর্তমান রিকোয়েস্ট লিমিট বা কোটা শেষ হয়েছে — কিছুক্ষণ অপেক্ষা করে পুনরায় চেষ্টা করুন।</li>
+                      <li>অথবা <code>backend/.env</code> ফাইলে ব্যাকআপ প্রোভাইডার কনফিগার করুন।</li>
                     </>
                   ) : llmError.code === 402 || llmError.errorType === 'token_credit_error' ? (
                     <>
-                      <li>আপনার OpenRouter একাউন্টে টোকেন ব্যালেন্স বা ক্রেডিট যোগ করুন।</li>
+                      <li>আপনার প্রোভাইডার একাউন্টে টোকেন ব্যালেন্স বা ক্রেডিট যোগ করুন।</li>
                     </>
                   ) : (
                     <>
-                      <li>আপনার কম্পিউটার ও ব্যাকএন্ড সার্ভার (Port 8000) সচল আছে কি না পরীক্ষা করুন।</li>
+                      <li>আপনার কম্পিউটার ও ব্যাকএন্ড সার্ভার (Port 8000) অথবা লোকাল এলএলএম সচল আছে কি না পরীক্ষা করুন।</li>
                       <li>ইন্টারনেট সংযোগ চালু আছে কি না দেখুন।</li>
                     </>
                   )}
