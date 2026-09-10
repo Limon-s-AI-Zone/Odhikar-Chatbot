@@ -769,7 +769,7 @@ def run_intake(
     """Processes a single conversational turn in Bangla with token continuation and LLM error support."""
     # Check if API Key is configured before running LangGraph
     if not is_model_configured():
-        err_details = get_error_message("authentication_error", "Missing or placeholder OPENROUTER_API_KEY in backend/.env")
+        err_details = get_error_message("authentication_error", "Missing or unconfigured LLM API key in backend/.env")
         history = list(existing_state.get("chat_history", [])) if existing_state else []
         if transcript and transcript.strip():
             history.append({"role": "user", "content": transcript.strip()})
