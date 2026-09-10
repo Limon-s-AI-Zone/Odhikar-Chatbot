@@ -1,10 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { 
   Send, AlertTriangle, PhoneCall, 
   CheckCircle2, ChevronRight, RefreshCw, ArrowRightCircle,
   MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
-  Volume2, VolumeX, FileText
+  Volume2, VolumeX, FileText, Mic, Square, Radio
 } from 'lucide-react';
 
 interface IntakeProps {
@@ -166,11 +166,198 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     window.speechSynthesis.speak(utterance);
   };
 
+  // 100% Pure Frontend Voice Typing (Browser-Native Web Speech API - Zero backend overhead)
+  const [isListening, setIsListening] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
+
+  const recognitionRef = useRef<any>(null);
+  const timerIntervalRef = useRef<any>(null);
+  const shouldBeListeningRef = useRef<boolean>(false);
+  const accumulatedTextRef = useRef<string>('');
+
+  const stopVoiceTyping = () => {
+    shouldBeListeningRef.current = false;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (_) {}
+      recognitionRef.current = null;
+    }
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    setIsListening(false);
+  };
+
+  const startVoiceTyping = async () => {
+    stopVoice(); // Stop any TTS speech playback
+    setVoiceStatus(null);
+
+    const SpeechRecognitionClass =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionClass) {
+      setVoiceStatus('আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।');
+      return;
+    }
+
+    try {
+      // Explicitly request mic access so browser prompts "Allow" cleanly
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Immediately release tracks so SpeechRecognition has full exclusive access to the microphone
+      stream.getTracks().forEach((track) => track.stop());
+    } catch (err: any) {
+      console.warn('Microphone permission denied:', err);
+      setVoiceStatus('মাইক্রোফোনের অনুমতি প্রয়োজন। ব্রাউজারে Microphone "Allow" করুন।');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognitionClass();
+      recognition.lang = 'bn-BD';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      // Preserve already typed text
+      accumulatedTextRef.current = textNarrative.trim();
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        shouldBeListeningRef.current = true;
+        setVoiceStatus('কথা বলুন, আপনার কথা সরাসরি বাংলায় লেখা হচ্ছে...');
+        setRecordingSeconds(0);
+        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = setInterval(() => {
+          setRecordingSeconds((prev) => prev + 1);
+        }, 1000);
+      };
+
+      recognition.onresult = (event: any) => {
+        let currentInterim = '';
+        let currentFinal = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const item = event.results[i];
+          const transcript = item[0]?.transcript || '';
+          if (item.isFinal) {
+            currentFinal += transcript;
+          } else {
+            currentInterim += transcript;
+          }
+        }
+
+        if (currentFinal) {
+          accumulatedTextRef.current = accumulatedTextRef.current
+            ? `${accumulatedTextRef.current} ${currentFinal.trim()}`
+            : currentFinal.trim();
+        }
+
+        const fullDisplay = [accumulatedTextRef.current, currentInterim.trim()]
+          .filter(Boolean)
+          .join(' ')
+          .trim();
+
+        setTextNarrative(fullDisplay);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('[SpeechRecognition Error]', event.error);
+        if (event.error === 'no-speech') {
+          // Harmless pause in speech, ignore so auto-restart continues
+          return;
+        }
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          shouldBeListeningRef.current = false;
+          setIsListening(false);
+          setVoiceStatus('মাইক্রোফোনের অনুমতি পাওয়া যায়নি। ব্রাউজার সেটিংসে গিয়ে পারমিশন দিন।');
+          return;
+        }
+        if (event.error === 'aborted') {
+          return;
+        }
+        setVoiceStatus(`ভয়েস টাইপিং সাময়িক ব্যাহত (${event.error})। আবার কথা বলুন।`);
+      };
+
+      recognition.onend = () => {
+        // Auto-restart if user has not explicitly tapped "থামান"
+        if (shouldBeListeningRef.current) {
+          try {
+            recognition.start();
+          } catch (_) {}
+        } else {
+          setIsListening(false);
+          if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = null;
+          }
+          setVoiceStatus('ভয়েস টাইপিং সম্পন্ন। নিচের টেক্সটটি যাচাই করে জমা দিন।');
+        }
+      };
+
+      recognitionRef.current = recognition;
+      shouldBeListeningRef.current = true;
+      recognition.start();
+    } catch (err: any) {
+      console.error('Speech recognition start failed:', err);
+      setVoiceStatus('ভয়েস টাইপিং শুরু করা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।');
+      setIsListening(false);
+      shouldBeListeningRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopVoiceTyping();
+      stopVoice();
+    };
+  }, []);
+
+  const renderVoiceTypingButton = () => (
+    <button
+      type="button"
+      onClick={isListening ? stopVoiceTyping : startVoiceTyping}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '6px 14px',
+        fontSize: '13px',
+        fontWeight: '600',
+        borderRadius: '20px',
+        border: isListening ? '1px solid #ef4444' : '1px solid #bae6fd',
+        cursor: 'pointer',
+        backgroundColor: isListening ? '#fef2f2' : '#f0f9ff',
+        color: isListening ? '#b91c1c' : '#0284c7',
+        transition: 'all 0.15s ease'
+      }}
+      title={isListening ? 'রেকর্ডিং বন্ধ করুন' : 'মুখে বলে বাংলায় লিখুন'}
+    >
+      {isListening ? (
+        <>
+          <span className="mic-recording-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }} />
+          <Square size={13} fill="#dc2626" />
+          <span>থামান ({String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:{String(recordingSeconds % 60).padStart(2, '0')})</span>
+        </>
+      ) : (
+        <>
+          <Mic size={14} />
+          <span>মুখে বলুন (Voice Typing)</span>
+        </>
+      )}
+    </button>
+  );
+
+
   const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false) => {
+    stopVoiceTyping();
     const message = textToSend !== undefined ? textToSend : textNarrative;
     if (!message.trim() && !isContinuation) return;
 
     stopVoice();
+    setVoiceStatus(null);
     setLlmError(null);
     setLastAttemptedMessage(message || "");
     setIsLoading(true);
@@ -721,28 +908,51 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       {/* SCREEN 2: INTAKE / NARRATIVE INPUT */}
       {step === 'recording' && (
         <div className="card">
-          <div style={{ marginBottom: '16px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '6px' }}>যা ঘটেছে, নিজের ভাষায় লিখুন</h2>
-            <p style={{ fontSize: '13px', color: '#64748b', margin: 0 }}>
-              আপনার আইনি সমস্যা বা ঘটনার বিবরণ নিচে বিস্তারিতভাবে বাংলায় লিখুন:
-            </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '4px' }}>যা ঘটেছে, নিজের ভাষায় বলুন বা লিখুন</h2>
+              <p style={{ fontSize: '13px', color: '#64748b', margin: 0 }}>
+                আপনার আইনি সমস্যা মুখে বলুন (সরাসরি লেখা হবে) অথবা বাংলায় টাইপ করুন:
+              </p>
+            </div>
+            {renderVoiceTypingButton()}
           </div>
+
+          {voiceStatus && (
+            <div style={{
+              fontSize: '12px',
+              padding: '8px 12px',
+              borderRadius: '6px',
+              marginBottom: '14px',
+              backgroundColor: isListening ? '#eff6ff' : '#f0fdf4',
+              color: isListening ? '#1e40af' : '#15803d',
+              border: `1px solid ${isListening ? '#bfdbfe' : '#bbf7d0'}`,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              {isListening ? <Radio size={14} className="mic-recording-pulse" /> : <CheckCircle2 size={14} />}
+              <span>{voiceStatus}</span>
+            </div>
+          )}
 
           <textarea
             rows={5}
             value={textNarrative}
             onChange={(e) => setTextNarrative(e.target.value)}
-            placeholder="আপনার সমস্যা বা ঘটনার বিবরণ বিস্তারিতভাবে বাংলায় লিখুন..."
+            placeholder="আপনার সমস্যা বা ঘটনার বিবরণ বিস্তারিতভাবে বাংলায় বলুন বা লিখুন... (কথা বললে সরাসরি এখানে লেখা হবে)"
             style={{
               width: '100%',
               padding: '14px',
               borderRadius: '8px',
-              border: '1px solid #cbd5e1',
+              border: isListening ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
               fontFamily: 'inherit',
               fontSize: '15px',
               lineHeight: '1.6',
               marginBottom: '16px',
-              boxSizing: 'border-box'
+              boxSizing: 'border-box',
+              transition: 'border-color 0.2s ease',
+              boxShadow: isListening ? '0 0 0 3px rgba(2, 132, 199, 0.15)' : 'none'
             }}
           />
 
@@ -889,19 +1099,45 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             )}
           </div>
 
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '13px', fontWeight: '600', color: '#475569' }}>আপনার উত্তর মুখে বলুন বা লিখুন:</span>
+            {renderVoiceTypingButton()}
+          </div>
+
+          {voiceStatus && (
+            <div style={{
+              fontSize: '12px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              marginBottom: '10px',
+              backgroundColor: isListening ? '#eff6ff' : '#f0fdf4',
+              color: isListening ? '#1e40af' : '#15803d',
+              border: `1px solid ${isListening ? '#bfdbfe' : '#bbf7d0'}`,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}>
+              {isListening ? <Radio size={13} className="mic-recording-pulse" /> : <CheckCircle2 size={13} />}
+              <span>{voiceStatus}</span>
+            </div>
+          )}
+
           <textarea
             rows={3}
             value={textNarrative}
             onChange={(e) => setTextNarrative(e.target.value)}
-            placeholder="উত্তর এখানে লিখুন..."
+            placeholder="উত্তর মুখে বলুন বা এখানে লিখুন... (কথা বললে সরাসরি লেখা হবে)"
             style={{
               width: '100%',
               padding: '12px',
               borderRadius: '8px',
-              border: '1px solid #cbd5e1',
+              border: isListening ? '1.5px solid #0284c7' : '1px solid #cbd5e1',
               fontFamily: 'inherit',
               fontSize: '15px',
-              marginBottom: '16px'
+              marginBottom: '16px',
+              boxSizing: 'border-box',
+              transition: 'border-color 0.2s ease',
+              boxShadow: isListening ? '0 0 0 3px rgba(2, 132, 199, 0.15)' : 'none'
             }}
           />
 

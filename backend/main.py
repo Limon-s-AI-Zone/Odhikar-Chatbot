@@ -344,6 +344,42 @@ async def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_d
     return result
 
 
+# Audio transcription endpoint (Speech-to-Text directly returning text for client verification)
+@app.post("/transcribe")
+async def transcribe_audio_file(file: UploadFile = File(...)):
+    """Transcribes an uploaded voice audio clip into clean Bengali text."""
+    os.makedirs("uploads", exist_ok=True)
+    temp_filename = f"rec_{uuid.uuid4().hex[:8]}_{file.filename or 'audio.webm'}"
+    file_location = os.path.join("uploads", temp_filename)
+    try:
+        with open(file_location, "wb+") as file_object:
+            shutil.copyfileobj(file.file, file_object)
+        
+        whisper = ai_pipeline.get_whisper()
+        if whisper:
+            segments, info = whisper.transcribe(
+                file_location,
+                language="bn",
+                task="transcribe",
+                initial_prompt=ai_pipeline.BANGLA_WHISPER_PROMPT,
+                beam_size=5
+            )
+            raw_text = " ".join([seg.text for seg in segments]).strip()
+            cleaned_text = ai_pipeline.normalize_bangla_transcript(raw_text)
+            return {"text": cleaned_text, "raw": raw_text}
+        else:
+            return {"text": "", "error": "Whisper ASR model unavailable"}
+    except Exception as e:
+        print(f"[Transcribe Error] {e}")
+        return {"text": "", "error": str(e)}
+    finally:
+        if os.path.exists(file_location):
+            try:
+                os.remove(file_location)
+            except Exception:
+                pass
+
+
 # In-memory TTS store for audio streaming tokens
 tts_store: dict = {}
 
