@@ -665,11 +665,12 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
       }
       stopVoice();
-      setStep('rights');
+      // Rights step commented out, route directly to referral
+      setStep('referral');
     } catch (err) {
       console.error('Finalize profile error:', err);
       stopVoice();
-      setStep('rights');
+      setStep('referral');
     } finally {
       setIsFinalizingProfile(false);
     }
@@ -1393,7 +1394,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         <div className={`step-line ${(['rights', 'referral'].includes(step) || (isIntakeCompleted && !isOutOfScope)) ? 'active' : ''}`} />
         <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
           <div className="step-circle">৪</div>
-          <span className="step-label">পরামর্শ ও ক্লিনিক</span>
+          <span className="step-label">ক্লিনিক ও আবেদন</span>
         </div>
       </div>
 
@@ -2721,7 +2722,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                       </>
                     ) : (
                       <>
-                        <span>নিকটস্থ ব্র্যাক কেন্দ্র নিশ্চিত করুন ও আইনি পরামর্শ দেখুন (ধাপ ৪)</span>
+                        <span>নিকটস্থ ব্র্যাক কেন্দ্র ও অভিযোগপত্র দেখুন (ধাপ ৪)</span>
                         <ChevronRight size={20} />
                       </>
                     )}
@@ -2730,7 +2731,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                     type="button"
                     onClick={() => {
                       stopVoice();
-                      setStep('rights');
+                      setStep('referral');
                     }}
                     style={{
                       background: 'transparent',
@@ -2764,7 +2765,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </div>
       )}
 
-      {/* SCREEN 4: YOUR RIGHTS */}
+      {/* SCREEN 4: YOUR RIGHTS (Commented out per user request) */}
+      {/*
       {step === 'rights' && (
         <div className="card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
@@ -2824,6 +2826,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           </div>
         </div>
       )}
+      */}
 
       {/* SCREEN 5: REFERRAL & DRAFT COMPLAINT */}
       {step === 'referral' && (
