@@ -5,7 +5,8 @@ import {
   CheckCircle2, ChevronRight, RefreshCw, ArrowRightCircle,
   MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
   Volume2, VolumeX, FileText, Mic, Square, Radio,
-  Shield, Trash2, Copy, Check, Sparkles, Scale, HeartHandshake
+  Shield, Trash2, Copy, Check, Sparkles, Scale, HeartHandshake, MapPin,
+  ChevronDown, ChevronUp, Edit3
 } from 'lucide-react';
 
 interface IntakeProps {
@@ -373,6 +374,17 @@ export function getContextualChips(
   ];
 }
 
+export const BANGLADESH_DIVISIONS: Record<string, string[]> = {
+  "ঢাকা": ["ঢাকা", "গাজীপুর", "নারায়ণগঞ্জ", "মানিকগঞ্জ", "মুন্সীগঞ্জ", "নরসিংদী", "টাঙ্গাইল", "কিশোরগঞ্জ", "ফরিদপুর", "মাদারীপুর", "শরীয়তপুর", "গোপালগঞ্জ", "রাজবাড়ী"],
+  "চট্টগ্রাম": ["চট্টগ্রাম", "কক্সবাজার", "কুমিল্লা", "ফেনী", "ব্রাহ্মণবাড়িয়া", "চাঁদপুর", "নোয়াখালী", "লক্ষ্মীপুর", "রাঙ্গামাটি", "খাগড়াছড়ি", "বান্দরবান"],
+  "রাজশাহী": ["রাজশাহী", "বগুড়া", "পাবনা", "সিরাজগঞ্জ", "নওগাঁ", "নাটোর", "চাঁপাইনবাবগঞ্জ", "জয়পুরহাট"],
+  "খুলনা": ["খুলনা", "যশোর", "সাতক্ষীরা", "বাগেরহাট", "ঝিনাইদহ", "কুষ্টিয়া", "চুয়াডাঙ্গা", "মেহেরপুর", "মাগুরা", "নড়াইল"],
+  "বরিশাল": ["বরিশাল", "পটুয়াখালী", "ভোলা", "পিরোজপুর", "বরগুনা", "ঝালকাঠি"],
+  "সিলেট": ["সিলেট", "মৌলভীবাজার", "হবিগঞ্জ", "সুনামগঞ্জ"],
+  "রংপুর": ["রংপুর", "দিনাজপুর", "কুড়িগ্রাম", "গাইবান্ধা", "নীলফামারী", "লালমনিরহাট", "ঠাকুরগাঁও", "পঞ্চগড়"],
+  "ময়মনসিংহ": ["ময়মনসিংহ", "জামালপুর", "নেত্রকোণা", "শেরপুর"]
+};
+
 export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [step, setStep] = useState<'welcome' | 'recording' | 'follow_up' | 'continuation' | 'rights' | 'referral' | 'safety'>('welcome');
   const [textNarrative, setTextNarrative] = useState('');
@@ -398,6 +410,236 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [copiedDraft, setCopiedDraft] = useState(false);
   const [isIntakeCompleted, setIsIntakeCompleted] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Personal & Aggressor Info State (Collected right before Step 4 to match nearby BRAC clinic)
+  const [applicantName, setApplicantName] = useState('');
+  const [fatherName, setFatherName] = useState('');
+  const [division, setDivision] = useState('ঢাকা');
+  const [zilla, setZilla] = useState('ঢাকা');
+  const [thana, setThana] = useState('');
+  const [unionVillage, setUnionVillage] = useState('');
+  const [contactNumber, setContactNumber] = useState('');
+  const [isAnonymous, setIsAnonymous] = useState(false);
+  const [aggressorName, setAggressorName] = useState('');
+  const [aggressorRelation, setAggressorRelation] = useState('স্বামী');
+  const [aggressorAddress, setAggressorAddress] = useState('');
+  const [isFinalizingProfile, setIsFinalizingProfile] = useState(false);
+  const [profileVoiceTranscript, setProfileVoiceTranscript] = useState('');
+  const [isListeningProfile, setIsListeningProfile] = useState(false);
+  const [isExtractingProfile, setIsExtractingProfile] = useState(false);
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [hasVoiceExtracted, setHasVoiceExtracted] = useState(false);
+  const profileRecognitionRef = useRef<any>(null);
+
+  const stopProfileVoiceTyping = () => {
+    if (profileRecognitionRef.current) {
+      try {
+        profileRecognitionRef.current.stop();
+      } catch (_) {}
+      profileRecognitionRef.current = null;
+    }
+    setIsListeningProfile(false);
+  };
+
+  const handleExtractProfileVoice = async (textOverride?: string) => {
+    const textToExtract = (textOverride || profileVoiceTranscript).trim();
+    if (!textToExtract) return;
+
+    setIsExtractingProfile(true);
+    try {
+      const res = await axios.post('/intake/extract_profile', {
+        voice_transcript: textToExtract,
+        chat_history: chatHistory
+      });
+
+      if (res.data) {
+        const d = res.data;
+        if (d.applicant_name) setApplicantName(d.applicant_name);
+        if (d.father_name) setFatherName(d.father_name);
+        
+        if (d.division && BANGLADESH_DIVISIONS[d.division]) {
+          setDivision(d.division);
+          if (d.zilla && BANGLADESH_DIVISIONS[d.division].includes(d.zilla)) {
+            setZilla(d.zilla);
+          }
+        } else if (d.zilla) {
+          for (const [divKey, zillaList] of Object.entries(BANGLADESH_DIVISIONS)) {
+            if (zillaList.includes(d.zilla)) {
+              setDivision(divKey);
+              setZilla(d.zilla);
+              break;
+            }
+          }
+        }
+        
+        if (d.thana) setThana(d.thana);
+        if (d.union_village) setUnionVillage(d.union_village);
+        if (d.contact_number) setContactNumber(d.contact_number);
+        if (d.aggressor_name) setAggressorName(d.aggressor_name);
+        if (d.aggressor_relation) setAggressorRelation(d.aggressor_relation);
+        if (d.aggressor_address) setAggressorAddress(d.aggressor_address);
+        setHasVoiceExtracted(true);
+      }
+    } catch (err) {
+      console.error('Failed to extract profile from voice:', err);
+    } finally {
+      setIsExtractingProfile(false);
+    }
+  };
+
+  const startProfileVoiceTyping = async () => {
+    stopVoice();
+    const SpeechRecognitionClass =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionClass) {
+      alert('আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+    } catch (err: any) {
+      alert('মাইক্রোফোনের অনুমতি প্রয়োজন। ব্রাউজারে Microphone "Allow" করুন।');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognitionClass();
+      recognition.lang = 'bn-BD';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      let currentAccumulated = profileVoiceTranscript.trim();
+
+      recognition.onstart = () => {
+        setIsListeningProfile(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        let currentInterim = '';
+        let currentFinal = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const item = event.results[i];
+          const transcript = item[0]?.transcript || '';
+          if (item.isFinal) {
+            currentFinal += transcript;
+          } else {
+            currentInterim += transcript;
+          }
+        }
+
+        if (currentFinal) {
+          currentAccumulated = currentAccumulated
+            ? `${currentAccumulated} ${currentFinal.trim()}`
+            : currentFinal.trim();
+        }
+
+        const fullDisplay = [currentAccumulated, currentInterim.trim()].filter(Boolean).join(' ');
+        setProfileVoiceTranscript(fullDisplay);
+      };
+
+      recognition.onerror = () => {
+        setIsListeningProfile(false);
+      };
+
+      recognition.onend = () => {
+        setIsListeningProfile(false);
+        if (currentAccumulated.trim()) {
+          handleExtractProfileVoice(currentAccumulated.trim());
+        }
+      };
+
+      profileRecognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      console.warn('Profile voice recognition start error:', e);
+      setIsListeningProfile(false);
+    }
+  };
+
+  const handleSampleVoiceProfile = () => {
+    const sample = "আমার নাম মোসাম্মৎ রহিমা খাতুন, বাবার নাম আবদুল করিম। আমার বাড়ি কুমিল্লার চান্দিনা উপজেলার বাতাঘাসী গ্রামে। বিবাদী আমার স্বামী রফিকুল ইসলাম, সে চান্দিনা বাজারে থাকে। আমার মোবাইল নম্বর ০১৭১২৩৪৫৬৭৮";
+    setProfileVoiceTranscript(sample);
+    handleExtractProfileVoice(sample);
+  };
+
+  // Auto prefill extracted names from sessionState if available
+  useEffect(() => {
+    if (sessionState?.applicant_name && sessionState.applicant_name !== '[নাম সংরক্ষিত]' && !applicantName) {
+      setApplicantName(sessionState.applicant_name);
+    }
+    if (sessionState?.respondent && sessionState.respondent !== '[বিবাদী]' && !aggressorName) {
+      setAggressorName(sessionState.respondent);
+    }
+  }, [sessionState]);
+
+  const handleQuickFillProfile = () => {
+    setApplicantName('মোসাম্মৎ রহিমা খাতুন');
+    setFatherName('মোঃ করিম মিয়া');
+    setDivision('চট্টগ্রাম');
+    setZilla('কুমিল্লা');
+    setThana('চৌদ্দগ্রাম');
+    setUnionVillage('কাশিনগর ইউনিয়ন, ৪নং ওয়ার্ড');
+    setContactNumber('০১৭০০-১১২২৩৩');
+    setAggressorName('মোঃ আলমগীর হোসেন');
+    setAggressorRelation('স্বামী');
+    setAggressorAddress('উত্তরপাড়া, কাশিনগর, চৌদ্দগ্রাম, কুমিল্লা');
+  };
+
+  const handleFinalizeProfile = async () => {
+    setIsFinalizingProfile(true);
+    try {
+      const payload = {
+        case_id: caseId || sessionState?.case_id,
+        session_state: sessionState,
+        applicant_name: isAnonymous ? '[নাম সংরক্ষিত]' : (applicantName.trim() || 'আবেদনকারী'),
+        father_name: fatherName.trim() || undefined,
+        division: division || 'ঢাকা',
+        zilla: zilla || 'ঢাকা',
+        thana: thana.trim() || 'সদর',
+        union_village: unionVillage.trim() || 'সদর ইউনিয়ন',
+        contact_number: contactNumber.trim() || undefined,
+        is_anonymous: isAnonymous,
+        aggressor_name: aggressorName.trim() || undefined,
+        aggressor_relation: aggressorRelation || undefined,
+        aggressor_address: aggressorAddress.trim() || undefined
+      };
+
+      const res = await axios.post('/intake/finalize_profile', payload);
+      if (res.data) {
+        if (res.data.referral_clinic) {
+          setReferralInfo({
+            clinic: res.data.referral_clinic,
+            slot: res.data.referral_slot || 'বুধবার, সকাল ১০:০০ টা'
+          });
+        }
+        if (res.data.draft_complaint) {
+          setDraftComplaint(res.data.draft_complaint);
+        }
+        if (res.data.rights_explanation) {
+          setRightsExplanation(res.data.rights_explanation);
+        }
+        if (res.data.session_state) {
+          setSessionState(res.data.session_state);
+        }
+        if (res.data.case_id) {
+          setCaseId(res.data.case_id);
+        }
+      }
+      stopVoice();
+      setStep('rights');
+    } catch (err) {
+      console.error('Finalize profile error:', err);
+      stopVoice();
+      setStep('rights');
+    } finally {
+      setIsFinalizingProfile(false);
+    }
+  };
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -814,6 +1056,31 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
       }
 
+      // Process any remaining data in the buffer after reading stream
+      if (buffer.trim()) {
+        const remainingLines = buffer.split('\n');
+        for (const rLine of remainingLines) {
+          const trimmed = rLine.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const jsonStr = trimmed.replace('data: ', '').trim();
+          if (!jsonStr) continue;
+          try {
+            const event = JSON.parse(jsonStr);
+            if (event.type === 'token') {
+              accumulatedAssistantText += event.content;
+            } else if (event.type === 'final') {
+              finalData = event;
+            }
+          } catch (e) {
+            console.error('Buffer flush parse error:', e);
+          }
+        }
+      }
+
+      if (!finalData) {
+        throw new Error('Streaming stream closed without final event payload');
+      }
+
       if (finalData) {
         if (finalData.llm_error) {
           const errDetails = finalData.llm_error_details || {};
@@ -873,7 +1140,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
       }
     } catch (err) {
-      console.warn('Streaming failed, fallback to standard endpoint:', err);
+      console.warn('Streaming failed or incomplete, fallback to standard endpoint:', err);
       // Seamless fallback to standard HTTP endpoint
       try {
         const fallbackRes = await axios.post('/api/intake/message', {
@@ -1564,7 +1831,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                     >
                       {msg.content ? (
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-                          <span>
+                          <span style={{ whiteSpace: 'pre-wrap' }}>
                             {msg.content}
                             {isStreaming && idx === chatHistory.length - 1 && msg.role === 'assistant' && (
                               <span style={{ display: 'inline-block', width: '6px', height: '14px', backgroundColor: '#0284c7', marginLeft: '4px', verticalAlign: 'middle', animation: 'pulse 1s infinite' }}></span>
@@ -1617,7 +1884,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                 </span>
               </div>
               <p style={{ margin: 0, fontSize: '14.5px', color: '#166534', lineHeight: '1.6' }}>
-                আপনার বিবরণ ও সকল প্রশ্নের উত্তর সফলভাবে সংরক্ষিত হয়েছে। আপনার আইনগত অধিকার, করণীয় পদক্ষেপ এবং ব্র্যাক লিগ্যাল এইড ক্লিনিকের বিবরণ প্রস্তুত করা হয়েছে। নিচের বাটনে ক্লিক করে পরবর্তী ধাপে যান।
+                আপনার বিবরণ ও সকল প্রশ্নের উত্তর সফলভাবে সংরক্ষিত হয়েছে। এখন আপনার এলাকা অনুযায়ী <strong>নিকটস্থ ব্র্যাক লিগ্যাল এইড ক্লিনিক</strong> খুঁজে বের করতে এবং আপনার নামে সঠিক <strong>অভিযোগপত্র (Draft Complaint)</strong> তৈরি করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য দিন:
               </p>
             </div>
           ) : (
@@ -1656,6 +1923,411 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               <h2 style={{ fontSize: '17px', fontWeight: '700', color: '#0c4a6e', margin: 0, lineHeight: '1.6' }}>
                 {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
               </h2>
+            </div>
+          )}
+
+          {/* VOICE-FIRST PROFILE & AGGRESSOR DETAILS ASSISTANT (Right Before Step 4) */}
+          {isIntakeCompleted && (
+            <div style={{
+              backgroundColor: '#ffffff',
+              border: '2px solid #0284c7',
+              borderRadius: '14px',
+              padding: '20px',
+              marginBottom: '20px',
+              boxShadow: '0 6px 18px rgba(2, 132, 199, 0.08)'
+            }}>
+              {/* Header with audio prompt */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0369a1', fontWeight: '700', fontSize: '16px' }}>
+                  <Mic size={20} color="#0284c7" />
+                  <span>মুখে বলুন — এআই স্বয়ংক্রিয়ভাবে ফর্ম পূরণ করে নেবে</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    backgroundColor: 'white',
+                    borderColor: '#0284c7',
+                    color: '#0284c7'
+                  }}
+                  onClick={() => playVoice('আপনার এবং প্রতিপক্ষের নাম ও এলাকার ঠিকানা মুখে বলুন। এআই কথা শুনে স্বয়ংক্রিয়ভাবে তথ্য পূরণ করে নেবে।')}
+                  title="নির্দেশনাটি শুনুন"
+                >
+                  <Volume2 size={14} /> <span>নির্দেশনা শুনুন</span>
+                </button>
+              </div>
+
+              <p style={{ fontSize: '13px', color: '#475569', marginBottom: '14px', lineHeight: '1.5' }}>
+                কোনো ফর্ম টাইপ করার প্রয়োজন নেই! নিচে <strong>'মুখে বলুন'</strong> চেপে আপনার নাম, বাবার নাম, এলাকা (উপজেলা, জেলা) এবং বিবাদীর নাম ও সম্পর্ক স্বাভাবিক বাংলায় বলুন। কৃত্রিম বুদ্ধিমত্তা স্বয়ংক্রিয়ভাবে তথ্য শনাক্ত করে নিকটস্থ ব্র্যাক কেন্দ্র খুঁজে নেবে।
+              </p>
+
+              {/* Voice Recording Control & Status */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <button
+                  type="button"
+                  onClick={isListeningProfile ? stopProfileVoiceTyping : startProfileVoiceTyping}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '10px 18px',
+                    borderRadius: '10px',
+                    fontSize: '14px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                    backgroundColor: isListeningProfile ? '#ef4444' : '#0284c7',
+                    color: 'white',
+                    border: 'none',
+                    boxShadow: isListeningProfile ? '0 0 12px rgba(239, 68, 68, 0.4)' : '0 2px 8px rgba(2, 132, 199, 0.25)',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {isListeningProfile ? (
+                    <>
+                      <Square size={16} fill="white" />
+                      <span>কথা বলা শেষ হলে থামান</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic size={18} />
+                      <span>মুখে বলুন (ট্যাপ করে কথা বলুন)</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSampleVoiceProfile}
+                  disabled={isExtractingProfile || isListeningProfile}
+                  style={{
+                    fontSize: '12.5px',
+                    color: '#0284c7',
+                    background: '#f0f9ff',
+                    border: '1px solid #bae6fd',
+                    borderRadius: '8px',
+                    padding: '8px 14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                  title="নমুনা কণ্ঠস্বর দিয়ে এআই অটো-ফিলিং পরীক্ষা করুন"
+                >
+                  <Sparkles size={14} /> <span>নমুনা কণ্ঠস্বর দিয়ে পরীক্ষা</span>
+                </button>
+              </div>
+
+              {/* Spoken Text Area (Auto populated via speech recognition or user edit) */}
+              <div style={{ marginBottom: '12px' }}>
+                <textarea
+                  rows={2}
+                  value={profileVoiceTranscript}
+                  onChange={(e) => setProfileVoiceTranscript(e.target.value)}
+                  placeholder="মুখে বললে এখানে সরাসরি লেখা উঠবে... (যেমন: আমার নাম রহিমা খাতুন, বাড়ি কুমিল্লার চান্দিনায় বাতাঘাসী গ্রামে। স্বামী রফিকুল ইসলাম চান্দিনা বাজারে থাকে।)"
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: isListeningProfile ? '2px solid #ef4444' : '1px solid #cbd5e1',
+                    fontSize: '13.5px',
+                    fontFamily: 'inherit',
+                    boxSizing: 'border-box',
+                    backgroundColor: isListeningProfile ? '#fef2f2' : '#f8fafc',
+                    lineHeight: '1.5'
+                  }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                  <span style={{ fontSize: '11.5px', color: '#64748b' }}>
+                    {isListeningProfile ? '🔴 আপনার কথা শুনছি... কথা বলা শেষ হলে "থামান" চাপুন।' : 'কথা বলা শেষে এআই সরাসরি আপনার নাম ও ঠিকানা শনাক্ত করবে।'}
+                  </span>
+                  {profileVoiceTranscript.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => handleExtractProfileVoice()}
+                      disabled={isExtractingProfile}
+                      style={{
+                        fontSize: '12px',
+                        color: '#047857',
+                        background: '#ecfdf5',
+                        border: '1px solid #a7f3d0',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      {isExtractingProfile ? <RefreshCw className="animate-spin" size={12} /> : <CheckCircle2 size={12} />}
+                      <span>{isExtractingProfile ? 'শনাক্ত হচ্ছে...' : 'পুনরায় তথ্য শনাক্ত করুন'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* AI EXTRACTED SUMMARY BADGE CARD */}
+              {(hasVoiceExtracted || applicantName || (thana && zilla)) && (
+                <div style={{
+                  backgroundColor: '#f0fdf4',
+                  border: '1.5px solid #86efac',
+                  borderRadius: '10px',
+                  padding: '14px',
+                  marginBottom: '14px',
+                  boxShadow: '0 2px 8px rgba(22, 163, 74, 0.05)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: '700', color: '#166534', fontSize: '13.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <CheckCircle2 size={16} color="#16a34a" /> কণ্ঠস্বর থেকে স্বয়ংক্রিয় শনাক্তকৃত তথ্য:
+                    </span>
+                    <span style={{ fontSize: '11px', backgroundColor: '#dcfce7', color: '#15803d', padding: '2px 8px', borderRadius: '12px', fontWeight: '600' }}>
+                      এআই দ্বারা প্রস্তুত
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px', fontSize: '13px', color: '#1e293b' }}>
+                    <div>
+                      <span style={{ color: '#64748b' }}>আবেদনকারী: </span>
+                      <strong>{isAnonymous ? '[নাম গোপন রাখা হয়েছে]' : (applicantName || '[নাম সংরক্ষিত]')}</strong>
+                      {fatherName ? ` (পিতা: ${fatherName})` : ''}
+                      {contactNumber ? ` | 📞 ${contactNumber}` : ''}
+                    </div>
+
+                    <div>
+                      <span style={{ color: '#64748b' }}>এলাকা: </span>
+                      <strong>{[unionVillage, thana, zilla].filter(Boolean).join(', ')} ({division})</strong>
+                    </div>
+
+                    <div>
+                      <span style={{ color: '#64748b' }}>প্রতিপক্ষ: </span>
+                      <strong>{aggressorName || '[বিবাদী]'}</strong> ({aggressorRelation})
+                      {aggressorAddress ? ` — ${aggressorAddress}` : ''}
+                    </div>
+                  </div>
+
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569', marginTop: '10px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={isAnonymous}
+                      onChange={(e) => setIsAnonymous(e.target.checked)}
+                    />
+                    <span>নাম গোপন রাখতে চান? (অভিযোগপত্রে [নাম সংরক্ষিত] থাকবে)</span>
+                  </label>
+                </div>
+              )}
+
+              {/* Optional Manual Form Toggle */}
+              <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowManualForm(!showManualForm)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12.5px',
+                    color: '#0369a1',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '4px 0',
+                    fontWeight: '600'
+                  }}
+                >
+                  <Edit3 size={14} />
+                  <span>{showManualForm ? 'ফর্মটি বন্ধ করুন' : 'প্রয়োজনে কোনো তথ্য টাইপ বা এডিট করতে চান? (ফর্ম খুলুন)'}</span>
+                  {showManualForm ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleQuickFillProfile}
+                  style={{
+                    fontSize: '11.5px',
+                    color: '#64748b',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    textDecoration: 'underline'
+                  }}
+                >
+                  ডেমো ভ্যালু রিসেট
+                </button>
+              </div>
+
+              {/* DETAILED MANUAL FORM (Shown only if user expands it) */}
+              {showManualForm && (
+                <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #e2e8f0' }}>
+                  {/* Applicant Name & Father's Name */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        আপনার পূর্ণ নাম:
+                      </label>
+                      <input
+                        type="text"
+                        value={applicantName}
+                        onChange={(e) => setApplicantName(e.target.value)}
+                        disabled={isAnonymous}
+                        placeholder={isAnonymous ? "[নাম গোপন থাকবে]" : "যেমন: মোসাম্মৎ রহিমা খাতুন"}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        পিতার নাম (ঐচ্ছিক):
+                      </label>
+                      <input
+                        type="text"
+                        value={fatherName}
+                        onChange={(e) => setFatherName(e.target.value)}
+                        placeholder="যেমন: মোঃ করিম মিয়া"
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Location: Division, Zilla, Thana */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        বিভাগ (Division): *
+                      </label>
+                      <select
+                        value={division}
+                        onChange={(e) => {
+                          const newDiv = e.target.value;
+                          setDivision(newDiv);
+                          const dists = BANGLADESH_DIVISIONS[newDiv] || [];
+                          if (dists.length > 0) setZilla(dists[0]);
+                        }}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', backgroundColor: 'white', boxSizing: 'border-box' }}
+                      >
+                        {Object.keys(BANGLADESH_DIVISIONS).map((divName) => (
+                          <option key={divName} value={divName}>{divName}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        জেলা (Zilla / District): *
+                      </label>
+                      <select
+                        value={zilla}
+                        onChange={(e) => setZilla(e.target.value)}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', backgroundColor: 'white', boxSizing: 'border-box' }}
+                      >
+                        {(BANGLADESH_DIVISIONS[division] || []).map((distName) => (
+                          <option key={distName} value={distName}>{distName}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        উপজেলা / থানা (Thana / Upazila): *
+                      </label>
+                      <input
+                        type="text"
+                        value={thana}
+                        onChange={(e) => setThana(e.target.value)}
+                        placeholder="যেমন: চান্দিনা / মিরপুর / সাভার"
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Location: Union & Phone */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        ইউনিয়ন / গ্রাম / ওয়ার্ড:
+                      </label>
+                      <input
+                        type="text"
+                        value={unionVillage}
+                        onChange={(e) => setUnionVillage(e.target.value)}
+                        placeholder="যেমন: বাতাঘাসী ইউনিয়ন"
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        মোবাইল নম্বর (ঐচ্ছিক):
+                      </label>
+                      <input
+                        type="text"
+                        value={contactNumber}
+                        onChange={(e) => setContactNumber(e.target.value)}
+                        placeholder="যেমন: ০১৭১২-৩৪৫৬৭৮"
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Section 2: Aggressor Information */}
+                  <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: '12px', marginTop: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#b91c1c', fontWeight: '700', fontSize: '14px', marginBottom: '10px' }}>
+                      <Shield size={16} />
+                      <span>প্রতিপক্ষ / বিবাদীর তথ্য:</span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '10px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                          বিবাদী / প্রতিপক্ষের নাম:
+                        </label>
+                        <input
+                          type="text"
+                          value={aggressorName}
+                          onChange={(e) => setAggressorName(e.target.value)}
+                          placeholder="যেমন: মোঃ রফিকুল ইসলাম"
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                          আপনার সাথে সম্পর্ক:
+                        </label>
+                        <select
+                          value={aggressorRelation}
+                          onChange={(e) => setAggressorRelation(e.target.value)}
+                          style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', backgroundColor: 'white', boxSizing: 'border-box' }}
+                        >
+                          <option value="স্বামী">স্বামী</option>
+                          <option value="শ্বশুর / শাশুড়ি / শ্বশুরবাড়ির লোক">শ্বশুর / শাশুড়ি / শ্বশুরবাড়ির লোক</option>
+                          <option value="প্রতিবেশী">প্রতিবেশী</option>
+                          <option value="জমির দখলদার / শরিক">জমির দখলদার / শরিক</option>
+                          <option value="মালিক / ঠিকাদার">মালিক / ঠিকাদার</option>
+                          <option value="অন্যান্য">অন্যান্য</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12.5px', fontWeight: '600', color: '#334155', marginBottom: '4px' }}>
+                        বিবাদীর বর্তমান এলাকা বা ঠিকানা:
+                      </label>
+                      <input
+                        type="text"
+                        value={aggressorAddress}
+                        onChange={(e) => setAggressorAddress(e.target.value)}
+                        placeholder="যেমন: চান্দিনা বাজার, কুমিল্লা"
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1712,8 +2384,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               {(() => {
                 const activeQuestion = followUpQuestion || 
                   (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
-                    ? chatHistory[chatHistory.length - 1].content 
-                    : '');
+                     ? chatHistory[chatHistory.length - 1].content 
+                     : '');
                 const chips = getContextualChips(activeQuestion, suggestedReplies, sessionState?.category);
                 if (!chips || chips.length === 0) return null;
 
@@ -1742,34 +2414,61 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             </>
           )}
 
-          {/* Action Button: Changes to 'Next Step 4' when questionnaires are completed */}
+          {/* Action Button: Changes to 'Confirm Profile & View Step 4' when questionnaires are completed */}
           <div style={{ marginTop: '14px' }}>
             {isIntakeCompleted ? (
-              <button
-                className="btn btn-primary"
-                style={{
-                  width: '100%',
-                  padding: '14px 24px',
-                  fontSize: '16px',
-                  fontWeight: '700',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '10px',
-                  backgroundColor: '#16a34a',
-                  borderColor: '#15803d',
-                  boxShadow: '0 4px 14px rgba(22, 163, 74, 0.25)',
-                  borderRadius: '10px',
-                  cursor: 'pointer'
-                }}
-                onClick={() => {
-                  stopVoice();
-                  setStep('rights');
-                }}
-              >
-                <span>পরবর্তী ধাপে যান (ধাপ ৪: পরামর্শ ও ক্লিনিক)</span>
-                <ChevronRight size={20} />
-              </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <button
+                  className="btn btn-primary"
+                  disabled={isFinalizingProfile}
+                  style={{
+                    width: '100%',
+                    padding: '14px 24px',
+                    fontSize: '16px',
+                    fontWeight: '700',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '10px',
+                    backgroundColor: '#16a34a',
+                    borderColor: '#15803d',
+                    boxShadow: '0 4px 14px rgba(22, 163, 74, 0.25)',
+                    borderRadius: '10px',
+                    cursor: isFinalizingProfile ? 'not-allowed' : 'pointer'
+                  }}
+                  onClick={handleFinalizeProfile}
+                >
+                  {isFinalizingProfile ? (
+                    <>
+                      <RefreshCw className="animate-spin" size={18} />
+                      <span>নিকটস্থ ব্র্যাক কেন্দ্র ও অভিযোগপত্র প্রস্তুত হচ্ছে...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>নিকটস্থ ব্র্যাক কেন্দ্র নিশ্চিত করুন ও আইনি পরামর্শ দেখুন (ধাপ ৪)</span>
+                      <ChevronRight size={20} />
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopVoice();
+                    setStep('rights');
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#64748b',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    padding: '6px',
+                    textDecoration: 'underline'
+                  }}
+                >
+                  তথ্য পূরণ ছাড়াই সরাসরি এগিয়ে যান (Skip to Step 4)
+                </button>
+              </div>
             ) : (
               <button
                 className="btn btn-primary"

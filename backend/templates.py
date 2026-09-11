@@ -66,11 +66,15 @@ def generate_draft_complaint(category: str, facts: dict) -> str:
     current_status = facts.get("current_status") or "[বর্তমান পরিস্থিতি — অপ্রতিষ্ঠিত]"
     children_info = facts.get("children") or "[সন্তানের তথ্য — উল্লেখ নেই]"
 
+    branch = facts.get("branch_name") or facts.get("clinic_name") or "আইন সহায়তা কেন্দ্র, [শাখা — নির্ধারিত হয়নি]"
+    if facts.get("respondent_address") and facts.get("respondent_address") not in respondent:
+        respondent = f"{respondent} (ঠিকানা: {facts.get('respondent_address')})"
+
     if category in ("family_dower_maintenance", "dowry"):
         return f"""খসড়া — প্যারালিগ্যাল পর্যালোচনা ব্যতীত ব্যবহারযোগ্য নয় · DRAFT
 
 বরাবর,
-শাখা ব্যবস্থাপক, আইন সহায়তা কেন্দ্র, [শাখা — নির্ধারিত হয়নি]
+শাখা ব্যবস্থাপক, {branch}
 
 বিষয়: অপরিশোধিত দেনমোহর আদায় ও পারিবারিক বিরোধের প্রতিকার প্রসঙ্গে আবেদন।
 
@@ -94,8 +98,8 @@ def generate_draft_complaint(category: str, facts: dict) -> str:
         
         return f"""খসড়া — প্যারালিগ্যাল পর্যালোচনা ব্যতীত ব্যবহারযোগ্য নয় · DRAFT
 
-বরাবর,
-শাখা ব্যবস্থাপক, আইন সহায়তা কেন্দ্র, [শাখা — নির্ধারিত হয়নি]
+ বরাবর,
+শাখা ব্যবস্থাপক, {branch}
 
 বিষয়: বকেয়া মজুরি ও পাওনা আদায়ের আবেদন।
 
@@ -117,7 +121,7 @@ def generate_draft_complaint(category: str, facts: dict) -> str:
         return f"""খসড়া — প্যারালিগ্যাল পর্যালোচনা ব্যতীত ব্যবহারযোগ্য নয় · DRAFT
 
 বরাবর,
-শাখা ব্যবস্থাপক, আইন সহায়তা কেন্দ্র, [শাখা — নির্ধারিত হয়নি]
+শাখা ব্যবস্থাপক, {branch}
 
 বিষয়: পৈতৃক ভূমির ন্যায্য হিস্যা ও বিরোধ নিষ্পত্তি প্রসঙ্গে আবেদন।
 

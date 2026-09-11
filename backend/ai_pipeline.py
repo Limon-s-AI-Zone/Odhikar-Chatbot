@@ -141,6 +141,38 @@ LEGAL_AID_CLINIC_DIRECTORY = [
         "contact_number": "০১৭৩০-৪৪৩৩২২",
         "referral_slot": "বৃহস্পতিবার, সকাল ১০:০০ টা",
         "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["ফরিদপুর", "faridpur", "মাদারীপুর", "madaripur", "শরীয়তপুর", "shariatpur", "গোপালগঞ্জ", "gopalganj", "রাজবাড়ী", "rajbari"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, ফরিদপুর শাখা",
+        "address": "ঝিলটুলী, মুজিব সড়ক, ফরিদপুর সদর",
+        "contact_number": "০১৭৩০-৫৫৬৬৭৭",
+        "referral_slot": "মঙ্গলবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["টাঙ্গাইল", "tangail", "কিশোরগঞ্জ", "kishoreganj", "মানিকগঞ্জ", "manikganj", "মুন্সীগঞ্জ", "munshiganj", "নরসিংদী", "narsingdi"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, টাঙ্গাইল শাখা",
+        "address": "ভিক্টোরিয়া রোড, টাঙ্গাইল সদর",
+        "contact_number": "০১৭৩০-৭৭৮৮১১",
+        "referral_slot": "সোমবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["নোয়াখালী", "noakhali", "লক্ষ্মীপুর", "lakshmipur", "ফেনী", "feni", "চাঁদপুর", "chandpur"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, নোয়াখালী শাখা",
+        "address": "মাইজদী কোর্ট, প্রধান সড়ক, নোয়াখালী সদর",
+        "contact_number": "০১৭৩০-৯৯৮৮৭৭",
+        "referral_slot": "বৃহস্পতিবার, সকাল ১০:৩০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["কুষ্টিয়া", "kushtia", "চুয়াডাঙ্গা", "chuadanga", "মেহেরপুর", "meherpur", "ঝিনাইদহ", "jhenaidah", "মাগুরা", "magura"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, কুষ্টিয়া শাখা",
+        "address": "এনএস রোড, মজমপুর গেট, কুষ্টিয়া সদর",
+        "contact_number": "০১৭৩০-১২৯৯১১",
+        "referral_slot": "বুধবার, সকাল ১১:০০ টা",
+        "helpline": "১৬৪৩০"
     }
 ]
 
@@ -166,13 +198,14 @@ def find_nearby_legal_aid_center(location: str, issue_category: str = "general")
     """
     loc_lower = (location or "").strip().lower()
     matched = None
+    best_pos = 999999
     for entry in LEGAL_AID_CLINIC_DIRECTORY:
         for kw in entry["keywords"]:
-            if kw.lower() in loc_lower:
+            pos = loc_lower.find(kw.lower())
+            if pos != -1 and pos < best_pos:
+                best_pos = pos
                 matched = entry
                 break
-        if matched:
-            break
             
     selected = matched if matched else DEFAULT_CLINIC
     display_name = f"{selected['clinic_name']} ({selected['address']} · ফোন: {selected['contact_number']})"
@@ -297,6 +330,7 @@ class IntakeState(TypedDict):
     referral_clinic: Optional[str]
     referral_slot: Optional[str]
     chat_history: List[Dict[str, Any]]
+    action_summary: Optional[str]
     llm_error: Optional[str]
     llm_error_details: Optional[Dict[str, Any]]
 
@@ -1540,6 +1574,99 @@ workflow.add_edge("generate_templates", END)
 
 odhikar_graph = workflow.compile()
 
+# ----------------- ACTION SUMMARY GENERATION (STEP 3 COMPLETION) -----------------
+ACTION_SUMMARY_SYSTEM_PROMPT = """You are an expert Bengali legal aid paralegal at BRAC Human Rights and Legal Aid Services.
+The client has just completed answering all questions in their intake consultation.
+Generate a concise, professional, empathetic, and legally precise summary of the immediate legal actions to be taken (আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ) tailored specifically to the client's answers and circumstances.
+
+Structure:
+📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:
+
+১. **আইনি প্রতিকার ও মামলার ভিত্তি:** (Specify the exact statutory rights and court, e.g. পারিবারিক আদালত অধ্যাদেশ ১৯৮৫ for dower/maintenance suit, or বাংলাদেশ শ্রম আইন ২০০৬ for unpaid wages, or দেওয়ানি আদালত/সুনির্দিষ্ট প্রতিকার আইন for land dispute. Accurately reflect whether the client chose court lawsuit or ADR/arbitration if stated).
+২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** (List the exact documents they confirmed they have ready, e.g. Kabinnama, NID, salary slips, land khatians/deeds).
+৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** (Actionable next step with legal aid clinic, e.g. ব্র্যাক লিগ্যাল এইড ক্লিনিকের প্যানেল আইনজীবীর মাধ্যমে আনুষ্ঠানিক অভিযোগপত্র ও আরজি চূড়ান্তকরণ এবং আদালতে মামলা দাখিল বা নোটিশ প্রেরণ).
+
+আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।
+
+Guidelines:
+- Clear, empathetic, numbered bullet points, in spoken Bengali (কথ্য ও প্রাঞ্জল বাংলা).
+- Total length under 130 words.
+- Do NOT output generic filler phrases. Focus directly on the 3 actionable steps."""
+
+def generate_action_summary(state: Dict[str, Any]) -> str:
+    """
+    Generates a personalized summary of actionable legal steps (করণীয় আইনি পদক্ষেপের সারসংক্ষেপ)
+    tailored to the client's answers, legal category, and verified evidence.
+    Falls back to a category-specific deterministic legal template on error or timeout.
+    """
+    cat = state.get("category") or "family_dower_maintenance"
+    dower = state.get("dower_amount")
+    evidence = state.get("evidence")
+    wages = state.get("unpaid_wages_claim")
+    clinic = state.get("referral_clinic") or "ব্র্যাক মানবাধিকার ও আইনি সহায়তা কেন্দ্র"
+
+    # 1. Attempt dynamic LLM generation for maximum personalization
+    try:
+        dialogue_snippets = []
+        for msg in state.get("chat_history", [])[-6:]:
+            if msg.get("content"):
+                dialogue_snippets.append(f"{msg.get('role')}: {msg.get('content')}")
+        chat_context = "\n".join(dialogue_snippets)
+
+        facts_list = [f"Category: {cat}"]
+        if dower: facts_list.append(f"Dower: {dower}")
+        if wages: facts_list.append(f"Unpaid wages claim: {wages}")
+        if evidence: facts_list.append(f"Evidence: {evidence}")
+        if state.get("current_status"): facts_list.append(f"Current situation: {state.get('current_status')}")
+        if state.get("children"): facts_list.append(f"Children: {state.get('children')}")
+        facts_summary = "\n".join(facts_list)
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", ACTION_SUMMARY_SYSTEM_PROMPT),
+            ("user", f"Client Facts:\n{facts_summary}\n\nRecent Dialogue:\n{chat_context}\n\nPlease generate the '📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ':")
+        ])
+        res = llm.invoke(prompt.format_messages())
+        if res.content and len(res.content.strip()) > 50:
+            return res.content.strip()
+    except Exception as exc:
+        print(f"[Action Summary LLM Warning] Falling back to template: {exc}")
+
+    # 2. Deterministic high-quality fallback templates by category
+    if cat == "family_dower_maintenance":
+        dower_str = f"আপনার {dower} টাকার দেনমোহর" if dower and dower != "[অপ্রতিষ্ঠিত]" else "আপনার দেনমোহর"
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            f"১. **আইনি প্রতিকার ও মামলার ভিত্তি:** পারিবারিক আদালত অধ্যাদেশ, ১৯৮৫ এর অধীনে {dower_str} ও বিগত দিনগুলোর বকেয়া খোরপোষ/ভরণপোষণ আদায়ের জন্য পারিবারিক আদালতে নিয়মিত মামলা দায়ের করা।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** আপনার নিকাহনামা/কাবিননামা, দেনমোহরের দাবিপত্র, জাতীয় পরিচয়পত্র (NID) এবং অন্যান্য প্রাসঙ্গিক সকল প্রমাণাদি প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর বিজ্ঞ আইনজীবীর সহায়তায় আনুষ্ঠানিকভাবে নালিশ ও আরজি চূড়ান্ত করে পারিবারিক আদালতে মামলা দাখিল সম্পন্ন করা।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    elif cat == "unpaid_wages":
+        wage_str = f"আপনার {wages} টাকার বকেয়া মজুরি" if wages and wages != "[অপ্রতিষ্ঠিত]" else "আপনার বকেয়া মজুরি"
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            f"১. **আইনি প্রতিকার ও মামলার ভিত্তি:** বাংলাদেশ শ্রম আইন, ২০০৬ এর ৩৩ ধারা অনুযায়ী {wage_str} ও ক্ষতিপূরণ আদায়ের জন্য মালিকপক্ষ বরাবর আনুষ্ঠানিক আইনি নোটিশ প্রেরণ ও শ্রম আদালতে নালিশ দায়ের।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** আপনার কাজের পরিচয়পত্র (ID Card), দৈনিক হাজিরা খাতা বা স্লিপ, কাজের চুক্তিনামা এবং বকেয়া বেতনের হিসাব প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর মাধ্যমে মালিকপক্ষকে লিখিত দাবি নোটিশ প্রেরণ এবং শ্রম আদালতের জন্য অভিযোগপত্র প্রস্তুত করা।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    elif cat == "land_dispute":
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            "১. **আইনি প্রতিকার ও মামলার ভিত্তি:** সুনির্দিষ্ট প্রতিকার আইন, ১৮৭৭ অনুযায়ী স্বত্ব সাব্যস্তপূর্বক খাস দখল বা চিরস্থায়ী নিষেধাজ্ঞার দেওয়ানি মোকদ্দমা এবং শান্তিভঙ্গ রোধে ফৌজদারি কার্যবিধির ১৪৫ ধারায় প্রতিকার চাওয়া।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** আপনার জমির মূল রেজিস্ট্রি দলিল, হালনাগাদ পরচা/খতিয়ান (CS/SA/RS), দাখিলা ও দখলের প্রমাণপত্র প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর লিগ্যাল এইড প্যানেল আইনজীবীর মাধ্যমে নালিশি জমির স্বত্ব যাচাইপূর্বক দেওয়ানি আদালতে মামলা বা সালিশি মীমাংসার উদ্যোগ গ্রহণ।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    else:
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            "১. **আইনি প্রতিকার ও ভিত্তি:** আপনার বর্ণিত বিষয়টি আমাদের প্রাথমিক তালিকার বাইরে হলেও প্রচলিত দেওয়ানি বা ফৌজদারি আইনের অধীনে আদালতে আইনি প্রতিকার লাভের সুযোগ রয়েছে।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** ঘটনার প্রত্যক্ষদর্শী সাক্ষী, লিখিত চুক্তি বা অভিযোগ সংক্রান্ত সকল নথিপত্র প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** উপযুক্ত আদালত, সংশ্লিষ্ট থানা বা সরকারি জেলা লিগ্যাল এইড কর্মকর্তার কার্যালয়ে যোগাযোগ করে আনুষ্ঠানিক পদক্ষেপ গ্রহণ করা।\n\n"
+            "আপনার এলাকার নিকটস্থ সহায়তা কেন্দ্র চিহ্নিত করতে নিচের ব্যক্তিগত তথ্য প্রদান করুন।"
+        )
+
 # Public runner function
 def run_intake(
     transcript: str, 
@@ -1573,6 +1700,7 @@ def run_intake(
             "draft_complaint": None,
             "referral_clinic": None,
             "referral_slot": None,
+            "action_summary": None,
             "chat_history": history,
             "llm_error": err_details["message_bn"],
             "llm_error_details": err_details
@@ -1633,6 +1761,7 @@ def run_intake(
         "draft_complaint": None,
         "referral_clinic": None,
         "referral_slot": None,
+        "action_summary": existing_state.get("action_summary") if existing_state else None,
         "chat_history": list(existing_state.get("chat_history", [])) if existing_state else [],
         "llm_error": None,
         "llm_error_details": None
@@ -1672,20 +1801,11 @@ def run_intake(
             "content": result.get("follow_up_question")
         })
     elif result.get("is_complete"):
-        cat = result.get("category")
-        if cat == "out_of_scope":
-            summary_msg = "আপনার বিবরণটি পর্যালোচনা করা হয়েছে। এটি আমাদের লিগ্যাল এইডের আওতাভুক্ত না হলেও সম্ভাব্য পদক্ষেপের পরামর্শ প্রদান করা হয়েছে। পরবর্তী ধাপে গিয়ে বিস্তারিত দেখতে পারেন।"
-        else:
-            clinic = result.get('referral_clinic') or "ব্র্যাক মানবাধিকার ও আইনি সহায়তা কেন্দ্র"
-            slot = result.get('referral_slot') or "অফিস চলাকালীন"
-            summary_msg = (
-                f"ধন্যবাদ। আপনার সম্পূর্ণ বিবরণ ও উত্তরের ভিত্তিতে ব্যক্তিগত আইনি অধিকার ও সমাধানের পথরেখা প্রস্তুত করা হয়েছে। "
-                f"নিকটস্থ পরামর্শ কেন্দ্র: {clinic} ({slot})। "
-                f"বিস্তারিত আইনি বিশ্লেষণ ও পরবর্তী পদক্ষেপ দেখতে নিচের 'পরবর্তী ধাপে যান' বাটনে ক্লিক করুন।"
-            )
+        action_summary = generate_action_summary(result)
+        result["action_summary"] = action_summary
         history.append({
             "role": "assistant",
-            "content": summary_msg
+            "content": action_summary
         })
     elif result.get("safety_flag"):
         history.append({
@@ -1696,3 +1816,88 @@ def run_intake(
     result["chat_history"] = history
     return result
 
+
+# Pydantic schema for voice-to-profile extraction
+class ProfileVoiceExtractOutput(BaseModel):
+    applicant_name: Optional[str] = Field(None, description="Client or applicant's full name")
+    father_name: Optional[str] = Field(None, description="Father's or guardian's name")
+    division: Optional[str] = Field(None, description="Division in Bangladesh: ঢাকা, চট্টগ্রাম, রাজশাহী, খুলনা, বরিশাল, সিলেট, রংপুর, or ময়মনসিংহ")
+    zilla: Optional[str] = Field(None, description="District / Zilla in Bangladesh, e.g. কুমিল্লা, ঢাকা, ফরিদপুর, বগুড়া, নারায়ণগঞ্জ, নোয়াখালী")
+    thana: Optional[str] = Field(None, description="Upazila or Thana, e.g. চান্দিনা, ভাঙ্গা, সাভার, মিরপুর")
+    union_village: Optional[str] = Field(None, description="Union or Village name, e.g. বাতাঘাসী, ঘারুয়া")
+    contact_number: Optional[str] = Field(None, description="Mobile / phone number")
+    aggressor_name: Optional[str] = Field(None, description="Opponent or aggressor's full name")
+    aggressor_relation: Optional[str] = Field(None, description="Relationship with applicant, e.g. স্বামী, ভাই, শ্বশুর, প্রতিবেশী, মালিক")
+    aggressor_address: Optional[str] = Field(None, description="Opponent's address or workplace location")
+    summary_text: Optional[str] = Field(None, description="Concise 1-sentence summary in Bengali of the extracted profile")
+
+profile_voice_extractor_llm = llm.with_structured_output(ProfileVoiceExtractOutput)
+
+VOICE_PROFILE_PROMPT = """You are an expert Bengali legal paralegal information extractor.
+Given the user's spoken statement and recent intake transcript, extract personal identity and location details for legal aid registration:
+- applicant_name: Client or applicant's full name (e.g. মোসাম্মৎ রহিমা খাতুন, মোতালেব)
+- father_name: Father's or guardian's name if mentioned (e.g. আবদুল করিম)
+- division: Administrative division in Bangladesh (ঢাকা, চট্টগ্রাম, রাজশাহী, খুলনা, বরিশাল, সিলেট, রংপুর, ময়মনসিংহ). If not mentioned explicitly, infer it from the district/zilla (e.g. কুমিল্লা -> চট্টগ্রাম, ফরিদপুর -> ঢাকা, বগুড়া -> রাজশাহী).
+- zilla: District / Zilla (e.g. কুমিল্লা, ফরিদপুর, ঢাকা, নারায়ণগঞ্জ, বগুড়া)
+- thana: Upazila or Thana (e.g. চান্দিনা, ভাঙ্গা, সাভার, মিরপুর)
+- union_village: Union or Village name (e.g. বাতাঘাসী, ঘারুয়া)
+- contact_number: Phone / mobile number (e.g. ০১৭১২৩৪৫৬৭৮)
+- aggressor_name: Opponent or aggressor's full name (e.g. রফিকুল ইসলাম, কাশেম)
+- aggressor_relation: Relationship with applicant (e.g. স্বামী, ভাই, শ্বশুর, প্রতিবেশী, মালিক)
+- aggressor_address: Opponent's address or workplace location (e.g. চান্দিনা বাজার, ভাঙ্গা বাজার)
+- summary_text: 1-sentence Bengali summary of extracted info
+
+If a field is not mentioned, leave it null. Always respond in valid structured output."""
+
+def extract_profile_from_voice(voice_transcript: str, chat_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Extracts applicant and aggressor information automatically from a spoken Bengali audio transcript
+    or text narrative using LLM with structured entity output.
+    """
+    context_snippets = []
+    if chat_history:
+        for msg in chat_history[-6:]:
+            if msg.get("role") == "user":
+                context_snippets.append(f"আগের কথা: {msg.get('content', '')}")
+    
+    combined_input = voice_transcript
+    if context_snippets:
+        combined_input = f"{voice_transcript}\n\nপূর্ববর্তী কথোপকথন:\n" + "\n".join(context_snippets)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", VOICE_PROFILE_PROMPT),
+        ("user", "Spoken input: {spoken_input}")
+    ])
+    
+    try:
+        res = profile_voice_extractor_llm.invoke(prompt.format_messages(spoken_input=combined_input))
+        if res is not None and hasattr(res, "model_dump"):
+            data = res.model_dump()
+            return data
+        elif isinstance(res, dict):
+            return res
+    except Exception as e:
+        print(f"[Profile Voice Extraction Warning] {e}")
+
+    # Fallback basic extraction if LLM is unavailable
+    fallback_data = {
+        "applicant_name": None,
+        "father_name": None,
+        "division": None,
+        "zilla": None,
+        "thana": None,
+        "union_village": None,
+        "contact_number": None,
+        "aggressor_name": None,
+        "aggressor_relation": None,
+        "aggressor_address": None,
+        "summary_text": None
+    }
+    
+    import re
+    # Simple regex for mobile number
+    phone_match = re.search(r'(01[3-9]\d{8}|০১[৩-৯][০-৯]{8})', voice_transcript)
+    if phone_match:
+        fallback_data["contact_number"] = phone_match.group(1)
+        
+    return fallback_data

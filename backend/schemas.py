@@ -27,6 +27,7 @@ class CaseBase(BaseModel):
     rights_explanation: Optional[str] = None
     referral_clinic: Optional[str] = None
     referral_slot: Optional[str] = None
+    address: Optional[str] = None
     chat_history: Optional[List[Dict[str, Any]]] = []
 
 class CaseCreate(CaseBase):
@@ -37,6 +38,7 @@ class CaseUpdate(BaseModel):
     draft_complaint: Optional[str] = None
     applicant_name: Optional[str] = None
     respondent: Optional[str] = None
+    address: Optional[str] = None
     marriage_date: Optional[str] = None
     dower_amount: Optional[str] = None
     dowry_paid: Optional[str] = None
@@ -67,6 +69,7 @@ class IntakeResponse(BaseModel):
     suggested_replies: Optional[List[str]] = None
     extra_question_asked: Optional[bool] = False
     is_complete: bool
+    action_summary: Optional[str] = None
     requires_continuation: bool = False
     continuation_prompt: Optional[str] = None
     rights_explanation: Optional[str] = None
@@ -77,3 +80,48 @@ class IntakeResponse(BaseModel):
     case_id: Optional[int] = None
     llm_error: Optional[str] = None
     llm_error_details: Optional[Dict[str, Any]] = None
+
+# Profile & Aggressor Details Finalization Request
+class FinalizeProfileRequest(BaseModel):
+    case_id: Optional[int] = None
+    session_state: Optional[Dict[str, Any]] = None
+    applicant_name: str
+    father_name: Optional[str] = None
+    division: str
+    zilla: str
+    thana: str
+    union_village: str
+    contact_number: Optional[str] = None
+    is_anonymous: bool = False
+    aggressor_name: Optional[str] = None
+    aggressor_relation: Optional[str] = None
+    aggressor_address: Optional[str] = None
+
+class FinalizeProfileResponse(BaseModel):
+    case_id: Optional[int] = None
+    applicant_name: str
+    respondent: str
+    address: str
+    referral_clinic: str
+    referral_slot: str
+    rights_explanation: str
+    draft_complaint: str
+    session_state: Dict[str, Any]
+
+# Voice-to-Profile Extraction Request & Response
+class ExtractProfileVoiceRequest(BaseModel):
+    voice_transcript: str
+    chat_history: Optional[List[Dict[str, Any]]] = None
+
+class ExtractProfileVoiceResponse(BaseModel):
+    applicant_name: Optional[str] = None
+    father_name: Optional[str] = None
+    division: Optional[str] = None
+    zilla: Optional[str] = None
+    thana: Optional[str] = None
+    union_village: Optional[str] = None
+    contact_number: Optional[str] = None
+    aggressor_name: Optional[str] = None
+    aggressor_relation: Optional[str] = None
+    aggressor_address: Optional[str] = None
+    summary_text: Optional[str] = None
