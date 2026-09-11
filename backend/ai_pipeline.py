@@ -619,6 +619,13 @@ def generate_suggested_replies(
         ("কাবিন" in q or "কাবিননামা" in q or "কাবিননামা" in target) or
         (("দলিল" in q or "কাগজ" in q) and category in ("family_dower_maintenance", "dowry"))
     ):
+        if any(w in q for w in ["মামলা", "প্রস্তুত", "আদালত"]):
+            return [
+                "হ্যাঁ, কাবিননামা ও প্রয়োজনীয় সব কাগজ আমার কাছে প্রস্তুত আছে",
+                "কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি",
+                "রেজিস্ট্রি হয়েছিল, কাজী অফিসে কাবিনের নকল পাওয়া যাবে",
+                "আমাদের কোনো লিখিত কাবিননামা বা বিয়ের কাগজ নেই"
+            ]
         return [
             "কাবিননামার কাগজটি বাবার বাড়িতে রাখা আছে",
             "কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি",
@@ -919,6 +926,8 @@ def get_stage_fallback_question(category: Optional[str], stage: str, missing_ite
         if stage == "cause":
             return "জমিটি নিয়ে বিরোধের সূত্রপাত কীভাবে হয়েছিল এবং জমিটি বর্তমানে কার দখলে আছে?"
         elif stage == "history":
+            if missing_item == "documents_for_court" or (missing_item and any(w in missing_item for w in ["মামলা", "কাগজ", "আদালত"])):
+                return "দেওয়ানি আদালতে মামলা দায়েরের জন্য জমির মূল রেজিস্ট্রি দলিল, পর্চা বা খতিয়ানের কপি কি আপনার কাছে প্রস্তুত আছে?"
             return "জমির মূল রেজিস্ট্রি দলিল বা খতিয়ান কি আপনাদের কাছে সংরক্ষিত আছে?"
         elif stage == "impact":
             return "জমিটি বেদখল বা বিরোধে থাকায় আপনাদের চাষাবাদ বা বসবাস করতে কী ধরণের সমস্যা বা ক্ষতি হচ্ছে?"
@@ -930,6 +939,8 @@ def get_stage_fallback_question(category: Optional[str], stage: str, missing_ite
         if stage == "cause":
             return "আপনার স্বামী যে খরচ বা ভরণপোষণ দেওয়া বন্ধ করেছেন, এই ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন বা কী কারণে উনি আলাদা থাকছেন?"
         elif stage == "history":
+            if missing_item == "documents_for_court" or (missing_item and any(w in missing_item for w in ["মামলা", "কাগজ", "আদালত"])):
+                return "পারিবারিক আদালতে মামলা দায়েরের জন্য বিয়ের কাবিননামা বা কাজী অফিসের নকল, এবং আপনার ও সন্তানের এনআইডি বা জন্মসনদ প্রয়োজন। এই কাগজপত্রগুলো কি বর্তমানে আপনার কাছে প্রস্তুত আছে?"
             return "আপনাদের বিয়ে আনুমানিক কত বছর আগে হয়েছিল এবং কাবিননামার কাগজটি কার কাছে আছে?"
         elif stage == "impact":
             return "বাচ্চা নিয়ে বর্তমানে বাবার বাড়িতে দিনযাপন করতে আপনার কেমন আর্থিক কষ্ট বা টানাপোড়েন হচ্ছে?"
@@ -998,7 +1009,11 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         "কোথায় আছে মনে পড়ছে না", "কোথায় আছে মনে নাই", "কোথায় আছে জানি না", "মনে পড়ছে না", "মনে পরছে না", "খুঁজে পাচ্ছি না",
         "কাজী অফিসের এলাকা", "কোনো সাক্ষী নেই", "কোনো কাজী বা সাক্ষী নেই", "সাক্ষী বা কাজী নেই",
         "দলিল আছে", "দলিল সংরক্ষিত", "দলিল প্রতিপক্ষের", "দলিল নেই", "দলিল নাই", "খতিয়ান আছে",
-        "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "মৌখিক চুক্তি", "সালিশ হয়েছিল", "সালিশ হয়েছে"
+        "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "মৌখিক চুক্তি", "সালিশ হয়েছিল", "সালিশ হয়েছে",
+        "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত", "সব কাগজ আমার কাছে", "সব কাগজপত্র আমার কাছে",
+        "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "নকল তুলতে হবে", "কাজী অফিস থেকে তুলতে",
+        "কাজী অফিস থেকে নকল", "কাগজ বাবার", "কাগজপত্র বাবার", "কাগজ স্বামীর", "কাগজপত্র স্বামীর",
+        "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই", "কোনো লিখিত কাবিননামা", "কোনো লিখিত কাগজ", "কাগজপত্র নেই"
     ])
     if has_evidence_info:
         if "history" not in existing_covered:
@@ -1014,7 +1029,8 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
         "সালিশের মাধ্যমে", "শান্তিপূর্ণ মীমাংসা", "সালিশ চাই", "মীমাংসা চাই",
         "আইনি নোটিশ", "আদালতে যাব", "আদালতে যেতে",
-        "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়"
+        "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়",
+        "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ"
     ]):
         if "desired_solution" not in existing_covered:
             existing_covered.append("desired_solution")
@@ -1128,16 +1144,13 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     target_stage = remaining_stages[0] if remaining_stages else "complete"
 
     # Enforce thorough intake depth:
-    # A complete legal intake interview MUST verify essential documentation (e.g. Kabinnama / deeds).
-    # It must NOT complete on turn 1 or turn 2!
-    if turn_count < 3 and target_stage == "complete":
-        if "history" not in existing_covered or not has_evidence_info:
-            target_stage = "history"
-        elif "desired_solution" not in existing_covered:
-            target_stage = "desired_solution"
+    # If the user reaches completion or selects desired_solution without clarifying essential documents/evidence,
+    # route to 'history' to ask about required documentation before completing!
+    if (target_stage == "complete" or "desired_solution" in existing_covered) and not has_evidence_info and turn_count < 6:
+        target_stage = "history"
 
-    # If all stages are covered AND turn_count >= 3, OR if turn_count >= 4 and at least 3 essential stages covered: complete!
-    if (target_stage == "complete" and turn_count >= 3) or (turn_count >= 4 and len(existing_covered) >= 3):
+    # If both desired_solution AND essential documentation are covered, complete!
+    if (target_stage == "complete" and turn_count >= 3 and has_evidence_info) or (turn_count >= 4 and "desired_solution" in existing_covered and has_evidence_info) or (turn_count >= 4 and len(existing_covered) >= 4 and has_evidence_info) or (turn_count >= 6):
         return {
             "is_complete": True,
             "current_stage": "complete",
@@ -1199,7 +1212,9 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             "2. মানবিক সেতুবন্ধন (Empathetic Bridging): ক্লায়েন্টের সর্বশেষ বক্তব্যটি (যেমন 'আমি টাকা চেয়েছিলাম' বা 'কাবিননামা বাবার বাড়িতে আছে') প্রথমে সংক্ষিপ্ত সহানুভূতি ও উপলব্ধির সাথে স্বীকার করুন (যেমন সংসারের খরচের টাকা চাওয়ায় এমন নির্যাতন করা অন্যায়, অথবা কাবিননামা থাকা অধিকার প্রতিষ্ঠার শক্ত প্রমাণ), তারপর বুঝিয়ে বলুন পরবর্তী তথ্যটি আইনত তাদের অধিকার প্রতিষ্ঠায় কীভাবে প্রয়োজন। হুট করে সরাসরি আমলাতান্ত্রিক প্রশ্ন করবেন না।\n"
             "3. ইতিমধ্যে যে ধাপগুলো সম্পন্ন হয়েছে ({stages_covered_bn}) সে বিষয়ে পুনরাবৃত্তিমূলক প্রশ্ন করবেন না।\n"
             "4. পরবর্তী লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) সম্পর্কে কথ্য বাংলায় একটিমাত্র আন্তরিক ও প্রাসঙ্গিক প্রশ্ন করুন:\n"
-            "   - যদি target_stage='history' হয়: দেনমোহর/ভরণপোষণের ক্ষেত্রে বিয়ের সময়কাল ও কাবিননামা কার কাছে আছে জানতে চান; জমির ক্ষেত্রে দলিল বা খতিয়ান কার কাছে আছে তা জানতে চান।\n"
+            "   - যদি target_stage='history' হয়:\n"
+            "     * যদি ক্লায়েন্ট ইতিমধ্যে মামলা করার বা সালিশের কথা বলে থাকেন (যেমন 'পারিবারিক আদালতে মামলা করতে চাই' বা 'সালিশ চাই'), তবে সেই প্রতিকার পাওয়ার জন্য প্রয়োজনীয় মৌলিক কাগজপত্র (যেমন পারিবারিক আদালতের জন্য মূল কাবিননামা বা কাজী অফিসের নকল, আবেদনকারী ও সন্তানের এনআইডি/জন্মসনদ) তাঁদের কাছে বর্তমানে প্রস্তুত আছে কি না তা আন্তরিকভাবে জানতে চান।\n"
+            "     * অন্যথায় দেনমোহর/ভরণপোষণের ক্ষেত্রে কাবিননামা কার কাছে আছে জানতে চান; জমির ক্ষেত্রে রেজিস্ট্রি দলিল বা খতিয়ান কার কাছে আছে তা জানতে চান।\n"
             "   - যদি target_stage='desired_solution' হয়: কাবিন বা নথির তথ্য পেয়ে থাকলে তা অধিকার প্রমাণের জন্য গুরুত্বপূর্ণ উল্লেখ করে ক্লায়েন্ট কী ধরণের আইনি সমাধান বা প্রতিকার চান (যেমন স্থানীয়ভাবে ইউনিয়ন পরিষদে সালিশ বা আপস চান, নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করে দেনমোহর ও বকেয়া খোরপোষ আদায় করতে চান) তা জানতে চান।\n"
             "   - যদি target_stage='impact' হয়: বিরোধ বা বঞ্চনার ফলে বর্তমানে তিনি ও তাঁর পরিবার কী ধরনের আর্থিক টানাপোড়েন বা সংকটে দিন কাটাচ্ছেন তা জানতে চান।\n"
             "   - যদি target_stage='cause' হয়: বিরোধের সূত্রপাত বা আলাদা থাকার মূল কারণ কী ছিল তা জানতে চান।\n"
@@ -1240,7 +1255,7 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             missing_item = getattr(res, "missing_aspect", None)
             new_facts = getattr(res, "newly_identified_facts", None) or {}
 
-        if is_comp and (target_stage == "complete" or (turn_count >= 3 and "cause" in existing_covered)):
+        if is_comp and has_evidence_info and (target_stage == "complete" or (turn_count >= 4 and "desired_solution" in existing_covered)):
             return {
                 "is_complete": True,
                 "current_stage": "complete",
@@ -1255,7 +1270,16 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         is_repetitive = False
         if not q or not q.strip():
             is_repetitive = True
-        elif target_stage != "cause" and any(w in (q or "") for w in ["সূত্রপাত কীভাবে হয়েছিল", "বিরোধের সূত্রপাত", "ঝামেলা হয়েছে কেন", "ঝামেলা হয়েছে কেন"]):
+        
+        prev_assistant_questions = [
+            m.get("content", "") for m in state.get("chat_history", [])
+            if m.get("role") == "assistant" and m.get("content") and not m.get("content").startswith("⚠️")
+        ]
+        if any(q.strip() == prev_q.strip() or (len(q) > 25 and q[:35] in prev_q) for prev_q in prev_assistant_questions):
+            is_repetitive = True
+        elif target_stage != "cause" and any(w in (q or "") for w in ["সূত্রপাত", "ঝামেলা হয়েছে কেন", "ঝামেলা হয়েছে কেন", "কেন আপনার থেকে আলাদা", "আলাদা থাকছেন এবং", "কোনো বিশেষ কারণ"]):
+            is_repetitive = True
+        elif target_stage == "history" and not any(w in (q or "") for w in ["কাবিন", "কাগজ", "দলিল", "খতিয়ান", "খতিয়ান", "প্রমাণ", "নথি", "সাক্ষী", "রেজিস্ট্রি", "বিয়ে", "বিয়ে", "আদালতের জন্য"]):
             is_repetitive = True
         elif target_stage != "history" and any(w in (q or "") for w in ["কাবিননামা কি আপনাদের কাছে", "কাবিননামা কার কাছে", "বিয়ে কবে হয়েছিল", "রেজিস্ট্রি দলিল বা খতিয়ান"]):
             is_repetitive = True
@@ -1263,7 +1287,8 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             is_repetitive = True
 
         if is_repetitive:
-            q = get_stage_fallback_question(cat, target_stage, missing_item)
+            fallback_missing = "documents_for_court" if "desired_solution" in existing_covered else (missing_item or "marriage_documents")
+            q = get_stage_fallback_question(cat, target_stage, fallback_missing)
 
         if not replies or len(replies) == 0 or (target_stage != "cause" and any("দখল করে রেখেছে" in r for r in (replies or []))) or (target_stage == "desired_solution" and not any("আদালত" in r or "সালিশ" in r or "মামলা" in r for r in (replies or []))):
             replies = generate_suggested_replies(
