@@ -1005,26 +1005,30 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     };
   }, []);
 
-  const renderVoiceTypingButton = () => (
-    <button
-      type="button"
-      onClick={isListening ? stopVoiceTyping : startVoiceTyping}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: '6px 14px',
-        fontSize: '13px',
-        fontWeight: '600',
-        borderRadius: '20px',
-        border: isListening ? '1px solid #ef4444' : '1px solid #bae6fd',
-        cursor: 'pointer',
-        backgroundColor: isListening ? '#fef2f2' : '#f0f9ff',
-        color: isListening ? '#b91c1c' : '#0284c7',
-        transition: 'all 0.15s ease'
-      }}
-      title={isListening ? 'রেকর্ডিং বন্ধ করুন' : 'মুখে বলে বাংলায় লিখুন'}
-    >
+  const renderVoiceTypingButton = () => {
+    const isGenerating = isLoading || isStreaming;
+    return (
+      <button
+        type="button"
+        disabled={isGenerating}
+        onClick={isListening ? stopVoiceTyping : startVoiceTyping}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '6px 14px',
+          fontSize: '13px',
+          fontWeight: '600',
+          borderRadius: '20px',
+          border: isGenerating ? '1px solid #e2e8f0' : (isListening ? '1px solid #ef4444' : '1px solid #bae6fd'),
+          cursor: isGenerating ? 'not-allowed' : 'pointer',
+          backgroundColor: isGenerating ? '#f8fafc' : (isListening ? '#fef2f2' : '#f0f9ff'),
+          color: isGenerating ? '#94a3b8' : (isListening ? '#b91c1c' : '#0284c7'),
+          opacity: isGenerating ? 0.6 : 1,
+          transition: 'all 0.15s ease'
+        }}
+        title={isListening ? 'রেকর্ডিং বন্ধ করুন' : (isGenerating ? 'অপেক্ষা করুন...' : 'মুখে বলে বাংলায় লিখুন')}
+      >
       {isListening ? (
         <>
           <span className="mic-recording-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }} />
@@ -1038,7 +1042,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </>
       )}
     </button>
-  );
+    );
+  };
 
 
   const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false) => {
@@ -2658,6 +2663,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
               {/* Quick Answer Shortcut Chips */}
               {(() => {
+                const isGenerating = isLoading || isStreaming;
                 const activeQuestion = followUpQuestion || 
                   (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
                      ? chatHistory[chatHistory.length - 1].content 
@@ -2667,7 +2673,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
                 return (
                   <div className="quick-chips-wrapper">
-                    <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                    <span style={{ fontSize: '11px', color: isGenerating ? '#94a3b8' : '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
                       সহায়ক উত্তর:
                     </span>
                     {chips.map((chip, idx) => {
@@ -2676,9 +2682,25 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                         <button
                           key={idx}
                           type="button"
+                          disabled={isGenerating}
                           className={`quick-chip ${isSelected ? 'active' : ''}`}
-                          onClick={() => setTextNarrative(chip.text)}
-                          title={chip.text}
+                          onClick={() => {
+                            if (!isGenerating) {
+                              setTextNarrative(chip.text);
+                            }
+                          }}
+                          title={isGenerating ? 'উত্তর প্রস্তুত হওয়া পর্যন্ত অপেক্ষা করুন' : chip.text}
+                          style={
+                            isGenerating
+                              ? {
+                                  opacity: 0.45,
+                                  cursor: 'not-allowed',
+                                  backgroundColor: '#f1f5f9',
+                                  borderColor: '#e2e8f0',
+                                  color: '#94a3b8'
+                                }
+                              : undefined
+                          }
                         >
                           {chip.label}
                         </button>
@@ -2751,14 +2773,14 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               <button
                 className="btn btn-primary"
                 style={{ width: '100%', padding: '13px', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                disabled={isLoading || !textNarrative.trim()}
+                disabled={isLoading || isStreaming || !textNarrative.trim()}
                 onClick={() => {
                   stopVoice();
                   handleSendMessage();
                 }}
               >
-                {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Send size={16} />}
-                <span>উত্তর জমা দিন</span>
+                {isLoading || isStreaming ? <RefreshCw className="animate-spin" size={18} /> : <Send size={16} />}
+                <span>{isLoading || isStreaming ? 'তথ্য তৈরি হচ্ছে...' : 'উত্তর জমা দিন'}</span>
               </button>
             )}
           </div>
