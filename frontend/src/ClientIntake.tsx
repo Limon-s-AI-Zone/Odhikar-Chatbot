@@ -411,6 +411,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [copiedDraft, setCopiedDraft] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isIntakeCompleted, setIsIntakeCompleted] = useState(false);
+  const [category, setCategory] = useState<string | null>(null);
+  const isOutOfScope = category === 'out_of_scope' || sessionState?.category === 'out_of_scope';
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   // Personal & Aggressor Info State (Collected right before Step 4 to match nearby BRAC clinic)
@@ -441,6 +443,36 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       profileRecognitionRef.current = null;
     }
     setIsListeningProfile(false);
+  };
+
+  const handleStartNewCase = () => {
+    stopVoice();
+    stopProfileVoiceTyping();
+    setStep('welcome');
+    setTextNarrative('');
+    setSafetyMessage(null);
+    setSessionState(null);
+    setCategory(null);
+    setChatHistory([]);
+    setIsIntakeCompleted(false);
+    setFollowUpQuestion(null);
+    setSuggestedReplies([]);
+    setRightsExplanation(null);
+    setDraftComplaint(null);
+    setReferralInfo(null);
+    setCaseId(null);
+    setApplicantName('');
+    setFatherName('');
+    setThana('');
+    setUnionVillage('');
+    setContactNumber('');
+    setIsAnonymous(false);
+    setAggressorName('');
+    setAggressorRelation('স্বামী');
+    setAggressorAddress('');
+    setShowManualForm(false);
+    setProfileVoiceTranscript('');
+    setHasVoiceExtracted(false);
   };
 
   const handleExtractProfileVoice = async (textOverride?: string) => {
@@ -1148,6 +1180,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
 
         setSessionState(finalData.session_state);
+        if (finalData.category) {
+          setCategory(finalData.category);
+        } else if (finalData.session_state?.category) {
+          setCategory(finalData.session_state.category);
+        }
         if (finalData.chat_history && finalData.chat_history.length > 0) {
           setChatHistory(finalData.chat_history);
         }
@@ -1216,6 +1253,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
 
         setSessionState(data.session_state);
+        if (data.category) {
+          setCategory(data.category);
+        } else if (data.session_state?.category) {
+          setCategory(data.session_state.category);
+        }
 
         if (data.chat_history && data.chat_history.length > 0) {
           setChatHistory(data.chat_history);
@@ -1344,11 +1386,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           <span className="step-label">বিবরণ</span>
         </div>
         <div className={`step-line ${['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
-        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? (isIntakeCompleted ? 'completed' : 'active') : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
-          <div className="step-circle">{['rights', 'referral'].includes(step) || isIntakeCompleted ? <Check size={14} /> : '৩'}</div>
-          <span className="step-label">প্রশ্নোত্তর</span>
+        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? (isIntakeCompleted && !isOutOfScope ? 'completed' : 'active') : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+          <div className="step-circle">{['rights', 'referral'].includes(step) || (isIntakeCompleted && !isOutOfScope) ? <Check size={14} /> : '৩'}</div>
+          <span className="step-label">{isOutOfScope ? 'আওতাভুক্ত নয়' : 'প্রশ্নোত্তর'}</span>
         </div>
-        <div className={`step-line ${['rights', 'referral'].includes(step) || isIntakeCompleted ? 'active' : ''}`} />
+        <div className={`step-line ${(['rights', 'referral'].includes(step) || (isIntakeCompleted && !isOutOfScope)) ? 'active' : ''}`} />
         <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
           <div className="step-circle">৪</div>
           <span className="step-label">পরামর্শ ও ক্লিনিক</span>
@@ -1928,17 +1970,198 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
           {/* Active Question Highlight Box OR Completion Notification */}
           {isIntakeCompleted ? (
-            <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                <CheckCircle2 size={18} color="#16a34a" />
-                <span style={{ fontSize: '13px', fontWeight: '800', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  প্রশ্নোত্তর পর্ব সম্পন্ন হয়েছে
-                </span>
+            isOutOfScope ? (
+              <div style={{
+                backgroundColor: '#fffbeb',
+                border: '1.5px solid #fcd34d',
+                borderRadius: '14px',
+                padding: '18px',
+                marginBottom: '18px',
+                boxShadow: '0 2px 8px rgba(245, 158, 11, 0.08)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertTriangle size={20} color="#d97706" />
+                    <span style={{ fontSize: '14px', fontWeight: '800', color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      আইনি সেবার আওতাভুক্ত নয় (Out of Scope)
+                    </span>
+                  </div>
+                  {rightsExplanation && (
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '12px',
+                        padding: '4px 10px',
+                        backgroundColor: 'white',
+                        borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#d97706',
+                        color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#b45309'
+                      }}
+                      onClick={() => playVoice(rightsExplanation)}
+                      title="পরামর্শ শুনুন"
+                    >
+                      {isLoadingAudio && currentPlayingText === rightsExplanation ? (
+                        <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                      ) : isPlayingAudio && currentPlayingText === rightsExplanation ? (
+                        <><VolumeX size={14} /> <span>থামান</span></>
+                      ) : (
+                        <><Volume2 size={14} /> <span>পরামর্শ শুনুন</span></>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                <p style={{ margin: '0 0 16px 0', fontSize: '14.5px', color: '#78350f', lineHeight: '1.7', whiteSpace: 'pre-line' }}>
+                  {rightsExplanation || 'আপনার বিষয়টি আমাদের এই মুহূর্তের বিনামূল্যে পারিবারিক ও শ্রম আইনি সহায়তার আওতাভুক্ত নয়। তবে এ বিষয়ে আপনি সাধারণ ডায়েরি (GD) বা থানা এবং নিকটস্থ সরকারি লিগ্যাল এইড অফিসে যোগাযোগ করতে পারেন। প্রয়োজনে জাতীয় হেল্পলাইন ৩৩৩ বা ৯৯৯-এ যোগাযোগ করুন।'}
+                </p>
+
+                {/* Relevant Emergency & Legal Helplines for Out-of-Scope Issues */}
+                <div style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #fde68a',
+                  borderRadius: '10px',
+                  padding: '14px',
+                  marginBottom: '16px'
+                }}>
+                  <div style={{ fontSize: '12.5px', fontWeight: '700', color: '#92400e', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <PhoneCall size={14} /> জরুরি সহায়তা ও জাতীয় হেল্পলাইন নম্বর:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                    <a
+                      href="tel:999"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#991b1b',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <Shield size={18} color="#dc2626" />
+                      <div>
+                        <div>৯৯৯ (জাতীয় জরুরি সেবা)</div>
+                        <div style={{ fontSize: '11px', color: '#7f1d1d', fontWeight: 'normal' }}>পুলিশ, ফায়ার সার্ভিস ও অ্যাম্বুলেন্স</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href="tel:16430"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#eff6ff',
+                        border: '1px solid #bfdbfe',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#1e40af',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <Scale size={18} color="#2563eb" />
+                      <div>
+                        <div>১৬৪৩০ (আইনি সহায়তা)</div>
+                        <div style={{ fontSize: '11px', color: '#1e3a8a', fontWeight: 'normal' }}>সরকারি জাতীয় লিগ্যাল এইড কলসেন্টার</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href="tel:333"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#f0fdf4',
+                        border: '1px solid #bbf7d0',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#166534',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <PhoneCall size={18} color="#16a34a" />
+                      <div>
+                        <div>৩৩৩ (সরকারি সেবা কলসেন্টার)</div>
+                        <div style={{ fontSize: '11px', color: '#14532d', fontWeight: 'normal' }}>সরকারি সেবা ও পরামর্শ</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href="tel:109"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#faf5ff',
+                        border: '1px solid #e9d5ff',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#6b21a8',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <HeartHandshake size={18} color="#9333ea" />
+                      <div>
+                        <div>১০৯ (নারী ও শিশু নির্যাতন)</div>
+                        <div style={{ fontSize: '11px', color: '#581c87', fontWeight: 'normal' }}>সহায়তা ও প্রতিরোধ হেল্পলাইন</div>
+                      </div>
+                    </a>
+                  </div>
+                </div>
+
+                {/* Reset / Start New Intake Button */}
+                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      backgroundColor: '#d97706',
+                      borderColor: '#b45309',
+                      padding: '10px 20px',
+                      fontSize: '14px',
+                      fontWeight: '700',
+                      borderRadius: '8px',
+                      boxShadow: '0 2px 6px rgba(217, 119, 6, 0.25)',
+                      cursor: 'pointer'
+                    }}
+                    onClick={handleStartNewCase}
+                  >
+                    <RefreshCw size={15} />
+                    <span>নতুন আরেকটি আইনি আবেদন শুরু করুন</span>
+                  </button>
+                </div>
               </div>
-              <p style={{ margin: 0, fontSize: '14.5px', color: '#166534', lineHeight: '1.6' }}>
-                আপনার বিবরণ ও সকল প্রশ্নের উত্তর সফলভাবে সংরক্ষিত হয়েছে। এখন আপনার এলাকা অনুযায়ী <strong>নিকটস্থ ব্র্যাক লিগ্যাল এইড ক্লিনিক</strong> খুঁজে বের করতে এবং আপনার নামে সঠিক <strong>অভিযোগপত্র (Draft Complaint)</strong> তৈরি করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য দিন:
-              </p>
-            </div>
+            ) : (
+              <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <CheckCircle2 size={18} color="#16a34a" />
+                  <span style={{ fontSize: '13px', fontWeight: '800', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    প্রশ্নোত্তর পর্ব সম্পন্ন হয়েছে
+                  </span>
+                </div>
+                <p style={{ margin: 0, fontSize: '14.5px', color: '#166534', lineHeight: '1.6' }}>
+                  আপনার বিবরণ ও সকল প্রশ্নের উত্তর সফলভাবে সংরক্ষিত হয়েছে। এখন আপনার এলাকা অনুযায়ী <strong>নিকটস্থ ব্র্যাক লিগ্যাল এইড ক্লিনিক</strong> খুঁজে বের করতে এবং আপনার নামে সঠিক <strong>অভিযোগপত্র (Draft Complaint)</strong> তৈরি করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য দিন:
+                </p>
+              </div>
+            )
           ) : (
             <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
@@ -1979,7 +2202,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           )}
 
           {/* VOICE-FIRST PROFILE & AGGRESSOR DETAILS ASSISTANT (Right Before Step 4) */}
-          {isIntakeCompleted && (
+          {isIntakeCompleted && !isOutOfScope && (
             <div style={{
               backgroundColor: '#ffffff',
               border: '2px solid #0284c7',
@@ -2469,58 +2692,60 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           {/* Action Button: Changes to 'Confirm Profile & View Step 4' when questionnaires are completed */}
           <div style={{ marginTop: '14px' }}>
             {isIntakeCompleted ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <button
-                  className="btn btn-primary"
-                  disabled={isFinalizingProfile}
-                  style={{
-                    width: '100%',
-                    padding: '14px 24px',
-                    fontSize: '16px',
-                    fontWeight: '700',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '10px',
-                    backgroundColor: '#16a34a',
-                    borderColor: '#15803d',
-                    boxShadow: '0 4px 14px rgba(22, 163, 74, 0.25)',
-                    borderRadius: '10px',
-                    cursor: isFinalizingProfile ? 'not-allowed' : 'pointer'
-                  }}
-                  onClick={handleFinalizeProfile}
-                >
-                  {isFinalizingProfile ? (
-                    <>
-                      <RefreshCw className="animate-spin" size={18} />
-                      <span>নিকটস্থ ব্র্যাক কেন্দ্র ও অভিযোগপত্র প্রস্তুত হচ্ছে...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>নিকটস্থ ব্র্যাক কেন্দ্র নিশ্চিত করুন ও আইনি পরামর্শ দেখুন (ধাপ ৪)</span>
-                      <ChevronRight size={20} />
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopVoice();
-                    setStep('rights');
-                  }}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#64748b',
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    padding: '6px',
-                    textDecoration: 'underline'
-                  }}
-                >
-                  তথ্য পূরণ ছাড়াই সরাসরি এগিয়ে যান (Skip to Step 4)
-                </button>
-              </div>
+              !isOutOfScope ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <button
+                    className="btn btn-primary"
+                    disabled={isFinalizingProfile}
+                    style={{
+                      width: '100%',
+                      padding: '14px 24px',
+                      fontSize: '16px',
+                      fontWeight: '700',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '10px',
+                      backgroundColor: '#16a34a',
+                      borderColor: '#15803d',
+                      boxShadow: '0 4px 14px rgba(22, 163, 74, 0.25)',
+                      borderRadius: '10px',
+                      cursor: isFinalizingProfile ? 'not-allowed' : 'pointer'
+                    }}
+                    onClick={handleFinalizeProfile}
+                  >
+                    {isFinalizingProfile ? (
+                      <>
+                        <RefreshCw className="animate-spin" size={18} />
+                        <span>নিকটস্থ ব্র্যাক কেন্দ্র ও অভিযোগপত্র প্রস্তুত হচ্ছে...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>নিকটস্থ ব্র্যাক কেন্দ্র নিশ্চিত করুন ও আইনি পরামর্শ দেখুন (ধাপ ৪)</span>
+                        <ChevronRight size={20} />
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopVoice();
+                      setStep('rights');
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#64748b',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      padding: '6px',
+                      textDecoration: 'underline'
+                    }}
+                  >
+                    তথ্য পূরণ ছাড়াই সরাসরি এগিয়ে যান (Skip to Step 4)
+                  </button>
+                </div>
+              ) : null
             ) : (
               <button
                 className="btn btn-primary"
@@ -2725,15 +2950,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           <button 
             className="btn btn-primary" 
             style={{ width: '100%', padding: '14px', fontSize: '16px' }}
-            onClick={() => {
-              stopVoice();
-              setStep('welcome');
-              setTextNarrative('');
-              setSafetyMessage(null);
-              setSessionState(null);
-              setChatHistory([]);
-              setIsIntakeCompleted(false);
-            }}
+            onClick={handleStartNewCase}
           >
             নতুন আরেকটি আবেদন শুরু করুন
           </button>
