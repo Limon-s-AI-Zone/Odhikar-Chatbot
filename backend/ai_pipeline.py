@@ -755,30 +755,9 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     if extra_question_asked:
         if "history" not in existing_covered:
             existing_covered.append("history")
-        
-        remaining_stages = [s for s in stages_order if s not in existing_covered]
-        if "desired_solution" in remaining_stages and turn_count < 5:
-            extra_q = get_stage_fallback_question(cat, "desired_solution")
-            extra_chips = generate_suggested_replies(question=extra_q, missing_fields=["desired_solution"], category=cat)
-            return {
-                "is_complete": False,
-                "current_stage": "desired_solution",
-                "stages_covered": existing_covered,
-                "missing_fields": ["desired_solution"],
-                "follow_up_question": extra_q,
-                "suggested_replies": extra_chips,
-                "extra_question_asked": False
-            }
-        else:
-            return {
-                "is_complete": True,
-                "current_stage": "complete",
-                "stages_covered": existing_covered,
-                "missing_fields": [],
-                "follow_up_question": None,
-                "suggested_replies": None,
-                "extra_question_asked": False
-            }
+        # Do not return a hardcoded static question.
+        # Let execution flow to dialogue_llm so it dynamically generates the next question
+        # acknowledging the client's specific answer (e.g. Kazi office details, witnesses) from chat history.
 
     # 3. Check if client's response expresses "mone nei" or "document nei"
     is_uncertain, match_type = check_uncertainty_or_missing_doc(latest_user_text)
@@ -902,11 +881,11 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     if state.get("address"):
         known.append(f"ঠিকানা: {state.get('address')}")
 
-    # Format recent conversation history for deep context
-    recent_history = state.get("chat_history", [])[-6:]
+    # Format full conversation history for deep context (up to last 16 messages / 8 turns)
+    chat_hist = state.get("chat_history", [])[-16:]
     formatted_history = "\n".join([
-        f"{'ক্লায়েন্ট' if m.get('role') == 'user' else 'প্যারালিগ্যাল সহকারী'}: {m.get('content', '')}"
-        for m in recent_history if m.get("content")
+        f"{'👤 ক্লায়েন্ট' if m.get('role') == 'user' else '⚖️ প্যারালিগ্যাল সহকারী'}: {m.get('content', '')}"
+        for m in chat_hist if m.get("content")
     ])
 
     target_stage_bn = stage_bn_map.get(target_stage, target_stage)
@@ -917,25 +896,22 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         ("user", (
             "মামলার ক্যাটাগরি: {category}\n\n"
             "ক্লায়েন্টের সম্পূর্ণ বিবরণ (Cumulative Story):\n{client_narrative}\n\n"
-            "সাম্প্রতিক কথোপকথন রেকর্ড:\n{chat_history}\n\n"
+            "পূর্ববর্তী সকল কথোপকথন রেকর্ড (Full Chat History):\n{chat_history}\n\n"
             "ইতিমধ্যে প্রতিষ্ঠিত ও সংগৃহীত তথ্যসমূহ:\n{known_facts}\n\n"
             "ইতিমধ্যে সম্পন্ন হওয়া ধাপসমূহ (Covered Stages): {stages_covered_bn}\n"
             "পরবর্তী লক্ষ্য ধাপ (Target Stage): {target_stage} ({target_stage_bn})\n\n"
-            "ক্লায়েন্টের সর্বশেষ উত্তর: {latest_user_text}\n"
+            "ক্লায়েন্টের সর্বশেষ উত্তর (Latest User Reply): {latest_user_text}\n"
             "বর্তমান টার্ন সংখ্যা: {turn_count}\n\n"
             "টাস্ক নির্দেশিকা:\n"
-            "1. Problem → Cause → History → Impact → Desired Solution ধাপসমূহ অনুযায়ী পর্যায়ক্রমে এগোতে হবে।\n"
-            "2. মানবিক সেতুবন্ধন (Empathetic Bridging): ক্লায়েন্টের সর্বশেষ বক্তব্যটি (যেমন 'আমি টাকা চেয়েছিলাম' বা 'কাবিননামা বাবার বাড়িতে আছে') প্রথমে সংক্ষিপ্ত সহানুভূতি ও উপলব্ধির সাথে স্বীকার করুন (যেমন সংসারের খরচের টাকা চাওয়ায় এমন নির্যাতন করা অন্যায়, অথবা কাবিননামা থাকা অধিকার প্রতিষ্ঠার শক্ত প্রমাণ), তারপর বুঝিয়ে বলুন পরবর্তী তথ্যটি আইনত তাদের অধিকার প্রতিষ্ঠায় কীভাবে প্রয়োজন। হুট করে সরাসরি আমলাতান্ত্রিক প্রশ্ন করবেন না।\n"
+            "1. কথোপকথনের গভীর ধারাবাহিকতা (Chat History Continuity): ক্লায়েন্টের পূর্ববর্তী সকল কথোপকথন রেকর্ড মনোযোগ দিয়ে পর্যবেক্ষণ করুন। ক্লায়েন্ট সর্বশেষ উত্তরে বা আগের কোনো উত্তরে যা কিছু উল্লেখ করেছেন (যেমন নির্দিষ্ট পরিমাণ টাকা, স্বামী/বিবাদীর নাম ও আচরণ, সন্তান, বাবার বাড়ির অবস্থান, কাজের মেয়াদ, জমি দখলের ধরন ইত্যাদি), আপনার উত্তরে স্পষ্টভাবে সেই প্রসঙ্গের সহানুভূতিশীল স্বীকৃতি (acknowledgement) দিন।\n"
+            "2. লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) অনুযায়ী পরবর্তী স্বাভাবিক কথ্য বাংলা প্রশ্নটি করুন। পূর্বের কোনো উত্তরের সাথে সরাসরি মিলিয়ে প্রশ্ন করবেন, বিচ্ছিন্ন বা রোবোটিক প্রশ্ন করবেন না।\n"
             "3. ইতিমধ্যে যে ধাপগুলো সম্পন্ন হয়েছে ({stages_covered_bn}) সে বিষয়ে পুনরাবৃত্তিমূলক প্রশ্ন করবেন না।\n"
-            "4. পরবর্তী লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) সম্পর্কে কথ্য বাংলায় একটিমাত্র আন্তরিক ও প্রাসঙ্গিক প্রশ্ন করুন:\n"
-            "   - যদি target_stage='history' হয়:\n"
-            "     * যদি ক্লায়েন্ট ইতিমধ্যে মামলা করার বা সালিশের কথা বলে থাকেন (যেমন 'পারিবারিক আদালতে মামলা করতে চাই' বা 'সালিশ চাই'), তবে সেই প্রতিকার পাওয়ার জন্য প্রয়োজনীয় মৌলিক কাগজপত্র (যেমন পারিবারিক আদালতের জন্য মূল কাবিননামা বা কাজী অফিসের নকল, আবেদনকারী ও সন্তানের এনআইডি/জন্মসনদ) তাঁদের কাছে বর্তমানে প্রস্তুত আছে কি না তা আন্তরিকভাবে জানতে চান।\n"
-            "     * অন্যথায় দেনমোহর/ভরণপোষণের ক্ষেত্রে কাবিননামা কার কাছে আছে জানতে চান; জমির ক্ষেত্রে রেজিস্ট্রি দলিল বা খতিয়ান কার কাছে আছে তা জানতে চান।\n"
-            "   - যদি target_stage='desired_solution' হয়: কাবিন বা নথির তথ্য পেয়ে থাকলে তা অধিকার প্রমাণের জন্য গুরুত্বপূর্ণ উল্লেখ করে ক্লায়েন্ট কী ধরণের আইনি সমাধান বা প্রতিকার চান (যেমন স্থানীয়ভাবে ইউনিয়ন পরিষদে সালিশ বা আপস চান, নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করে দেনমোহর ও বকেয়া খোরপোষ আদায় করতে চান) তা জানতে চান।\n"
-            "   - যদি target_stage='impact' হয়: বিরোধ বা বঞ্চনার ফলে বর্তমানে তিনি ও তাঁর পরিবার কী ধরনের আর্থিক টানাপোড়েন বা সংকটে দিন কাটাচ্ছেন তা জানতে চান।\n"
-            "   - যদি target_stage='cause' হয়: বিরোধের সূত্রপাত বা আলাদা থাকার মূল কারণ কী ছিল তা জানতে চান।\n"
-            "5. এই প্রশ্নের সাথে সরাসরি মানানসই ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) প্রদান করুন।\n"
-            "6. ক্লায়েন্ট যদি প্রয়োজনীয় মৌলিক উত্তরগুলো এখনো সম্পন্ন না করে থাকেন, তবে is_complete=False দিন।"
+            "   - যদি target_stage='history' হয়: পূর্ববর্তী উত্তরে কোনো সালিশ বা আদালতের উল্লেখ থাকলে সেই অনুসারে প্রয়োজনীয় কাগজপত্র (কাবিননামা/দলিল/এনআইডি) প্রস্তুত আছে কি না তা প্রাসঙ্গিকভাবে জানতে চান।\n"
+            "   - যদি target_stage='desired_solution' হয়: পূর্বের নথিপত্র ও পরিস্থিতি উল্লেখ করে ক্লায়েন্ট সালিশ চান নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করতে চান তা জানতে চান।\n"
+            "   - যদি target_stage='impact' হয়: ক্লায়েন্টের পারিবারিক সংকট বা বর্তমান বসবাসের কষ্টের বিষয়ে আন্তরিকভাবে জানতে চান।\n"
+            "   - যদি target_stage='cause' হয়: বিরোধ বা আলাদা থাকার মূল কারণ কী ছিল তা পূর্ববর্তী বক্তব্যের সূত্রে জানতে চান।\n"
+            "4. ক্লায়েন্টের সর্বশেষ জবাব ও আপনার করা প্রশ্নের সাথে সরাসরি প্রাসঙ্গিক ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) দিন।\n"
+            "5. ক্লায়েন্ট যদি প্রয়োজনীয় মৌলিক উত্তরগুলো এখনো সম্পন্ন না করে থাকেন, তবে is_complete=False দিন।"
         ))
     ])
 
@@ -988,25 +964,19 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             is_repetitive = True
         
         prev_assistant_questions = [
-            m.get("content", "") for m in state.get("chat_history", [])
+            m.get("content", "").strip() for m in state.get("chat_history", [])
             if m.get("role") == "assistant" and m.get("content") and not m.get("content").startswith("⚠️")
         ]
-        if any(q.strip() == prev_q.strip() or (len(q) > 25 and q[:35] in prev_q) for prev_q in prev_assistant_questions):
-            is_repetitive = True
-        elif target_stage != "cause" and any(w in (q or "") for w in ["সূত্রপাত", "ঝামেলা হয়েছে কেন", "ঝামেলা হয়েছে কেন", "কেন আপনার থেকে আলাদা", "আলাদা থাকছেন এবং", "কোনো বিশেষ কারণ"]):
-            is_repetitive = True
-        elif target_stage == "history" and not any(w in (q or "") for w in ["কাবিন", "কাগজ", "দলিল", "খতিয়ান", "খতিয়ান", "প্রমাণ", "নথি", "সাক্ষী", "রেজিস্ট্রি", "বিয়ে", "বিয়ে", "আদালতের জন্য"]):
-            is_repetitive = True
-        elif target_stage != "history" and any(w in (q or "") for w in ["কাবিননামা কি আপনাদের কাছে", "কাবিননামা কার কাছে", "বিয়ে কবে হয়েছিল", "রেজিস্ট্রি দলিল বা খতিয়ান"]):
-            is_repetitive = True
-        elif target_stage == "desired_solution" and not any(w in (q or "") for w in ["সালিশ", "আদালত", "মামলা", "প্রতিকার", "সমাধান", "মীমাংসা", "আইনি পদক্ষেপ", "পদক্ষেপ"]):
+        # Only fallback if question is empty or an exact duplicate of an already asked assistant question
+        if q and any(q.strip() == prev_q for prev_q in prev_assistant_questions if prev_q):
             is_repetitive = True
 
         if is_repetitive:
             fallback_missing = "documents_for_court" if "desired_solution" in existing_covered else (missing_item or "marriage_documents")
             q = get_stage_fallback_question(cat, target_stage, fallback_missing)
 
-        if not replies or len(replies) == 0 or (target_stage != "cause" and any("দখল করে রেখেছে" in r for r in (replies or []))) or (target_stage == "desired_solution" and not any("আদালত" in r or "সালিশ" in r or "মামলা" in r for r in (replies or []))):
+        # Preserve the LLM's dynamic suggested replies; only fall back to static generator if empty
+        if not replies or len(replies) == 0:
             replies = generate_suggested_replies(
                 question=q,
                 missing_fields=[target_stage],
