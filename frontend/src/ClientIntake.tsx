@@ -43,25 +43,49 @@ export function getContextualChips(
       if (reply.length > 20) {
         if (reply.includes('বাবার বাড়ি')) label = 'বাবার বাড়িতে আছে';
         else if (reply.includes('স্বামীর কাছে')) label = 'স্বামীর কাছে আছে';
-        else if (reply.includes('কাজী অফিস')) label = 'কাজী অফিসে আছে';
+        else if (reply.includes('কাজী অফিস')) label = 'কাজী অফিসের তথ্য আছে';
         else if (reply.includes('কাগজ নেই') || reply.includes('দলিল নেই')) label = 'কোনো কাগজ নেই';
         else if (reply.includes('১ লাখ')) label = '১ লাখ টাকা';
         else if (reply.includes('২ লাখ')) label = '২ লাখ টাকা';
         else if (reply.includes('৫ লাখ')) label = '৫ লাখ টাকা';
+        else if (reply.includes('৫০ হাজার')) label = '৫০ হাজার - ১ লাখ';
         else if (reply.includes('হাজিরা') || reply.includes('স্লিপ')) label = 'হাজিরা খাতা/স্লিপ আছে';
-        else if (reply.includes('সাক্ষী')) label = 'সাক্ষী আছেন';
+        else if (reply.includes('মালিকের নাম')) label = 'মালিকের তথ্য আছে';
+        else if (reply.includes('সাক্ষী আছেন') || reply.includes('প্রত্যক্ষদর্শী')) label = 'সাক্ষী আছেন';
+        else if (reply.includes('কোনো সাক্ষী নেই') || reply.includes('কাজী বা সাক্ষী নেই')) label = 'কোনো সাক্ষী নেই';
+        else if (reply.includes('পরিবার') || reply.includes('আত্মীয়')) label = 'পরিবার জানে';
+        else if (reply.includes('মুরব্বি')) label = 'মুরব্বিরা জানেন';
         else if (reply.includes('মৌখিক')) label = 'মৌখিক চুক্তি ছিল';
         else if (reply.includes('১ মাস')) label = '১ মাস কাজ করেছি';
         else if (reply.includes('৬ মাস')) label = '৬ মাস কাজ করেছি';
         else if (reply.includes('১ বছর')) label = '১ বছরের বেশি';
         else if (reply.includes('১টি সন্তান')) label = '১টি সন্তান আছে';
         else if (reply.includes('২টি সন্তান')) label = '২টি সন্তান আছে';
-        else if (reply.includes('কোনো সন্তান নেই')) label = 'কোনো সন্তান নেই';
-        else if (reply.includes('মূল দলিল')) label = 'মূল দলিল আছে';
+        else if (reply.includes('আমাদের দখলেই')) label = 'আমাদের দখলে আছে';
+        else if (reply.includes('প্রতিপক্ষ জোরপূর্বক') || reply.includes('অবৈধভাবে দখল')) label = 'প্রতিপক্ষ দখল করেছে';
+        else if (reply.includes('ওয়ারিশ ও অংশ')) label = 'পৈতৃক ওয়ারিশ বিরোধ';
+        else if (reply.includes('সীমানা নির্ধারণ') || reply.includes('সীমানা নিয়ে')) label = 'সীমানা নিয়ে বিরোধ';
+        else if (reply.includes('মূল দলিল') || reply.includes('রেজিস্ট্রি দলিল')) label = 'মূল দলিল আছে';
         else if (reply.includes('খতিয়ান') || reply.includes('পর্চা')) label = 'খতিয়ান/পর্চা আছে';
+        else if (reply.includes('প্রতিপক্ষের দখলে আটকে')) label = 'দলিল প্রতিপক্ষের কাছে';
+        else if (reply.includes('কোনো বৈধ দলিল')) label = 'কোনো কাগজ নেই';
+        else if (reply.includes('দখলে')) label = 'জমি দখলে আছে';
+        else if (reply.includes('দাখিলা') || reply.includes('রশিদ')) label = 'দাখিলা/রশিদ আছে';
+        else if (reply.includes('মেম্বার বা চেয়ারম্যান') || reply.includes('চেয়ারম্যানের কাছে সালিশ')) label = 'মেম্বার/চেয়ারম্যানের সালিশ';
+        else if (reply.includes('পারিবারিক শরিক')) label = 'শরিকদের সাথে বিরোধ';
+        else if (reply.includes('বাইরের প্রভাবশালী')) label = 'বাইরের দখলদার';
+        else if (reply.includes('কোনো সালিশ বা মীমাংসার বৈঠক হয়নি') || reply.includes('কোনো সালিশ হয়নি')) label = 'কোনো সালিশ হয়নি';
         else if (reply.includes('সালিশ')) label = 'সালিশ হয়েছিল';
         else if (reply.includes('জিডি')) label = 'থানায় জিডি করেছি';
-        else if (reply.includes('অভিযোগ করিনি')) label = 'কোনো অভিযোগ করিনি';
+        else if (reply.includes('যৌতুকের দাবি')) label = 'যৌতুকের দাবি';
+        else if (reply.includes('দ্বিতীয় বিয়ে') || reply.includes('দ্বিতীয় বিয়ে')) label = 'দ্বিতীয় বিয়ে করেছে';
+        else if (reply.includes('বনিবনা না হওয়ায়')) label = 'বনিবনা হয়নি';
+        else if (reply.includes('তাড়িয়ে দিয়েছে')) label = 'তাড়িয়ে দিয়েছে';
+        else if (reply.includes('জাল দলিল')) label = 'জাল দলিল তৈরি';
+        else if (reply.includes('সীমানা কেটে')) label = 'সীমানা কেটে দখল';
+        else if (reply.includes('ছাঁটাই')) label = 'কাজ থেকে ছাঁটাই';
+        else if (reply.includes('নির্দিষ্ট মনে নেই') || reply.includes('মনে করা যাচ্ছে না')) label = 'নির্দিষ্ট মনে নেই';
+        else if (reply.includes('কারও কাছেই তথ্য নেই')) label = 'কারও তথ্য নেই';
         else label = reply.slice(0, 18) + '...';
       }
       return { label, text: reply };
@@ -70,6 +94,19 @@ export function getContextualChips(
 
   const q = (question || '').toLowerCase();
   const cat = (category || '').toLowerCase();
+
+  // 0. Cause of dispute / why maintenance problem occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
+  if (
+    (q.includes('ঝামেলা') || q.includes('কারণ') || q.includes('কেন') || q.includes('সূত্রপাত')) && 
+    (q.includes('ভরণপোষণ') || cat.includes('family') || cat.includes('dower'))
+  ) {
+    return [
+      { label: 'যৌতুকের দাবিতে', text: 'যৌতুকের দাবিতে ঝগড়া করে খরচ দেওয়া বন্ধ করেছে' },
+      { label: 'দ্বিতীয় বিয়ে করেছে', text: 'স্বামী দ্বিতীয় বিয়ে করে আমাদের ছেড়ে চলে গেছে' },
+      { label: 'বনিবনা না হওয়ায়', text: 'শ্বশুরবাড়ির অত্যাচার ও বনিবনা না হওয়ায় আলাদা হয়ে গেছে' },
+      { label: 'তাড়িয়ে দিয়েছে', text: 'বিনা কারণে হঠাৎ ঝগড়া করে বাড়ি থেকে তাড়িয়ে দিয়েছে' }
+    ];
+  }
 
   // 1. Marriage / Kabinnama / Document evidence
   if (
@@ -156,21 +193,52 @@ export function getContextualChips(
     ];
   }
 
-  // 7. Land Deeds / Khatian / Parcha / Boundary / Ownership
+  // 7a. Land Possession & Nature of Dispute
   if (
-    q.includes('জমি') || 
-    q.includes('দলিল') || 
-    q.includes('খতিয়ান') || 
-    q.includes('পর্চা') || 
-    q.includes('সীমানা') || 
-    q.includes('দখল') || 
-    cat === 'land_dispute'
+    (q.includes('দখল') || q.includes('দখলে') || q.includes('ওয়ারিশ') || q.includes('সীমানা') || q.includes('বেদখল') || q.includes('কারণ') || q.includes('ধরণ') || q.includes('ধরন')) &&
+    (cat === 'land_dispute' || q.includes('জমি'))
+  ) {
+    return [
+      { label: 'আমাদের দখলে আছে', text: 'জমিটি বর্তমানে আমাদের দখলেই রয়েছে' },
+      { label: 'প্রতিপক্ষ দখল করেছে', text: 'প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে' },
+      { label: 'পৈতৃক ওয়ারিশ বিরোধ', text: 'পৈতৃক ওয়ারিশ ও অংশ বণ্টন নিয়ে বিরোধ চলছে' },
+      { label: 'সীমানা নিয়ে বিরোধ', text: 'জমির সীমানা নির্ধারণ ও বেদখল নিয়ে বিরোধ তৈরি হয়েছে' }
+    ];
+  }
+
+  // 7b. Land Deeds / Khatian / Parcha / Records
+  if (
+    (q.includes('দলিল') || q.includes('খতিয়ান') || q.includes('পর্চা') || q.includes('কাগজ') || q.includes('রেজিস্ট্রি')) &&
+    (cat === 'land_dispute' || q.includes('জমি'))
   ) {
     return [
       { label: 'মূল দলিল আছে', text: 'জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে' },
-      { label: 'খতিয়ান/পর্চা আছে', text: 'জমির পর্চা ও খতিয়ানের সত্যায়িত কপি আছে' },
+      { label: 'পর্চা/খতিয়ান আছে', text: 'জমির পর্চা ও খতিয়ানের সত্যায়িত কপি আছে' },
       { label: 'দলিল প্রতিপক্ষের কাছে', text: 'জমির মূল কাগজপত্র বা দলিল প্রতিপক্ষের দখলে আটকে আছে' },
-      { label: 'শুধু দখল আছে', text: 'কাগজপত্র জটিল হলেও জমিটি বহু বছর ধরে আমাদের দখলে আছে' }
+      { label: 'কোনো কাগজ নেই', text: 'আমাদের কাছে বর্তমানে কোনো বৈধ দলিল বা পর্চা নেই' }
+    ];
+  }
+
+  // 7c. Land Salish / Opponent / Chairman / Member
+  if (
+    (q.includes('সালিশ') || q.includes('মেম্বার') || q.includes('চেয়ারম্যান') || q.includes('চেয়ারম্যান') || q.includes('শরিক') || q.includes('প্রতিপক্ষ')) &&
+    (cat === 'land_dispute' || q.includes('জমি'))
+  ) {
+    return [
+      { label: 'মেম্বার/চেয়ারম্যানের সালিশ', text: 'ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল কিন্তু সমাধান হয়নি' },
+      { label: 'শরিকদের সাথে বিরোধ', text: 'পারিবারিক শরিক ও আত্মীয়দের সাথে জমি নিয়ে বিরোধ' },
+      { label: 'বাইরের দখলদার', text: 'বাইরের প্রভাবশালী দখলদারদের সাথে বিরোধ' },
+      { label: 'কোনো সালিশ হয়নি', text: 'স্থানীয়ভাবে এখনো কোনো সালিশ বা মীমাংসার বৈঠক হয়নি' }
+    ];
+  }
+
+  // 7d. General Land Dispute fallback
+  if (cat === 'land_dispute' || q.includes('জমি')) {
+    return [
+      { label: 'আমাদের দখলে আছে', text: 'জমিটি বর্তমানে আমাদের দখলেই রয়েছে' },
+      { label: 'মূল দলিল আছে', text: 'জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে' },
+      { label: 'প্রতিপক্ষ দখল করেছে', text: 'প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে' },
+      { label: 'কোনো সালিশ হয়নি', text: 'স্থানীয়ভাবে এখনো কোনো সালিশ বা মীমাংসার বৈঠক হয়নি' }
     ];
   }
 
@@ -245,7 +313,39 @@ export function getContextualChips(
     ];
   }
 
-  // 12. Direct confirmation / Yes-No / Did it happen
+  // 12. Extra fallback questions when documents absent
+  if (
+    q.includes('কাগজ না থাকলেও') || 
+    q.includes('দলিল না থাকলেও') || 
+    q.includes('চুক্তি বা স্লিপ না থাকলেও') ||
+    q.includes('কাগজপত্র না থাকলেও') ||
+    (q.includes('সাক্ষী') && (q.includes('কাজী') || q.includes('সর্দার') || q.includes('গ্রামের')))
+  ) {
+    return [
+      { label: 'কাজী অফিসের তথ্য আছে', text: 'কাজী অফিসের নাম ও এলাকা আমার জানা আছে' },
+      { label: 'সাক্ষী আছেন', text: 'ঘটনা বা বিয়ের প্রত্যক্ষদর্শী সাক্ষী আছেন' },
+      { label: 'পরিবার জানে', text: 'পরিবার ও প্রতিবেশীরা ঘটনাটির বিষয়ে অবগত আছেন' },
+      { label: 'কোনো সাক্ষী নেই', text: 'সরাসরি কোনো প্রত্যক্ষদর্শী সাক্ষী বা কাজী নেই' }
+    ];
+  }
+
+  // 13. Extra fallback questions when memory/exact facts absent
+  if (
+    q.includes('মনে না থাকলেও') || 
+    q.includes('নির্দিষ্ট মনে না থাকলেও') || 
+    q.includes('আনুমানিক বা কাছাকাছি') ||
+    q.includes('কোনো ধারণা কি আছে') ||
+    q.includes('স্মৃতি মনে পড়ে')
+  ) {
+    return [
+      { label: 'আনুমানিক ধারণা আছে', text: 'আনুমানিক বা কাছাকাছি টাকার পরিমাণ বা সময় আমার ধারণা আছে' },
+      { label: 'পরিবারের মুরব্বিরা জানেন', text: 'পরিবারের মুরব্বিরা বা আত্মীয়রা সঠিক তথ্য দিতে পারবেন' },
+      { label: 'কয়েক বছর আগে', text: 'আনুমানিক কয়েক বছর আগের ঘটনা' },
+      { label: 'নির্দিষ্ট মনে নেই', text: 'একদম নির্দিষ্টভাবে কিছু মনে করতে পারছি না' }
+    ];
+  }
+
+  // 14. Direct confirmation / Yes-No / Did it happen
   if (
     q.includes('কি না') || 
     q.includes('কিনা') || 

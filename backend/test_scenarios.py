@@ -124,9 +124,158 @@ def test_llm_error_handling():
     assert "status_code" in status
     print("✓ check_llm_status() returned valid diagnostic payload.")
 
+def test_disambiguation_then_land_dispute():
+    print("\n" + "="*60)
+    print("Testing Disambiguation -> Land Dispute Flow")
+    print("="*60)
+
+    # Turn 1: Vague text
+    r1 = ai_pipeline.run_intake(transcript="আমার একটা সমস্যা আছে")
+    print(f"Turn 1 Category: {r1.get('category')}")
+    print(f"Turn 1 Disambiguation Needed: {r1.get('disambiguation_needed')}")
+    assert r1.get('disambiguation_needed') is True
+
+    # Turn 2: User clicks "জমিজমা সংক্রান্ত বিরোধ"
+    r2 = ai_pipeline.run_intake(transcript="জমিজমা সংক্রান্ত বিরোধ", existing_state=r1)
+    print(f"Turn 2 Category: {r2.get('category')}")
+    print(f"Turn 2 Is Complete: {r2.get('is_complete')}")
+    print(f"Turn 2 Follow-up Question: {r2.get('follow_up_question')}")
+    print(f"Turn 2 Suggested Replies: {r2.get('suggested_replies')}")
+    
+    assert r2.get('category') == "land_dispute"
+    assert r2.get('is_complete') is False, "Must ask follow-up questions instead of finishing immediately after disambiguation!"
+    assert r2.get('follow_up_question') is not None
+    print("✓ Disambiguation -> Land Dispute flow test PASSED!")
+
+def test_land_dispute_multiturn():
+    print("\n" + "="*60)
+    print("Testing Land Dispute Multi-Turn Intake Flow")
+    print("="*60)
+
+    # Turn 1: User enters "জমিজমা সংক্রান্ত বিরোধে"
+    print("\n--- Turn 1: Initial Submission ---")
+    t1_text = "জমিজমা সংক্রান্ত বিরোধে"
+    r1 = ai_pipeline.run_intake(transcript=t1_text)
+    
+    print(f"Turn 1 Category: {r1.get('category')} (Confidence: {r1.get('confidence')}%)")
+    print(f"Turn 1 Disambiguation Needed: {r1.get('disambiguation_needed')}")
+    print(f"Turn 1 Is Complete: {r1.get('is_complete')}")
+    print(f"Turn 1 Follow-up Question: {r1.get('follow_up_question')}")
+    print(f"Turn 1 Suggested Replies: {r1.get('suggested_replies')}")
+    
+    assert r1.get('category') == "land_dispute", f"Expected land_dispute, got {r1.get('category')}"
+    assert r1.get('disambiguation_needed') is False
+    assert r1.get('is_complete') is False, "Should NOT complete immediately after 'জমিজমা সংক্রান্ত বিরোধে'"
+    assert r1.get('follow_up_question') is not None, "Must ask a follow-up question"
+    assert r1.get('suggested_replies') is not None, "Must provide suggested replies"
+
+    # Turn 2: User answers Question 1 with possession details
+    print("\n--- Turn 2: Answering Question 1 (Possession) ---")
+    t2_text = "প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে"
+    r2 = ai_pipeline.run_intake(transcript=t2_text, existing_state=r1)
+    
+    print(f"Turn 2 Turn Count: {r2.get('turn_count')}")
+    print(f"Turn 2 Is Complete: {r2.get('is_complete')}")
+    print(f"Turn 2 Follow-up Question: {r2.get('follow_up_question')}")
+    print(f"Turn 2 Suggested Replies: {r2.get('suggested_replies')}")
+    
+    assert r2.get('is_complete') is False, "Should ask more questions (Turn 2 should not complete yet)"
+    assert r2.get('follow_up_question') is not None
+    assert r2.get('suggested_replies') is not None
+
+    # Turn 3: User answers Question 2 with deeds / evidence details
+    print("\n--- Turn 3: Answering Question 2 (Deeds / Records) ---")
+    t3_text = "জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে"
+    r3 = ai_pipeline.run_intake(transcript=t3_text, existing_state=r2)
+    
+    print(f"Turn 3 Turn Count: {r3.get('turn_count')}")
+    print(f"Turn 3 Is Complete: {r3.get('is_complete')}")
+    print(f"Turn 3 Follow-up Question: {r3.get('follow_up_question')}")
+    print(f"Turn 3 Suggested Replies: {r3.get('suggested_replies')}")
+    
+    assert r3.get('is_complete') is False, "Should ask third question (Opponent/Salish)"
+    assert r3.get('follow_up_question') is not None
+
+    # Turn 4: User answers Question 3 with salish / opponent details
+    print("\n--- Turn 4: Answering Question 3 (Salish / Opponent) ---")
+    t4_text = "ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল কিন্তু সমাধান হয়নি"
+    r4 = ai_pipeline.run_intake(transcript=t4_text, existing_state=r3)
+    
+    print(f"Turn 4 Turn Count: {r4.get('turn_count')}")
+    print(f"Turn 4 Is Complete: {r4.get('is_complete')}")
+    print(f"Turn 4 Referral Clinic: {r4.get('referral_clinic')}")
+    print(f"Turn 4 Rights Explanation (first 100 chars): {(r4.get('rights_explanation') or '')[:100]}...")
+    print(f"Turn 4 Draft Complaint:\n{r4.get('draft_complaint')}")
+    
+    assert r4.get('is_complete') is True, "Turn 4 should complete the intake"
+    assert r4.get('draft_complaint') is not None
+    assert r4.get('rights_explanation') is not None
+    assert r4.get('referral_clinic') is not None
+    print("\n✓ Multi-turn land dispute intake test PASSED!")
+
+def test_maintenance_cause_flow():
+    print("\n" + "="*60)
+    print("Testing Maintenance Intake: Problem → Cause → History → Impact Flow")
+    print("="*60)
+
+    # Turn 1: User enters maintenance grievance without cause
+    print("\n--- Turn 1: Initial Submission (ভরণপোষণ দেয় না) ---")
+    t1_text = "আমার স্বামী আমাকে কোনো ভরণপোষণ দেয় না।"
+    r1 = ai_pipeline.run_intake(transcript=t1_text)
+
+    print(f"Turn 1 Category: {r1.get('category')} (Confidence: {r1.get('confidence')}%)")
+    print(f"Turn 1 Is Complete: {r1.get('is_complete')}")
+    print(f"Turn 1 Follow-up Question: {r1.get('follow_up_question')}")
+    print(f"Turn 1 Suggested Replies: {r1.get('suggested_replies')}")
+
+    assert r1.get('is_complete') is False, "Should NOT complete when cause/details are missing"
+    assert r1.get('follow_up_question') is not None
+    # Verify that the LLM asks why the maintenance dispute occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
+    q1 = r1.get('follow_up_question', '').lower()
+    print(f"Checking if question asks about Cause (ঝামেলা / কারণ / কেন / কী কারণে): {any(w in q1 for w in ['ঝামেলা', 'কারণ', 'কেন', 'কী কারণে', 'সূত্রপাত', 'আলাদা'])}")
+    assert any(w in q1 for w in ['ঝামেলা', 'কারণ', 'কেন', 'কী কারণে', 'সূত্রপাত', 'আলাদা']), f"Question must ask about cause of dispute, got: {q1}"
+
+    # Turn 2: User answers Question 1 with cause
+    print("\n--- Turn 2: Answering Question 1 (Cause: যৌতুকের দাবিতে বিরোধ) ---")
+    t2_text = "যৌতুকের দাবিতে ঝগড়া করে আলাদা হয়ে গেছে এবং খরচ দেওয়া বন্ধ করেছে"
+    r2 = ai_pipeline.run_intake(transcript=t2_text, existing_state=r1)
+
+    print(f"Turn 2 Turn Count: {r2.get('turn_count')}")
+    print(f"Turn 2 Is Complete: {r2.get('is_complete')}")
+    print(f"Turn 2 Follow-up Question: {r2.get('follow_up_question')}")
+    print(f"Turn 2 Suggested Replies: {r2.get('suggested_replies')}")
+
+    assert r2.get('is_complete') is False, "Should ask about history/documents/impact before completing"
+    assert r2.get('follow_up_question') is not None
+
+    # Turn 3: User answers Question 2 with history / documents / timeline
+    print("\n--- Turn 3: Answering Question 2 (History: ৩ বছর বিয়ে, কাবিননামা বাবার বাড়ি) ---")
+    t3_text = "৩ বছর আগে বিয়ে হয়েছিল, কাবিননামা বাবার বাড়িতে আছে, মেম্বারের সালিশেও স্বামী আসেনি"
+    r3 = ai_pipeline.run_intake(transcript=t3_text, existing_state=r2)
+
+    print(f"Turn 3 Turn Count: {r3.get('turn_count')}")
+    print(f"Turn 3 Is Complete: {r3.get('is_complete')}")
+    print(f"Turn 3 Follow-up Question: {r3.get('follow_up_question')}")
+    print(f"Turn 3 Suggested Replies: {r3.get('suggested_replies')}")
+
+    # Turn 4: User answers Question 3 with impact & desired remedy
+    print("\n--- Turn 4: Answering Question 3 (Impact & Solution: বাচ্চা নিয়ে বাবার বাড়ি, খরচ ও দেনমোহর চাই) ---")
+    t4_text = "বাচ্চা নিয়ে বাবার বাড়ি আছি, আমি দেনমোহর ও বাচ্চার নিয়মিত খরচ ও ভরণপোষণ চাই"
+    r4 = ai_pipeline.run_intake(transcript=t4_text, existing_state=r3)
+
+    print(f"Turn 4 Turn Count: {r4.get('turn_count')}")
+    print(f"Turn 4 Is Complete: {r4.get('is_complete')}")
+    print(f"Turn 4 Referral Clinic: {r4.get('referral_clinic')}")
+    print(f"Turn 4 Rights Explanation (first 100 chars): {(r4.get('rights_explanation') or '')[:100]}...")
+    print(f"Turn 4 Draft Complaint:\n{r4.get('draft_complaint')}")
+
+    assert r4.get('is_complete') is True, "Turn 4 should complete after essential facts are answered"
+    assert r4.get('draft_complaint') is not None
+    assert r4.get('rights_explanation') is not None
+    print("\n✓ Maintenance Cause Flow test PASSED!")
+
 if __name__ == "__main__":
     test_llm_error_handling()
-    # Scenarios testing
-    # test_n6_safety_breakout()
-    # test_n1_baseline()
-    # test_n7_out_of_scope()
+    test_maintenance_cause_flow()
+    test_disambiguation_then_land_dispute()
+    test_land_dispute_multiturn()

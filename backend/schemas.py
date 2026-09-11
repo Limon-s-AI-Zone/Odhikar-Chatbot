@@ -65,6 +65,7 @@ class IntakeResponse(BaseModel):
     confidence: Optional[int] = None
     follow_up_question: Optional[str] = None
     suggested_replies: Optional[List[str]] = None
+    extra_question_asked: Optional[bool] = False
     is_complete: bool
     requires_continuation: bool = False
     continuation_prompt: Optional[str] = None
