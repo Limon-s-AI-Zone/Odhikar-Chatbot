@@ -643,7 +643,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         aggressor_address: aggressorAddress.trim() || undefined
       };
 
-      const res = await axios.post('/intake/finalize_profile', payload);
+      const res = await axios.post('/api/intake/finalize_profile', payload);
       if (res.data) {
         if (res.data.referral_clinic) {
           setReferralInfo({
@@ -1072,6 +1072,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     }
     setTextNarrative('');
     setSuggestedReplies([]);
+    setFollowUpQuestion(null);
 
     // Switch to conversational view immediately so the user sees live activity
     if (step === 'recording') {
@@ -1392,11 +1393,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           <span className="step-label">বিবরণ</span>
         </div>
         <div className={`step-line ${['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
-        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? (isIntakeCompleted && !isOutOfScope ? 'completed' : 'active') : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
-          <div className="step-circle">{['rights', 'referral'].includes(step) || (isIntakeCompleted && !isOutOfScope) ? <Check size={14} /> : '৩'}</div>
-          <span className="step-label">{isOutOfScope ? 'আওতাভুক্ত নয়' : 'প্রশ্নোত্তর'}</span>
+        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? 'active' : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+          <div className="step-circle">{['rights', 'referral'].includes(step) ? <Check size={14} /> : '৩'}</div>
+          <span className="step-label">{isOutOfScope ? 'আওতাভুক্ত নয়' : (isIntakeCompleted ? 'প্রোফাইল' : 'প্রশ্নোত্তর')}</span>
         </div>
-        <div className={`step-line ${(['rights', 'referral'].includes(step) || (isIntakeCompleted && !isOutOfScope)) ? 'active' : ''}`} />
+        <div className={`step-line ${['rights', 'referral'].includes(step) ? 'active' : ''}`} />
         <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
           <div className="step-circle">৪</div>
           <span className="step-label">ক্লিনিক ও আবেদন</span>
@@ -2972,13 +2973,24 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             {draftComplaint}
           </div>
 
-          <button 
-            className="btn btn-primary" 
-            style={{ width: '100%', padding: '14px', fontSize: '16px' }}
-            onClick={handleStartNewCase}
-          >
-            নতুন আরেকটি আবেদন শুরু করুন
-          </button>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <button 
+              type="button"
+              className="btn btn-outline" 
+              style={{ flex: 1, padding: '13px', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} 
+              onClick={() => { stopVoice(); setStep('follow_up'); }}
+            >
+              <span>← পূর্ববর্তী প্রশ্নোত্তর ও তথ্য দেখুন</span>
+            </button>
+            <button 
+              type="button"
+              className="btn btn-primary" 
+              style={{ flex: 1.5, padding: '13px', fontSize: '15px' }}
+              onClick={handleStartNewCase}
+            >
+              নতুন আরেকটি আবেদন শুরু করুন
+            </button>
+          </div>
         </div>
       )}
     </div>

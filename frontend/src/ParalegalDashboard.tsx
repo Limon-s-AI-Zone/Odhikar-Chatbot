@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { 
   AlertCircle, Clock, Check, Edit3, MessageSquare, 
@@ -64,6 +64,12 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [currentPlayingText, setCurrentPlayingText] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (!selectedCase && cases.length > 0) {
+      setSelectedCase(cases[0]);
+    }
+  }, [cases, selectedCase]);
 
   const stopVoice = () => {
     if (audioRef.current) {
