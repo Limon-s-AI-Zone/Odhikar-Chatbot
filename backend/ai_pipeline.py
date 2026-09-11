@@ -718,35 +718,39 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         if "cause" not in existing_covered:
             existing_covered.append("cause")
 
-    # 2. History & Evidence: requires knowing document possession or local salish (not merely mentioning the word 'কাবিন' or 'বিয়ে')
-    has_evidence_info = any(w in lower_all for w in [
-        "কাবিননামা আছে", "কাবিন আছে", "কাবিননামা বাবার", "কাবিন বাবার", "কাবিননামা স্বামীর",
-        "কাবিন স্বামীর", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে", "কাবিন নেই", "কাবিন নাই", "কাজী অফিসে",
-        "কোথায় আছে মনে পড়ছে না", "কোথায় আছে মনে নাই", "কোথায় আছে জানি না", "মনে পড়ছে না", "মনে পরছে না", "খুঁজে পাচ্ছি না",
-        "কাজী অফিসের এলাকা", "কোনো সাক্ষী নেই", "কোনো কাজী বা সাক্ষী নেই", "সাক্ষী বা কাজী নেই",
-        "দলিল আছে", "দলিল সংরক্ষিত", "দলিল প্রতিপক্ষের", "দলিল নেই", "দলিল নাই", "খতিয়ান আছে",
-        "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "মৌখিক চুক্তি", "সালিশ হয়েছিল", "সালিশ হয়েছে",
+    # 2. History & Evidence: requires knowing actual possession/availability of documents or local salish
+    # (NOT merely saying "বাবার বাড়িতে আছি" in one sentence and "কাবিনে লেখা ছিল" in another!)
+    extracted_ev = state.get("evidence") or ""
+    has_evidence_in_state = bool(extracted_ev and str(extracted_ev).strip().lower() not in ("[অপ্রতিষ্ঠিত]", "null", "", "none"))
+    doc_possession_patterns = [
+        "কাবিননামা আছে", "কাবিননামা নাই", "কাবিননামা নেই", "কাবিন আছে", "কাবিন নাই", "কাবিন নেই",
+        "কাবিননামা আমার", "কাবিন আমার", "কাবিননামা সাথে", "কাবিন সাথে", "কাবিননামা কাছে", "কাবিন কাছে",
+        "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "কাবিন স্বামীর কাছে", "কাবিননামা স্বামীর কাছে", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে",
+        "কাজী অফিস থেকে নকল", "কাজী অফিসের নকল", "কাজী অফিসে যেতে", "নকল তুলতে হবে", "কাজী অফিসের এলাকা",
         "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত", "সব কাগজ আমার কাছে", "সব কাগজপত্র আমার কাছে",
-        "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "নকল তুলতে হবে", "কাজী অফিস থেকে তুলতে",
-        "কাজী অফিস থেকে নকল", "কাগজ বাবার", "কাগজপত্র বাবার", "কাগজ স্বামীর", "কাগজপত্র স্বামীর",
-        "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই", "কোনো লিখিত কাবিননামা", "কোনো লিখিত কাগজ", "কাগজপত্র নেই"
-    ])
+        "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই",
+        "দলিল আছে", "দলিল নেই", "দলিল নাই", "দলিল সংরক্ষিত", "দলিল আমার", "দলিল সাথে", "দলিল প্রতিপক্ষের",
+        "খতিয়ান আছে", "খতিয়ান আছে", "খাজনার দাখিলা", "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "সাক্ষী আছে"
+    ]
+    has_evidence_info = has_evidence_in_state or any(p in lower_all for p in doc_possession_patterns)
     if has_evidence_info:
         if "history" not in existing_covered:
             existing_covered.append("history")
 
     # 3. Impact: current hardship, living condition, or residence
-    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "জমিতে যেতে বাধা"]):
+    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "জমিতে যেতে বাধা", "আলাদা"]):
         if "impact" not in existing_covered:
             existing_covered.append("impact")
 
-    # 4. Desired Solution: specific remedy or legal route confirmed
+    # 4. Desired Solution: specific remedy, action, or seeking advice
     if any(w in lower_all for w in [
         "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
         "সালিশের মাধ্যমে", "শান্তিপূর্ণ মীমাংসা", "সালিশ চাই", "মীমাংসা চাই",
         "আইনি নোটিশ", "আদালতে যাব", "আদালতে যেতে",
         "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়",
-        "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ"
+        "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ",
+        "তালাক", "উকিল", "আইনজীবী", "কি করব", "কী করব", "পরামর্শ চাই", "সমাধান কি", "সমাধান কী", "আইনি ব্যবস্থা", "কী করণীয়", "কি করণীয়"
     ]):
         if "desired_solution" not in existing_covered:
             existing_covered.append("desired_solution")
@@ -839,13 +843,13 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     target_stage = remaining_stages[0] if remaining_stages else "complete"
 
     # Enforce thorough intake depth:
-    # If the user reaches completion or selects desired_solution without clarifying essential documents/evidence,
-    # route to 'history' to ask about required documentation before completing!
+    # If the user selected desired_solution (e.g. court lawsuit) or reaches completion
+    # without clarifying essential documents/evidence, route to 'history' to ask about required filing documents!
     if (target_stage == "complete" or "desired_solution" in existing_covered) and not has_evidence_info and turn_count < 6:
         target_stage = "history"
 
-    # If both desired_solution AND essential documentation are covered, complete!
-    if (target_stage == "complete" and turn_count >= 3 and has_evidence_info) or (turn_count >= 4 and "desired_solution" in existing_covered and has_evidence_info) or (turn_count >= 4 and len(existing_covered) >= 4 and has_evidence_info) or (turn_count >= 6):
+    # If all stages are covered (or target_stage is complete) AND essential documentation is covered, complete immediately!
+    if (target_stage == "complete" and has_evidence_info) or (len(existing_covered) >= 5 and has_evidence_info) or ("desired_solution" in existing_covered and has_evidence_info and len(existing_covered) >= 4) or (turn_count >= 6):
         return {
             "is_complete": True,
             "current_stage": "complete",
@@ -906,12 +910,14 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             "1. কথোপকথনের গভীর ধারাবাহিকতা (Chat History Continuity): ক্লায়েন্টের পূর্ববর্তী সকল কথোপকথন রেকর্ড মনোযোগ দিয়ে পর্যবেক্ষণ করুন। ক্লায়েন্ট সর্বশেষ উত্তরে বা আগের কোনো উত্তরে যা কিছু উল্লেখ করেছেন (যেমন নির্দিষ্ট পরিমাণ টাকা, স্বামী/বিবাদীর নাম ও আচরণ, সন্তান, বাবার বাড়ির অবস্থান, কাজের মেয়াদ, জমি দখলের ধরন ইত্যাদি), আপনার উত্তরে স্পষ্টভাবে সেই প্রসঙ্গের সহানুভূতিশীল স্বীকৃতি (acknowledgement) দিন।\n"
             "2. লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) অনুযায়ী পরবর্তী স্বাভাবিক কথ্য বাংলা প্রশ্নটি করুন। পূর্বের কোনো উত্তরের সাথে সরাসরি মিলিয়ে প্রশ্ন করবেন, বিচ্ছিন্ন বা রোবোটিক প্রশ্ন করবেন না।\n"
             "3. ইতিমধ্যে যে ধাপগুলো সম্পন্ন হয়েছে ({stages_covered_bn}) সে বিষয়ে পুনরাবৃত্তিমূলক প্রশ্ন করবেন না।\n"
+            "   - অযাচিত অনুমান নিষেধ: ক্লায়েন্ট যদি শুধু বলেন 'কাবিনে লেখা ছিল দুই লাখ টাকা' বা দেনমোহরের অঙ্ক উল্লেখ করেন, তবে এর অর্থ তিনি দেনমোহরের পরিমাণ জানেন। এর অর্থ এই নয় যে কাবিননামার মূল কাগজটি তাঁর নিজের কাছেই আছে! ক্লায়েন্ট নিজে পরিষ্কারভাবে না বললে কখনোই 'আপনার কাবিননামা যেহেতু আপনার কাছে আছে' বলে ধরে নেবেন না। কাগজটি তাঁর কাছে আছে নাকি স্বামীর কাছে বা কাজী অফিসে তা নিশ্চিত হতে প্রশ্ন করুন।\n"
+            "   - কঠোর সতর্কতা: ক্লায়েন্ট যদি ইতিমধ্যে বলে থাকেন যে কাবিননামা/দলিল তাঁর কাছে বা সাথে আছে (যেমন 'আমার কাবিননামা আমার সাথেই আছে'), তবে কাবিননামা আছে কি না বা কার কাছে আছে তা কোনোভাবেই পুনরায় জিজ্ঞাসা করবেন না! সরাসরি তাদের আইনি সমাধান (আদালতে মামলা নাকি সালিশ) সম্পর্কে প্রশ্ন করুন।\n"
             "   - যদি target_stage='history' হয়: পূর্ববর্তী উত্তরে কোনো সালিশ বা আদালতের উল্লেখ থাকলে সেই অনুসারে প্রয়োজনীয় কাগজপত্র (কাবিননামা/দলিল/এনআইডি) প্রস্তুত আছে কি না তা প্রাসঙ্গিকভাবে জানতে চান।\n"
             "   - যদি target_stage='desired_solution' হয়: পূর্বের নথিপত্র ও পরিস্থিতি উল্লেখ করে ক্লায়েন্ট সালিশ চান নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করতে চান তা জানতে চান।\n"
             "   - যদি target_stage='impact' হয়: ক্লায়েন্টের পারিবারিক সংকট বা বর্তমান বসবাসের কষ্টের বিষয়ে আন্তরিকভাবে জানতে চান।\n"
             "   - যদি target_stage='cause' হয়: বিরোধ বা আলাদা থাকার মূল কারণ কী ছিল তা পূর্ববর্তী বক্তব্যের সূত্রে জানতে চান।\n"
             "4. ক্লায়েন্টের সর্বশেষ জবাব ও আপনার করা প্রশ্নের সাথে সরাসরি প্রাসঙ্গিক ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) দিন।\n"
-            "5. ক্লায়েন্ট যদি প্রয়োজনীয় মৌলিক উত্তরগুলো এখনো সম্পন্ন না করে থাকেন, তবে is_complete=False দিন।"
+            "5. ক্লায়েন্ট যদি একটিমাত্র বক্তব্যে সমস্যা, কারণ, কাবিননামা/প্রমাণ এবং করণীয় প্রশ্ন বলে থাকেন এবং প্রয়োজনীয় মৌলিক তথ্য সম্পন্ন হয়ে থাকে, তবে is_complete=True দিন। অন্যথায় is_complete=False দিন।"
         ))
     ])
 
@@ -947,7 +953,7 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             missing_item = getattr(res, "missing_aspect", None)
             new_facts = getattr(res, "newly_identified_facts", None) or {}
 
-        if is_comp and has_evidence_info and (target_stage == "complete" or (turn_count >= 4 and "desired_solution" in existing_covered)):
+        if is_comp and (has_evidence_info or target_stage == "complete" or "desired_solution" in existing_covered):
             return {
                 "is_complete": True,
                 "current_stage": "complete",
