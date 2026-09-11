@@ -716,6 +716,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     stopVoice();
     setVoiceStatus(null);
     setLlmError(null);
+    if (!sessionState) {
+      setSafetyMessage(null);
+    }
     setLastAttemptedMessage(message || "");
     setIsLoading(true);
     setIsStreaming(true);
@@ -824,12 +827,12 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           setChatHistory(finalData.chat_history);
         }
 
-        // 1. Safety Breakout
+        // 1. Safety Information Handling (Only show helpline on active/immediate danger)
         if (finalData.safety_flag) {
           setSafetyMessage(finalData.safety_message);
-          setStep('safety');
           onCaseSubmitted();
-          return;
+        } else {
+          setSafetyMessage(null);
         }
 
         // 2. Token Budget Continuation
@@ -888,11 +891,15 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           setChatHistory(data.chat_history);
         }
 
+        // 1. Safety Information Handling (Only show helpline on active/immediate danger)
         if (data.safety_flag) {
           setSafetyMessage(data.safety_message);
-          setStep('safety');
           onCaseSubmitted();
-        } else if (data.requires_continuation) {
+        } else {
+          setSafetyMessage(null);
+        } 
+        
+        if (data.requires_continuation) {
           setContinuationPrompt(data.continuation_prompt);
           setStep('continuation');
         } else if (data.follow_up_question) {
@@ -991,26 +998,103 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   return (
     <div style={{ maxWidth: '680px', margin: '0 auto' }}>
       {/* STEP PROGRESS WIZARD */}
-      {step !== 'safety' && (
-        <div className="stepper-container">
-          <div className={`step-item ${step === 'welcome' ? 'active' : 'completed'}`}>
-            <div className="step-circle">{step === 'welcome' ? '১' : <Check size={14} />}</div>
-            <span className="step-label">স্বাগতম</span>
-          </div>
-          <div className={`step-line ${['recording', 'follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
-          <div className={`step-item ${step === 'recording' ? 'active' : ['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'completed' : ''}`}>
-            <div className="step-circle">{['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? <Check size={14} /> : '২'}</div>
-            <span className="step-label">বিবরণ</span>
-          </div>
-          <div className={`step-line ${['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
-          <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? 'active' : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
-            <div className="step-circle">{['rights', 'referral'].includes(step) ? <Check size={14} /> : '৩'}</div>
-            <span className="step-label">প্রশ্নোত্তর</span>
-          </div>
-          <div className={`step-line ${['rights', 'referral'].includes(step) ? 'active' : ''}`} />
-          <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
-            <div className="step-circle">৪</div>
-            <span className="step-label">পরামর্শ ও ক্লিনিক</span>
+      <div className="stepper-container">
+        <div className={`step-item ${step === 'welcome' ? 'active' : 'completed'}`}>
+          <div className="step-circle">{step === 'welcome' ? '১' : <Check size={14} />}</div>
+          <span className="step-label">স্বাগতম</span>
+        </div>
+        <div className={`step-line ${['recording', 'follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
+        <div className={`step-item ${step === 'recording' ? 'active' : ['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+          <div className="step-circle">{['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? <Check size={14} /> : '২'}</div>
+          <span className="step-label">বিবরণ</span>
+        </div>
+        <div className={`step-line ${['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
+        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? 'active' : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+          <div className="step-circle">{['rights', 'referral'].includes(step) ? <Check size={14} /> : '৩'}</div>
+          <span className="step-label">প্রশ্নোত্তর</span>
+        </div>
+        <div className={`step-line ${['rights', 'referral'].includes(step) ? 'active' : ''}`} />
+        <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
+          <div className="step-circle">৪</div>
+          <span className="step-label">পরামর্শ ও ক্লিনিক</span>
+        </div>
+      </div>
+
+      {/* URGENT SAFETY & EMERGENCY HELPLINE BANNER (Non-blocking: questionnaires continue) */}
+      {safetyMessage && (
+        <div 
+          className="card" 
+          style={{ 
+            border: '2px solid #e11d48', 
+            backgroundColor: '#fff1f2', 
+            marginBottom: '20px',
+            boxShadow: '0 4px 12px rgba(225, 29, 72, 0.12)'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
+            <div style={{ 
+              backgroundColor: '#ffe4e6', 
+              color: '#e11d48', 
+              borderRadius: '10px', 
+              padding: '10px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              <AlertTriangle size={26} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#be123c', margin: 0 }}>
+                  জরুরি নিরাপত্তা সহায়তা (হেল্পলাইন: ১৬৪৩০ / ১০৯ / ৯৯৯)
+                </h3>
+                <button
+                  className="btn btn-outline"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    borderColor: '#fda4af',
+                    color: '#be123c',
+                    backgroundColor: 'white'
+                  }}
+                  onClick={() => playVoice(safetyMessage)}
+                >
+                  {isLoadingAudio && currentPlayingText?.includes(safetyMessage) ? (
+                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত...</span></>
+                  ) : isPlayingAudio && currentPlayingText?.includes(safetyMessage) ? (
+                    <><VolumeX size={14} /> <span>থামান</span></>
+                  ) : (
+                    <><Volume2 size={14} /> <span>শুনুন</span></>
+                  )}
+                </button>
+              </div>
+              <p style={{ fontSize: '14px', lineHeight: '1.6', color: '#881337', margin: '0 0 12px 0', whiteSpace: 'pre-line' }}>
+                {safetyMessage}
+              </p>
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button 
+                  className="btn btn-urgent" 
+                  style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                  onClick={() => window.open('tel:16430')}
+                >
+                  <PhoneCall size={14} /> ১৬৪৩০-এ কল করুন
+                </button>
+                <button 
+                  className="btn btn-outline" 
+                  style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', borderColor: '#f43f5e', color: '#e11d48' }}
+                  onClick={() => window.open('tel:109')}
+                >
+                  <PhoneCall size={14} /> ১০৯ (নারী ও শিশু)
+                </button>
+                <span style={{ fontSize: '12.5px', color: '#9f1239', fontWeight: 500 }}>
+                  ✓ আপনার নিরাপত্তা সবার আগে। তবে আপনার আইনি অভিযোগ গ্রহণের প্রশ্নোত্তর নিচে চলমান রয়েছে।
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1774,6 +1858,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               stopVoice();
               setStep('welcome');
               setTextNarrative('');
+              setSafetyMessage(null);
               setSessionState(null);
               setChatHistory([]);
             }}

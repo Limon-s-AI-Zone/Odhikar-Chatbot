@@ -6,26 +6,58 @@ import ai_pipeline
 
 def test_n1_baseline():
     print("\n" + "="*50)
-    print("Testing Scenario N1 — Baseline (Dower & Maintenance)")
+    print("Testing Scenario N1 — Multi-Turn Intake (Dower & Maintenance)")
     print("="*50)
     narrative = (
         "আমার বিয়ে হয়েছে ছয় বছর হলো। দুই বছর ধরে আমার স্বামী আলাদা থাকে, কোনো খরচ দেয় না। "
         "আমি বাচ্চা নিয়ে বাবার বাড়িতে আছি। কাবিনে লেখা ছিল দুই লাখ টাকা, এক টাকাও পাইনি। "
         "ফোন করলে বলে টাকা নাই। আমি আর কতদিন বাবার ঘাড়ে বসে থাকব?"
     )
-    result = ai_pipeline.run_intake(transcript=narrative)
-    print(f"Safety Flag: {result.get('safety_flag')}")
-    print(f"Category: {result.get('category')} (Confidence: {result.get('confidence')}%)")
-    print(f"Dower Amount: {result.get('dower_amount')}")
-    print(f"Marriage Date: {result.get('marriage_date')}")
-    print(f"Children: {result.get('children')}")
-    print(f"Follow-up Question: {result.get('follow_up_question')}")
-    draft = result.get('draft_complaint') or ''
-    print(f"Draft Complaint Preview:\n{draft[:200]}...")
+    # Turn 1: Initial Narrative
+    r1 = ai_pipeline.run_intake(transcript=narrative)
+    print(f"Turn 1 Safety Flag: {r1.get('safety_flag')} (MUST BE False)")
+    print(f"Turn 1 Category: {r1.get('category')} (Confidence: {r1.get('confidence')}%)")
+    print(f"Turn 1 Is Complete: {r1.get('is_complete')}")
+    print(f"Turn 1 Follow-up Question: {r1.get('follow_up_question')}")
+    print(f"Turn 1 Suggested Replies: {r1.get('suggested_replies')}")
+    assert r1.get('safety_flag') is False, "Historical abuse/grievance must not trigger emergency danger flag"
+    assert r1.get('is_complete') is False, "Turn 1 must not complete prematurely"
+    assert r1.get('follow_up_question') is not None, "Turn 1 must ask follow-up question"
+
+    # Turn 2: Client explains cause ("আমি টাকা চেয়েছিলাম")
+    r2 = ai_pipeline.run_intake(transcript="আমি টাকা চেয়েছিলাম", existing_state=r1)
+    print(f"\nTurn 2 Is Complete: {r2.get('is_complete')}")
+    print(f"Turn 2 Current Stage: {r2.get('current_stage')}")
+    print(f"Turn 2 Follow-up Question: {r2.get('follow_up_question')}")
+    print(f"Turn 2 Suggested Replies: {r2.get('suggested_replies')}")
+    assert r2.get('is_complete') is False, "Turn 2 must ask for marriage documents/Kabinnama, not complete prematurely"
+    q2 = (r2.get('follow_up_question') or '').lower()
+    assert any(w in q2 for w in ['কাবিন', 'কাগজ', 'বিয়ে', 'নথি']), f"Turn 2 must ask about Kabinnama/marriage documents, got: {q2}"
+
+    # Turn 3: Client confirms Kabinnama possession
+    r3 = ai_pipeline.run_intake(transcript="কাবিননামা বাবার বাড়িতে আছে", existing_state=r2)
+    print(f"\nTurn 3 Is Complete: {r3.get('is_complete')}")
+    print(f"Turn 3 Current Stage: {r3.get('current_stage')}")
+    print(f"Turn 3 Follow-up Question: {r3.get('follow_up_question')}")
+    print(f"Turn 3 Suggested Replies: {r3.get('suggested_replies')}")
+    assert r3.get('is_complete') is False, "Turn 3 must ask about proposed legal remedy/salish before completing"
+    q3 = (r3.get('follow_up_question') or '').lower()
+    assert any(w in q3 for w in ['সালিশ', 'আদালত', 'মামলা', 'প্রতিকার', 'সমাধান', 'মীমাংসা']), f"Turn 3 must ask about proposed solution, got: {q3}"
+
+    # Turn 4: Client specifies desired solution
+    r4 = ai_pipeline.run_intake(transcript="আমি সরাসরি আদালতে মামলা করে দেনমোহর ও ভরণপোষণ আদায় করতে চাই", existing_state=r3)
+    print(f"\nTurn 4 Is Complete: {r4.get('is_complete')}")
+    print(f"Turn 4 Referral Clinic: {r4.get('referral_clinic')}")
+    draft = r4.get('draft_complaint') or ''
+    print(f"Turn 4 Draft Complaint Preview:\n{draft[:200]}...")
+    assert r4.get('is_complete') is True, "Turn 4 must complete intake"
+    assert r4.get('draft_complaint') is not None, "Draft complaint must be generated"
+    assert r4.get('rights_explanation') is not None, "Rights explanation must be generated"
+    print("✓ Scenario N1 Multi-Turn test PASSED!")
 
 def test_n6_safety_breakout():
     print("\n" + "="*50)
-    print("Testing Scenario N6 — Safety Disclosure (Physical Violence)")
+    print("Testing Scenario N6 — Safety Disclosure (Physical Violence with Questionnaire Continuation)")
     print("="*50)
     narrative = (
         "কাবিনের টাকা তো পাইনিই, উল্টো গত সপ্তাহে হাত ভেঙে দিয়েছে। "
@@ -34,7 +66,11 @@ def test_n6_safety_breakout():
     result = ai_pipeline.run_intake(transcript=narrative)
     print(f"Safety Flag: {result.get('safety_flag')} (MUST BE True)")
     print(f"Safety Message:\n{result.get('safety_message')}")
+    print(f"Follow-up Question:\n{result.get('follow_up_question')}")
+    print(f"Suggested Replies: {result.get('suggested_replies')}")
     assert result.get('safety_flag') is True, "Safety check failed to trigger on physical violence!"
+    assert result.get('safety_message') is not None, "Safety message must be populated!"
+    assert result.get('follow_up_question') is not None, "Questionnaires must proceed without hard shortcut!"
 
 def test_n7_out_of_scope():
     print("\n" + "="*50)
@@ -276,6 +312,8 @@ def test_maintenance_cause_flow():
 
 if __name__ == "__main__":
     test_llm_error_handling()
+    test_n6_safety_breakout()
+    test_n1_baseline()
     test_maintenance_cause_flow()
     test_disambiguation_then_land_dispute()
     test_land_dispute_multiturn()

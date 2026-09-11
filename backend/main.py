@@ -125,8 +125,8 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
         )
     
     case_id = None
-    # If complete or safety breakout (and not paused for continuation, and no fatal LLM error), persist to database
-    if not llm_error and (is_complete or safety_flag) and not requires_continuation:
+    # If complete (and not paused for continuation, and no fatal LLM error), persist to database
+    if not llm_error and is_complete and not requires_continuation:
         status = "URGENT" if safety_flag else "New"
         db_case = models.Case(
             category=result.get("category") or ("Family — Violence Disclosed" if safety_flag else "General"),
@@ -256,7 +256,7 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
             )
         
         case_id = None
-        if not llm_error and (is_complete or safety_flag) and not requires_continuation:
+        if not llm_error and is_complete and not requires_continuation:
             status = "URGENT" if safety_flag else "New"
             db_case = models.Case(
                 category=result.get("category") or ("Family — Violence Disclosed" if safety_flag else "General"),
@@ -289,8 +289,6 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
         text_to_stream = ""
         if llm_error:
             text_to_stream = f"⚠️ ত্রুটি: {llm_error}"
-        elif safety_flag:
-            text_to_stream = safety_message or ""
         elif requires_continuation:
             text_to_stream = continuation_prompt or ""
         elif result.get("follow_up_question"):
@@ -299,6 +297,8 @@ async def process_intake_stream(req: schemas.IntakeRequest, db: Session = Depend
             last_msg = result.get("chat_history")[-1]
             if last_msg.get("role") == "assistant":
                 text_to_stream = last_msg.get("content", "")
+        elif safety_flag:
+            text_to_stream = safety_message or ""
                 
         if text_to_stream:
             words = text_to_stream.split(" ")

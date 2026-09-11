@@ -397,9 +397,16 @@ def safety_check_node(state: IntakeState) -> Dict[str, Any]:
     """Safety check runs on every turn, tuned to over-trigger rather than under-trigger."""
     if state.get("llm_error"):
         return {}
+    
+    prev_safety_flag = bool(state.get("safety_flag", False))
+    prev_safety_msg = state.get("safety_message")
+
     text_to_eval = state.get("transcript", "")
     if not text_to_eval:
-        return {"safety_flag": False}
+        return {
+            "safety_flag": prev_safety_flag,
+            "safety_message": prev_safety_msg
+        }
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", prompts.SAFETY_SYSTEM_PROMPT),
@@ -407,16 +414,16 @@ def safety_check_node(state: IntakeState) -> Dict[str, Any]:
     ])
     try:
         res = llm.invoke(prompt.format_messages(text=text_to_eval))
-        is_danger = "DANGER" in res.content.upper()
+        is_danger = ("DANGER" in res.content.upper()) or prev_safety_flag
         return {
             "safety_flag": is_danger,
-            "safety_message": templates.RIGHTS_EXPLANATIONS["safety_escalation"] if is_danger else None
+            "safety_message": (prev_safety_msg or templates.RIGHTS_EXPLANATIONS["safety_escalation"]) if is_danger else None
         }
     except Exception as e:
         print(f"[Safety LLM Error] {e}")
         err_info = parse_llm_error(e)
         return {
-            "safety_flag": False,
+            "safety_flag": prev_safety_flag,
             "llm_error": err_info["message_bn"],
             "llm_error_details": err_info
         }
@@ -425,13 +432,18 @@ def token_budget_node(state: IntakeState) -> Dict[str, Any]:
     """
     Checks if token consumption exceeds the threshold.
     If yes and user has not confirmed continuation yet, pauses generation and asks for continuation.
+    Applies when the initial narrative on Turn 1 exceeds the budget, or if a single input message exceeds it.
     """
     if state.get("llm_error"):
         return {}
     tokens = state.get("estimated_tokens", 0)
     confirmed = state.get("is_continuation_confirmed", False)
+    turn_count = state.get("turn_count", 1)
+    current_input_tokens = estimate_tokens(state.get("transcript", ""))
     
-    if tokens > TOKEN_BUDGET_LIMIT and not confirmed:
+    exceeds_budget = (turn_count == 1 and tokens > TOKEN_BUDGET_LIMIT) or (current_input_tokens > TOKEN_BUDGET_LIMIT)
+    
+    if exceeds_budget and not confirmed:
         prompt_msg = (
             f"আপনার বিবরণটি দীর্ঘ (আনুমানিক {tokens} টোকেন)। "
             f"পরবর্তী ধাপে বিস্তারিত আইনি তথ্য ও অভিযোগ প্রস্তুত করতে আরও টোকেন উৎপন্ন হবে। "
@@ -555,7 +567,42 @@ def generate_suggested_replies(
     q = (question or "").strip()
     target = (missing_fields[0] if missing_fields and len(missing_fields) > 0 else "").strip()
 
-    # 0. Cause of maintenance / family dispute ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
+    # 0a. Desired Solution / Legal Remedy (Court vs Salish)
+    if (
+        target == "desired_solution" or
+        any(w in q for w in ["সালিশের মাধ্যমে", "আদালতে মামলা", "মামলা করতে চান", "আপস চান", "আইনি সমাধান", "আইনি প্রতিকার", "সালিশ চান"]) or
+        (("সালিশ" in q or "আদালত" in q or "মামলা" in q) and ("চান" in q or "প্রতিকার" in q or "সমাধান" in q))
+    ):
+        if category in ("family_dower_maintenance", "dowry"):
+            return [
+                "পারিবারিক আদালতে মামলা করে দেনমোহর ও বকেয়া ভরণপোষণ আদায় করতে চাই",
+                "স্থানীয় ইউনিয়ন পরিষদে চেয়ারম্যান বা মেম্বারের মাধ্যমে শান্তিপূর্ণ সালিশ চাই",
+                "সন্তানের নিয়মিত মাসিক খরচ ও দেনমোহরের বকেয়া টাকা পরিশোধ করতে হবে",
+                "প্রথমে আইনজীবীর মাধ্যমে আইনি নোটিশ পাঠাতে চাই"
+            ]
+        elif category == "land_dispute":
+            return [
+                "দেওয়ানি আদালতে মামলা করে জমির দখল ও স্বত্ব উদ্ধার করতে চাই",
+                "ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল কিন্তু সমাধান হয়নি",
+                "প্রথমে স্থানীয় মুরুব্বিদের মাধ্যমে আপস-মীমাংসার চেষ্টা করতে চাই",
+                "জমিতে যাতে কোনো স্থাপনা না করে সেজন্য আদালতের নিষেধাজ্ঞা চাই"
+            ]
+        elif category == "unpaid_wages":
+            return [
+                "শ্রম আদালতে বা লিগ্যাল এইডে মামলা করে পুরো বকেয়া মজুরি আদায় করতে চাই",
+                "সর্দার বা স্থানীয় মেম্বারের উপস্থিতিতে দেনদরবার করে টাকা পেতে চাই",
+                "মালিকের বিরুদ্ধে থানায় বা শ্রম পরিদপ্তরে লিখিত অভিযোগ দিতে চাই",
+                "কোনো ঝামেলা ছাড়াই বকেয়া টাকা পরিশোধ করে দিলে মিটে যাবে"
+            ]
+        else:
+            return [
+                "আদালতে মামলা করে আইনি প্রতিকার পেতে চাই",
+                "স্থানীয় সালিশে বসে আপস-মীমাংসা করতে চাই",
+                "আইনি নোটিশ পাঠিয়ে সমাধানের সুযোগ দিতে চাই",
+                "লিগ্যাল এইড ক্লিনিকের মাধ্যমে পরামর্শ নিতে চাই"
+            ]
+
+    # 0b. Cause of maintenance / family dispute ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
     if (
         ("ভরণপোষণ" in q and ("ঝামেলা" in q or "কেন" in q or "কারণ" in q)) or
         ("ঝামেলা হয়েছে কেন" in q or "ঝামেলা হয়েছে কেন" in q or "বিরোধের কারণ" in q or "বিরোধের মূল কারণ" in target or target == "cause" and category in ("family_dower_maintenance", "dowry"))
@@ -678,7 +725,8 @@ def generate_suggested_replies(
             "স্বামী সন্তান বা আমার কারও কোনো ভরণপোষণ বা খরচ দেয় না"
         ]
 
-    # 9. Disambiguation
+
+    # 10. Disambiguation
     if category == "unclassifiable" or "পারিবারিক" in q:
         return [
             "পারিবারিক দেনমোহর বা ভরণপোষণ",
@@ -705,19 +753,26 @@ def generate_suggested_replies(
     ]
 
 def check_uncertainty_or_missing_doc(text: str) -> Tuple[bool, Optional[str]]:
-    """Detects if client indicates lack of documents/proof or inability to remember."""
+    """Detects if client indicates lack of documents/proof or inability to remember in response to a question."""
     if not text:
         return False, None
     t = text.strip().lower()
     
-    # Document / Proof absent patterns
+    # Do not treat long multi-sentence narrative (> 20 words) as an uncertainty chip response
+    if len(t.split()) > 20:
+        return False, None
+
+    # 1. Direct document absent / lost / unknown location patterns
     doc_patterns = [
         "ডকুমেন্ট নেই", "ডকুমেন্ট নাই", "ডকুমেন্টস নেই", "ডকুমেন্টস নাই", "কোনো ডকুমেন্ট", "কোন ডকুমেন্ট",
         "কাগজ নেই", "কাগজ নাই", "কাগজপত্র নেই", "কাগজপত্র নাই", "কোনো কাগজ", "কোন কাগজ",
-        "দলিল নেই", "দলিল নাই", "দলিলপত্র নেই", "কোনো দলিল",
+        "দলিল নেই", "দলিল নাই", "দলিলপত্র নেই", "কোনো দলিল", "দলিল কোথায়", "দলিল পাচ্ছি না", "দলিল হারিয়ে",
         "প্রমাণ নেই", "প্রমাণ নাই", "কোনো প্রমাণ", "লিখিত প্রমাণ নেই", "লিখিত প্রমাণ নাই",
         "লিখিত কিছু নেই", "লিখিত চুক্তি নেই", "চুক্তিপত্র নেই", "লিখিত নাই",
         "কাবিন নেই", "কাবিন নাই", "কাবিননামা নেই", "কাবিননামা নাই", "কোনো কাবিন নেই",
+        "কাবিন কোথায়", "কাবিননামা কোথায়", "কাবিন পাচ্ছি না", "কাবিননামা পাচ্ছি না", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে",
+        "কাবিন মনে নেই", "কাবিননামা মনে নেই", "কাবিননামা মনে নাই",
+        "কোথায় আছে মনে পড়ছে না", "কোথায় আছে মনে নাই", "কোথায় আছে জানি না", "কোথায় আছে মনে নেই",
         "স্লিপ নেই", "স্লিপ নাই", "খাতা নেই", "হাজিরা খাতা নেই",
         "document nei", "document nai", "no document", "no documents",
         "kagoj nei", "kagoj nai", "kono kagoj", "no proof", "no paper", "no papers", "dolil nei"
@@ -725,8 +780,14 @@ def check_uncertainty_or_missing_doc(text: str) -> Tuple[bool, Optional[str]]:
     for p in doc_patterns:
         if p in t:
             return True, "document_nei"
-            
-    # Inability to remember patterns
+
+    # If user explicitly refers to document + uncertain/lost
+    has_doc_ref = any(w in t for w in ["কাবিন", "কাবিননামা", "দলিল", "কাগজ", "খতিয়ান", "খতিয়ান", "পর্চা", "স্লিপ"])
+    has_uncertain = any(w in t for w in ["কোথায়", "মনে পড়ছে না", "মনে পরছে না", "মনে নেই", "মনে নাই", "পাচ্ছি না", "খুঁজে পাচ্ছি না", "হারিয়ে", "নেই", "নাই", "জানি না"])
+    if has_doc_ref and has_uncertain:
+        return True, "document_nei"
+
+    # 2. General inability to remember patterns
     memory_patterns = [
         "মনে নেই", "মনে নাই", "মনে পরছে না", "মনে পড়ছে না",
         "সঠিক মনে নেই", "সঠিক মনে নাই", "নির্দিষ্ট মনে নেই",
@@ -755,18 +816,25 @@ def generate_extra_fallback_question(
     cat = (category or "").lower()
     prev_q = (previous_question or "").lower()
 
-    if match_type == "document_nei":
+    # If question was about documents OR client indicated document uncertainty:
+    is_doc_context = (
+        match_type == "document_nei" or 
+        any(w in prev_q for w in ["কাবিন", "কাবিননামা", "দলিল", "কাগজ", "খতিয়ান", "খতিয়ান", "পর্চা", "স্লিপ", "হাজিরা", "রেজিস্ট্রি"])
+    )
+
+    if is_doc_context:
         if cat in ("family_dower_maintenance", "dowry") or "কাবিন" in prev_q or "বিয়ে" in prev_q or "বিয়ে" in prev_q:
             question = (
-                "লিখিত কাবিননামা বা কাগজ না থাকলেও কোনো অসুবিধা নেই, আইন অনুযায়ী আপনার অধিকার সংরক্ষিত। "
+                "লিখিত কাবিননামা বা কাগজ সাথে না থাকলেও কোনো অসুবিধা নেই, আইন অনুযায়ী আপনার দেনমোহর ও ভরণপোষণের অধিকার সম্পূর্ণ সংরক্ষিত। "
                 "বিয়ের সময় কি কোনো কাজী উপস্থিত ছিলেন, অথবা বিয়ের কোনো প্রত্যক্ষদর্শী সাক্ষী বা কাজী অফিসের এলাকা কি জানা আছে?"
             )
             chips = [
-                "কাজী অফিসের নাম ও এলাকা জানি",
+                "কাজী অফিসের নাম ও এলাকা জানা আছে",
                 "বিয়ের প্রত্যক্ষদর্শী সাক্ষী আছেন",
                 "পরিবার ও আত্মীয়রা বিয়েতে ছিলেন",
                 "কোনো কাজী বা সাক্ষী নেই"
             ]
+            return question, chips
         elif cat == "unpaid_wages" or "মজুরি" in prev_q or "বেতন" in prev_q or "কাজ" in prev_q:
             question = (
                 "কাজের লিখিত চুক্তি বা স্লিপ না থাকলেও শ্রম আইন অনুযায়ী আপনি বকেয়া পাওয়ার অধিকারী। "
@@ -778,9 +846,10 @@ def generate_extra_fallback_question(
                 "মালিকের নাম ও ফোন নম্বর আছে",
                 "সরাসরি কোনো সাক্ষী নেই"
             ]
+            return question, chips
         elif cat == "land_dispute" or "জমি" in prev_q or "দলিল" in prev_q:
             question = (
-                "জমির মূল দলিল আপনার কাছে না থাকলেও সমস্যা নেই। "
+                "জমির মূল দলিল আপনার কাছে সংরক্ষিত না থাকলেও সমস্যা নেই। "
                 "জমিটি কি বর্তমানে আপনাদের দখলে আছে অথবা স্থানীয় ইউনিয়ন মেম্বার বা প্রতিবেশীরা কি দখলের বিষয়ে জানেন?"
             )
             chips = [
@@ -789,6 +858,7 @@ def generate_extra_fallback_question(
                 "মেম্বার ও প্রতিবেশীরা জানেন",
                 "কোনো দখল বা কাগজ নেই"
             ]
+            return question, chips
         else:
             question = (
                 "লিখিত কোনো কাগজপত্র না থাকলেও অসুবিধা নেই। "
@@ -800,42 +870,47 @@ def generate_extra_fallback_question(
                 "মৌখিকভাবে সিদ্ধান্ত হয়েছিল",
                 "কোনো মৌখিক সাক্ষী নেই"
             ]
+            return question, chips
 
-    else:  # mone_nei
-        if "টাকা" in prev_q or "দেনমোহর" in prev_q or "মজুরি" in prev_q or "পরিমাণ" in prev_q:
-            question = (
-                "সঠিক টাকার অঙ্ক নির্দিষ্ট মনে না থাকলেও কোনো চিন্তা করবেন না। "
-                "আনুমানিক বা কাছাকাছি কোনো ধারণা কি আছে (যেমন ৫০ হাজার, ১ লাখ নাকি তার বেশি), অথবা পরিবারের কেউ কি জানেন?"
-            )
-            chips = [
-                "আনুমানিক ৫০ হাজার থেকে ১ লাখ",
-                "আনুমানিক ১ থেকে ২ লাখ টাকা",
-                "পরিবারের মুরব্বিরা সঠিক জানেন",
-                "একদম নির্দিষ্ট মনে নেই"
-            ]
-        elif "সন" in prev_q or "সাল" in prev_q or "বছর" in prev_q or "তারিখ" in prev_q or "কবে" in prev_q or "দিন" in prev_q:
-            question = (
-                "নির্দিষ্ট সন বা তারিখ মনে না থাকলেও কোনো সমস্যা নেই। "
-                "আনুমানিক কত বছর আগে ঘটনাটি ঘটেছিল (যেমন ২-৩ বছর নাকি ৫ বছর আগে), অথবা তখনকার কোনো বিশেষ স্মৃতি মনে পড়ে?"
-            )
-            chips = [
-                "আনুমানিক ১ থেকে ২ বছর আগে",
-                "আনুমানিক ৩ থেকে ৫ বছর আগে",
-                "১০ বছরের বেশি সময় আগে",
-                "সঠিক সময় মনে করা যাচ্ছে না"
-            ]
-        else:
-            question = (
-                "এই তথ্যটি নির্দিষ্টভাবে মনে না থাকলেও কোনো সমস্যা নেই। "
-                "আপনার পরিবারের কেউ, আত্মীয়স্বজন বা কোনো প্রত্যক্ষদর্শী কি এ বিষয়ে প্রয়োজনীয় তথ্য দিয়ে সাহায্য করতে পারবেন?"
-            )
-            chips = [
-                "বাবার বাড়ির লোকজন তথ্য দিতে পারবেন",
-                "স্থানীয় মেম্বার বিষয়টি জানেন",
-                "আত্মীয়রা খোঁজ নিয়ে জানাতে পারবেন",
-                "কারও কাছেই তথ্য নেই"
-            ]
+    # Timeline / Date inquiry:
+    if any(w in prev_q for w in ["কবে", "সন", "সাল", "বছর", "তারিখ", "সময়", "কতদিন"]):
+        question = (
+            "নির্দিষ্ট সন বা তারিখ মনে না থাকলেও কোনো সমস্যা নেই। "
+            "আনুমানিক কত বছর আগে ঘটনাটি ঘটেছিল (যেমন ২-৩ বছর নাকি ৫ বছর আগে), অথবা তখনকার কোনো বিশেষ স্মৃতি মনে পড়ে?"
+        )
+        chips = [
+            "আনুমানিক ১ থেকে ২ বছর আগে",
+            "আনুমানিক ৩ থেকে ৫ বছর আগে",
+            "১০ বছরের বেশি সময় আগে",
+            "সঠিক সময় মনে করা যাচ্ছে না"
+        ]
+        return question, chips
 
+    # Explicit money inquiry (ONLY if question specifically asked for money amount):
+    if any(w in prev_q for w in ["কত টাকা", "টাকার পরিমাণ", "দেনমোহর কত", "বেতন কত", "মজুরি কত", "দাবি কত"]):
+        question = (
+            "সঠিক টাকার অঙ্ক নির্দিষ্ট মনে না থাকলেও কোনো চিন্তা করবেন না। "
+            "আনুমানিক বা কাছাকাছি কোনো ধারণা কি আছে (যেমন ৫০ হাজার, ১ লাখ নাকি তার বেশি), অথবা পরিবারের কেউ কি জানেন?"
+        )
+        chips = [
+            "আনুমানিক ৫০ হাজার থেকে ১ লাখ",
+            "আনুমানিক ১ থেকে ২ লাখ টাকা",
+            "পরিবারের মুরব্বিরা সঠিক জানেন",
+            "একদম নির্দিষ্ট মনে নেই"
+        ]
+        return question, chips
+
+    # General memory fallback:
+    question = (
+        "এই তথ্যটি নির্দিষ্টভাবে মনে না থাকলেও কোনো সমস্যা নেই। "
+        "আপনার পরিবারের কেউ, আত্মীয়স্বজন বা কোনো প্রত্যক্ষদর্শী কি এ বিষয়ে প্রয়োজনীয় তথ্য দিয়ে সাহায্য করতে পারবেন?"
+    )
+    chips = [
+        "বাবার বাড়ির লোকজন তথ্য দিতে পারবেন",
+        "স্থানীয় মেম্বার বিষয়টি জানেন",
+        "আত্মীয়রা খোঁজ নিয়ে জানাতে পারবেন",
+        "কারও কাছেই তথ্য নেই"
+    ]
     return question, chips
 
 def get_stage_fallback_question(category: Optional[str], stage: str, missing_item: Optional[str] = None) -> str:
@@ -845,8 +920,10 @@ def get_stage_fallback_question(category: Optional[str], stage: str, missing_ite
             return "জমিটি নিয়ে বিরোধের সূত্রপাত কীভাবে হয়েছিল এবং জমিটি বর্তমানে কার দখলে আছে?"
         elif stage == "history":
             return "জমির মূল রেজিস্ট্রি দলিল বা খতিয়ান কি আপনাদের কাছে সংরক্ষিত আছে?"
-        elif stage in ("impact", "desired_solution"):
-            return "এই জমি নিয়ে ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে কোনো সালিশ হয়েছিল কি, নাকি আপনারা আদালতে মামলা করতে চান?"
+        elif stage == "impact":
+            return "জমিটি বেদখল বা বিরোধে থাকায় আপনাদের চাষাবাদ বা বসবাস করতে কী ধরণের সমস্যা বা ক্ষতি হচ্ছে?"
+        elif stage == "desired_solution":
+            return "এই জমি নিয়ে ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে কোনো সালিশ হয়েছিল কি, নাকি আপনারা সরাসরি দেওয়ানি আদালতে মামলা করতে চান?"
         else:
             return "জমিটির দখল ও বিরোধ সম্পর্কে বিস্তারিত জানালে সঠিক আইনি পরামর্শ দেওয়া সহজ হবে।"
     elif cat in ("family_dower_maintenance", "dowry"):
@@ -854,8 +931,10 @@ def get_stage_fallback_question(category: Optional[str], stage: str, missing_ite
             return "আপনার স্বামী যে খরচ বা ভরণপোষণ দেওয়া বন্ধ করেছেন, এই ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন বা কী কারণে উনি আলাদা থাকছেন?"
         elif stage == "history":
             return "আপনাদের বিয়ে আনুমানিক কত বছর আগে হয়েছিল এবং কাবিননামার কাগজটি কার কাছে আছে?"
-        elif stage in ("impact", "desired_solution"):
-            return "আপনি বর্তমানে কোথায় থাকছেন এবং সন্তান ও নিজের ভরণপোষণ বা দেনমোহর বাবদ কী প্রতিকার চান?"
+        elif stage == "impact":
+            return "বাচ্চা নিয়ে বর্তমানে বাবার বাড়িতে দিনযাপন করতে আপনার কেমন আর্থিক কষ্ট বা টানাপোড়েন হচ্ছে?"
+        elif stage == "desired_solution":
+            return "কাবিননামা থাকা আপনার দাবির একটি শক্ত ভিত্তি। এখন আপনি কি স্থানীয় ইউনিয়ন পরিষদে সালিশের মাধ্যমে আপস চান, নাকি সরাসরি পারিবারিক আদালতে মামলা করতে চান?"
         else:
             return "ভরণপোষণ ও পারিবারিক বিরোধের বিষয়ে বিস্তারিত জানালে সঠিক পথরেখা তৈরি করা সম্ভব হবে।"
     elif cat == "unpaid_wages":
@@ -863,8 +942,10 @@ def get_stage_fallback_question(category: Optional[str], stage: str, missing_ite
             return "মালিক বা ঠিকাদার কী কারণে আপনার মজুরি বকেয়া রেখেছেন বা কোনো বিরোধ হয়েছিল কি না?"
         elif stage == "history":
             return "আপনি কতদিন সেখানে কাজ করেছেন এবং কাজের দৈনিক হাজিরা খাতা বা স্লিপের কোনো প্রমাণ আছে কি না?"
-        elif stage in ("impact", "desired_solution"):
-            return "আপনি কত টাকা বকেয়া মজুরি দাবি করছেন এবং এ নিয়ে স্থানীয়ভাবে বা সর্দারের কাছে কোনো কথা হয়েছে কি না?"
+        elif stage == "impact":
+            return "বকেয়া মজুরি না পাওয়ায় আপনার পরিবারে কেমন টানাপোড়েন বা সংসার চালাতে কী ধরণের সমস্যা হচ্ছে?"
+        elif stage == "desired_solution":
+            return "আপনি কি সর্দার বা স্থানীয় সালিশে দেনদরবার করতে চান, নাকি শ্রম আদালতে বা লিগ্যাল এইডে আইনি প্রতিকার চান?"
         else:
             return "বকেয়া মজুরির বিবরণ জানালে শ্রম অধিকার অনুযায়ী সহায়তার ব্যবস্থা করা যাবে।"
     else:
@@ -880,19 +961,94 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     text_to_eval = state.get("client_own_words") or state.get("transcript", "")
     latest_user_text = state.get("transcript", "")
     
-    # 1. If an extra fallback question was ALREADY asked and client just responded to it:
-    # "and if this happen then complete" -> wrap up and mark is_complete: True
-    if extra_question_asked:
-        return {
-            "is_complete": True,
-            "missing_fields": [],
-            "follow_up_question": None,
-            "suggested_replies": None,
-            "extra_question_asked": True
-        }
+    # 1. Structured Stages and Coverage Detection
+    stages_order = ["problem", "cause", "history", "impact", "desired_solution"]
+    stage_bn_map = {
+        "problem": "সমস্যার মূল ধরণ",
+        "cause": "বিরোধের কারণ ও সূত্রপাত (কী কারণে ঝামেলা শুরু হলো / জমি কীভাবে বেদখল হলো / ভরণপোষণ কেন বন্ধ হলো)",
+        "history": "ইতিহাস, প্রমাণাদি/দলিল ও পূর্ববর্তী সালিশ (যেমন কাবিননামা, রেজিস্ট্রি দলিল/খতিয়ান, স্থানীয় সালিশ)",
+        "impact": "বর্তমান প্রভাব ও পরিস্থিতি (কোথায় থাকছেন, আর্থিক অনটন, জমিতে যেতে বাধা)",
+        "desired_solution": "প্রত্যাশিত আইনি প্রতিকার বা সমাধান"
+    }
 
-    # 2. Check if client's response expresses "mone nei" or "document nei"
-    # "when uer send something like mone nei or document nei then should ask extra question"
+    existing_covered = list(state.get("stages_covered") or [])
+    if not existing_covered:
+        existing_covered = ["problem"]
+
+    prev_stage = state.get("current_stage")
+    if prev_stage and prev_stage in stages_order and prev_stage not in existing_covered:
+        existing_covered.append(prev_stage)
+
+    # Fact-based detection of stages from accumulated text
+    lower_all = (text_to_eval + " " + latest_user_text).lower()
+    
+    # 1. Cause: specific trigger/reason for conflict or separation
+    if any(w in lower_all for w in [
+        "যৌতুক", "দ্বিতীয় বিয়ে", "দ্বিতীয় বিয়ে", "জোরপূর্বক দখল", "বেদখল", "দখল করে",
+        "ঝগড়া করে আলাদা", "ঝগড়া করে আলাদা", "মেরে বের করে", "তাড়িয়ে দিয়েছে", "তাড়িয়ে দিছে",
+        "বের করে দিয়েছে", "বের করে দিছে", "বাড়ি থেকে বের", "বাড়ি থেকে বের", "বাড়ি ছাড়তে বাধ্য", "বাড়ি ছাড়তে বাধ্য"
+    ]):
+        if "cause" not in existing_covered:
+            existing_covered.append("cause")
+
+    # 2. History & Evidence: requires knowing document possession or local salish (not merely mentioning the word 'কাবিন' or 'বিয়ে')
+    has_evidence_info = any(w in lower_all for w in [
+        "কাবিননামা আছে", "কাবিন আছে", "কাবিননামা বাবার", "কাবিন বাবার", "কাবিননামা স্বামীর",
+        "কাবিন স্বামীর", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে", "কাবিন নেই", "কাবিন নাই", "কাজী অফিসে",
+        "কোথায় আছে মনে পড়ছে না", "কোথায় আছে মনে নাই", "কোথায় আছে জানি না", "মনে পড়ছে না", "মনে পরছে না", "খুঁজে পাচ্ছি না",
+        "কাজী অফিসের এলাকা", "কোনো সাক্ষী নেই", "কোনো কাজী বা সাক্ষী নেই", "সাক্ষী বা কাজী নেই",
+        "দলিল আছে", "দলিল সংরক্ষিত", "দলিল প্রতিপক্ষের", "দলিল নেই", "দলিল নাই", "খতিয়ান আছে",
+        "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "মৌখিক চুক্তি", "সালিশ হয়েছিল", "সালিশ হয়েছে"
+    ])
+    if has_evidence_info:
+        if "history" not in existing_covered:
+            existing_covered.append("history")
+
+    # 3. Impact: current hardship, living condition, or residence
+    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "জমিতে যেতে বাধা"]):
+        if "impact" not in existing_covered:
+            existing_covered.append("impact")
+
+    # 4. Desired Solution: specific remedy or legal route confirmed
+    if any(w in lower_all for w in [
+        "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
+        "সালিশের মাধ্যমে", "শান্তিপূর্ণ মীমাংসা", "সালিশ চাই", "মীমাংসা চাই",
+        "আইনি নোটিশ", "আদালতে যাব", "আদালতে যেতে",
+        "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়"
+    ]):
+        if "desired_solution" not in existing_covered:
+            existing_covered.append("desired_solution")
+
+    # 2. If an extra fallback question was ALREADY asked and client just responded to it:
+    if extra_question_asked:
+        if "history" not in existing_covered:
+            existing_covered.append("history")
+        
+        remaining_stages = [s for s in stages_order if s not in existing_covered]
+        if "desired_solution" in remaining_stages and turn_count < 5:
+            extra_q = get_stage_fallback_question(cat, "desired_solution")
+            extra_chips = generate_suggested_replies(question=extra_q, missing_fields=["desired_solution"], category=cat)
+            return {
+                "is_complete": False,
+                "current_stage": "desired_solution",
+                "stages_covered": existing_covered,
+                "missing_fields": ["desired_solution"],
+                "follow_up_question": extra_q,
+                "suggested_replies": extra_chips,
+                "extra_question_asked": False
+            }
+        else:
+            return {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": existing_covered,
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False
+            }
+
+    # 3. Check if client's response expresses "mone nei" or "document nei"
     is_uncertain, match_type = check_uncertainty_or_missing_doc(latest_user_text)
     if is_uncertain and match_type:
         previous_q = state.get("follow_up_question")
@@ -910,13 +1066,15 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
 
         return {
             "is_complete": False,
+            "current_stage": state.get("current_stage") or "history",
+            "stages_covered": existing_covered,
             "follow_up_question": extra_q,
             "suggested_replies": extra_chips,
             "extra_question_asked": True,
             "missing_fields": state.get("missing_fields", [])
         }
 
-    # 3. If disambiguation is needed (vague / unclassifiable statement)
+    # 4. Disambiguation if category is unclassifiable
     if state.get("disambiguation_needed") or cat == "unclassifiable":
         question = "আপনার সমস্যাটি কি দেনমোহর/ভরণপোষণ, বকেয়া মজুরি, নাকি জমিজমা নিয়ে? অনুগ্রহ করে একটু বিস্তারিত বলুন।"
         try:
@@ -956,7 +1114,7 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             "extra_question_asked": False
         }
 
-    # 4. Generous safety ceiling against runaway loops (e.g. if user sends unrelated single letters/noise repeatedly)
+    # 5. Generous safety ceiling against runaway loops (e.g. if user sends unrelated single letters/noise repeatedly)
     if turn_count >= 7:
         return {
             "is_complete": True,
@@ -966,7 +1124,31 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             "extra_question_asked": False
         }
 
-    # 5. Assemble known facts extracted so far
+    remaining_stages = [s for s in stages_order if s not in existing_covered]
+    target_stage = remaining_stages[0] if remaining_stages else "complete"
+
+    # Enforce thorough intake depth:
+    # A complete legal intake interview MUST verify essential documentation (e.g. Kabinnama / deeds).
+    # It must NOT complete on turn 1 or turn 2!
+    if turn_count < 3 and target_stage == "complete":
+        if "history" not in existing_covered or not has_evidence_info:
+            target_stage = "history"
+        elif "desired_solution" not in existing_covered:
+            target_stage = "desired_solution"
+
+    # If all stages are covered AND turn_count >= 3, OR if turn_count >= 4 and at least 3 essential stages covered: complete!
+    if (target_stage == "complete" and turn_count >= 3) or (turn_count >= 4 and len(existing_covered) >= 3):
+        return {
+            "is_complete": True,
+            "current_stage": "complete",
+            "stages_covered": existing_covered,
+            "missing_fields": [],
+            "follow_up_question": None,
+            "suggested_replies": None,
+            "extra_question_asked": False
+        }
+
+    # Assemble known facts extracted so far
     known = []
     if state.get("applicant_name") and state.get("applicant_name") != "[নাম সংরক্ষিত]":
         known.append(f"আবেদনকারী: {state.get('applicant_name')}")
@@ -998,54 +1180,6 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         for m in recent_history if m.get("content")
     ])
 
-    # 6. Structured LLM Dialogue Evaluation (Problem -> Cause -> History -> Impact -> Desired Solution)
-    stages_order = ["problem", "cause", "history", "impact", "desired_solution"]
-    stage_bn_map = {
-        "problem": "সমস্যার মূল ধরণ",
-        "cause": "বিরোধের কারণ ও সূত্রপাত (কী কারণে ঝামেলা শুরু হলো / জমি কীভাবে বেদখল হলো / ভরণপোষণ কেন বন্ধ হলো)",
-        "history": "ইতিহাস, প্রমাণাদি/দলিল ও পূর্ববর্তী সালিশ (যেমন কাবিননামা, রেজিস্ট্রি দলিল/খতিয়ান, স্থানীয় সালিশ)",
-        "impact": "বর্তমান প্রভাব ও পরিস্থিতি (কোথায় থাকছেন, আর্থিক অনটন, জমিতে যেতে বাধা)",
-        "desired_solution": "প্রত্যাশিত আইনি প্রতিকার বা সমাধান"
-    }
-
-    existing_covered = list(state.get("stages_covered") or [])
-    if not existing_covered:
-        existing_covered = ["problem"]
-
-    prev_stage = state.get("current_stage")
-    if prev_stage and prev_stage in stages_order and prev_stage not in existing_covered:
-        existing_covered.append(prev_stage)
-
-    # Fact-based detection of stages from accumulated text
-    lower_all = (text_to_eval + " " + latest_user_text).lower()
-    if any(w in lower_all for w in ["দখল", "জোরপূর্বক", "বেদখল", "ঝগড়া", "ঝগড়া", "আলাদা", "দ্বিতীয় বিয়ে", "দ্বিতীয় বিয়ে", "যৌতুক", "মজুরি দেয়নি", "টাকা দেয় না"]):
-        if "cause" not in existing_covered:
-            existing_covered.append("cause")
-    if any(w in lower_all for w in ["দলিল", "রেজিস্ট্রি", "খতিয়ান", "খতিয়ান", "পর্চা", "কাবিন", "কাবিননামা", "সালিশ", "মেম্বার", "চেয়ারম্যান", "চেয়ারম্যান", "হাজিরা", "স্লিপ", "বিয়ে", "বছর আগে"]):
-        if "history" not in existing_covered:
-            existing_covered.append("history")
-    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে", "আটকে", "খেতে পারছি না", "অনাহারে"]):
-        if "impact" not in existing_covered:
-            existing_covered.append("impact")
-    if any(w in lower_all for w in ["চাই", "উদ্ধার", "আদায়", "আদায়", "প্রতিকার", "সমাধান"]):
-        if "desired_solution" not in existing_covered:
-            existing_covered.append("desired_solution")
-
-    remaining_stages = [s for s in stages_order if s not in existing_covered]
-    target_stage = remaining_stages[0] if remaining_stages else "complete"
-
-    # If all stages are covered, OR if turn_count >= 4 and at least 3 essential stages are covered: complete!
-    if target_stage == "complete" or (turn_count >= 4 and len(existing_covered) >= 3):
-        return {
-            "is_complete": True,
-            "current_stage": "complete",
-            "stages_covered": existing_covered,
-            "missing_fields": [],
-            "follow_up_question": None,
-            "suggested_replies": None,
-            "extra_question_asked": False
-        }
-
     target_stage_bn = stage_bn_map.get(target_stage, target_stage)
     stages_covered_bn = ", ".join([f"{s} ({stage_bn_map.get(s, s)})" for s in existing_covered])
 
@@ -1062,14 +1196,15 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             "বর্তমান টার্ন সংখ্যা: {turn_count}\n\n"
             "টাস্ক নির্দেশিকা:\n"
             "1. Problem → Cause → History → Impact → Desired Solution ধাপসমূহ অনুযায়ী পর্যায়ক্রমে এগোতে হবে।\n"
-            "2. ইতিমধ্যে যে ধাপগুলো সম্পন্ন হয়েছে ({stages_covered_bn}) সে বিষয়ে পুনরাবৃত্তিমূলক প্রশ্ন করবেন না।\n"
-            "3. পরবর্তী লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) সম্পর্কে কথ্য বাংলায় একটিমাত্র আন্তরিক ও প্রাসঙ্গিক প্রশ্ন করুন।\n"
-            "   - যদি ক্যাটাগরি জমিজমা হয় এবং target_stage='cause' হয়: জমি দখলের কারণ বা বিরোধের সূত্রপাত সম্পর্কে জানতে চান।\n"
-            "   - যদি ক্যাটাগরি জমিজমা হয় এবং target_stage='history' হয়: জমির মূল রেজিস্ট্রি দলিল বা খতিয়ান কার কাছে আছে বা স্থানীয় মেম্বার/চেয়ারম্যানের কাছে সালিশ হয়েছিল কি না তা জানতে চান।\n"
-            "   - যদি ক্যাটাগরি দেনমোহর/ভরণপোষণ হয় এবং target_stage='cause' হয়: ভরণপোষণ বন্ধের কারণ জানতে চান (যেমন 'ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?')।\n"
-            "   - যদি ক্যাটাগরি দেনমোহর/ভরণপোষণ হয় এবং target_stage='history' হয়: বিয়ে কতদিন আগের এবং কাবিননামা কার কাছে আছে তা জানতে চান।\n"
-            "4. এই প্রশ্নের সাথে সরাসরি মানানসই ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) প্রদান করুন।\n"
-            "5. ক্লায়েন্ট যদি প্রয়োজনীয় মৌলিক উত্তরগুলো এখনো সম্পন্ন না করে থাকেন, তবে is_complete=False দিন।"
+            "2. মানবিক সেতুবন্ধন (Empathetic Bridging): ক্লায়েন্টের সর্বশেষ বক্তব্যটি (যেমন 'আমি টাকা চেয়েছিলাম' বা 'কাবিননামা বাবার বাড়িতে আছে') প্রথমে সংক্ষিপ্ত সহানুভূতি ও উপলব্ধির সাথে স্বীকার করুন (যেমন সংসারের খরচের টাকা চাওয়ায় এমন নির্যাতন করা অন্যায়, অথবা কাবিননামা থাকা অধিকার প্রতিষ্ঠার শক্ত প্রমাণ), তারপর বুঝিয়ে বলুন পরবর্তী তথ্যটি আইনত তাদের অধিকার প্রতিষ্ঠায় কীভাবে প্রয়োজন। হুট করে সরাসরি আমলাতান্ত্রিক প্রশ্ন করবেন না।\n"
+            "3. ইতিমধ্যে যে ধাপগুলো সম্পন্ন হয়েছে ({stages_covered_bn}) সে বিষয়ে পুনরাবৃত্তিমূলক প্রশ্ন করবেন না।\n"
+            "4. পরবর্তী লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) সম্পর্কে কথ্য বাংলায় একটিমাত্র আন্তরিক ও প্রাসঙ্গিক প্রশ্ন করুন:\n"
+            "   - যদি target_stage='history' হয়: দেনমোহর/ভরণপোষণের ক্ষেত্রে বিয়ের সময়কাল ও কাবিননামা কার কাছে আছে জানতে চান; জমির ক্ষেত্রে দলিল বা খতিয়ান কার কাছে আছে তা জানতে চান।\n"
+            "   - যদি target_stage='desired_solution' হয়: কাবিন বা নথির তথ্য পেয়ে থাকলে তা অধিকার প্রমাণের জন্য গুরুত্বপূর্ণ উল্লেখ করে ক্লায়েন্ট কী ধরণের আইনি সমাধান বা প্রতিকার চান (যেমন স্থানীয়ভাবে ইউনিয়ন পরিষদে সালিশ বা আপস চান, নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করে দেনমোহর ও বকেয়া খোরপোষ আদায় করতে চান) তা জানতে চান।\n"
+            "   - যদি target_stage='impact' হয়: বিরোধ বা বঞ্চনার ফলে বর্তমানে তিনি ও তাঁর পরিবার কী ধরনের আর্থিক টানাপোড়েন বা সংকটে দিন কাটাচ্ছেন তা জানতে চান।\n"
+            "   - যদি target_stage='cause' হয়: বিরোধের সূত্রপাত বা আলাদা থাকার মূল কারণ কী ছিল তা জানতে চান।\n"
+            "5. এই প্রশ্নের সাথে সরাসরি মানানসই ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) প্রদান করুন।\n"
+            "6. ক্লায়েন্ট যদি প্রয়োজনীয় মৌলিক উত্তরগুলো এখনো সম্পন্ন না করে থাকেন, তবে is_complete=False দিন।"
         ))
     ])
 
@@ -1116,11 +1251,21 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
                 "extra_question_asked": False
             }
 
-        # If LLM didn't supply a question string or repeated cause when target_stage is history:
-        if not q or not q.strip() or (target_stage != "cause" and any(w in (q or "") for w in ["সূত্রপাত কীভাবে হয়েছিল", "বিরোধের সূত্রপাত", "ঝামেলা হয়েছে কেন", "ঝামেলা হয়েছে কেন"])):
+        # Repetition and fallback detection:
+        is_repetitive = False
+        if not q or not q.strip():
+            is_repetitive = True
+        elif target_stage != "cause" and any(w in (q or "") for w in ["সূত্রপাত কীভাবে হয়েছিল", "বিরোধের সূত্রপাত", "ঝামেলা হয়েছে কেন", "ঝামেলা হয়েছে কেন"]):
+            is_repetitive = True
+        elif target_stage != "history" and any(w in (q or "") for w in ["কাবিননামা কি আপনাদের কাছে", "কাবিননামা কার কাছে", "বিয়ে কবে হয়েছিল", "রেজিস্ট্রি দলিল বা খতিয়ান"]):
+            is_repetitive = True
+        elif target_stage == "desired_solution" and not any(w in (q or "") for w in ["সালিশ", "আদালত", "মামলা", "প্রতিকার", "সমাধান", "মীমাংসা", "আইনি পদক্ষেপ", "পদক্ষেপ"]):
+            is_repetitive = True
+
+        if is_repetitive:
             q = get_stage_fallback_question(cat, target_stage, missing_item)
 
-        if not replies or len(replies) == 0 or (target_stage != "cause" and any("দখল করে রেখেছে" in r for r in (replies or []))):
+        if not replies or len(replies) == 0 or (target_stage != "cause" and any("দখল করে রেখেছে" in r for r in (replies or []))) or (target_stage == "desired_solution" and not any("আদালত" in r or "সালিশ" in r or "মামলা" in r for r in (replies or []))):
             replies = generate_suggested_replies(
                 question=q,
                 missing_fields=[target_stage],
@@ -1293,19 +1438,16 @@ workflow.add_node("generate_templates", template_output_node)
 workflow.set_entry_point("transcribe")
 workflow.add_edge("transcribe", "safety_check")
 
-# Safety routing
+# Safety routing: No hard breakout shortcut. All clients proceed to token budget and questionnaire intake flow.
 def check_safety_route(state: IntakeState):
     if state.get("llm_error"):
         return END
-    if state.get("safety_flag"):
-        return "safety_breakout"
     return "token_budget"
 
 workflow.add_conditional_edges(
     "safety_check",
     check_safety_route,
     {
-        "safety_breakout": END,
         "token_budget": "token_budget",
         END: END
     }
@@ -1435,8 +1577,8 @@ def run_intake(
         "requires_continuation": False,
         "continuation_prompt": None,
         "is_continuation_confirmed": is_continuation or (existing_state.get("is_continuation_confirmed", False) if existing_state else False),
-        "safety_flag": False,
-        "safety_message": None,
+        "safety_flag": existing_state.get("safety_flag", False) if existing_state else False,
+        "safety_message": existing_state.get("safety_message", None) if existing_state else None,
         "category": existing_state.get("category") if existing_state else None,
         "confidence": existing_state.get("confidence") if existing_state else None,
         "classification_reason": None,
@@ -1494,11 +1636,6 @@ def run_intake(
             "role": "assistant",
             "content": f"⚠️ ত্রুটি: {result.get('llm_error')}"
         })
-    elif result.get("safety_flag"):
-        history.append({
-            "role": "assistant",
-            "content": result.get("safety_message") or "জরুরি নিরাপত্তা ব্রেক-আউট সক্রিয় করা হয়েছে।"
-        })
     elif result.get("requires_continuation"):
         history.append({
             "role": "assistant",
@@ -1521,6 +1658,11 @@ def run_intake(
         history.append({
             "role": "assistant",
             "content": summary_msg
+        })
+    elif result.get("safety_flag"):
+        history.append({
+            "role": "assistant",
+            "content": result.get("safety_message") or "জরুরি নিরাপত্তা সতর্কতা সক্রিয় করা হয়েছে।"
         })
     
     result["chat_history"] = history
