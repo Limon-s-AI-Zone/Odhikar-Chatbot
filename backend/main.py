@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 import shutil
@@ -657,3 +657,184 @@ async def get_tts_audio(text: str):
             "Cache-Control": "no-cache"
         }
     )
+
+
+# --- Draft Complaint Document Export & Print Endpoints ---
+
+def render_draft_complaint_html(case: models.Case) -> str:
+    case_id_display = f"ODH-2026-{case.id:04d}" if case.id else "ODH-2026-DRAFT"
+    date_display = case.received_at.strftime("%d %B, %Y") if hasattr(case, "received_at") and case.received_at else "১১ সেপ্টেম্বর, ২০২৬"
+    category_label = {
+        "family_dower_maintenance": "পারিবারিক — দেনমোহর ও ভরণপোষণ",
+        "dowry": "যৌতুক সংক্রান্ত বিরোধ ও নির্যাতন",
+        "unpaid_wages": "শ্রম ও কর্মসংস্থান — বকেয়া মজুরি আদায়",
+        "land_dispute": "ভূমি ও সম্পত্তি সংক্রান্ত বিরোধ",
+        "out_of_scope": "অন্যান্য / সাধারণ আইনি বিষয়"
+    }.get(case.category, case.category or "পারিবারিক — দেনমোহর ও ভরণপোষণ")
+    
+    applicant = case.applicant_name or "[নাম সংরক্ষিত]"
+    respondent = case.respondent or "[বিবাদী]"
+    address = getattr(case, "address", None) or "[ঠিকানা — অপ্রতিষ্ঠিত]"
+    clinic = case.referral_clinic or "ব্র্যাক মানবাধিকার ও আইনি সহায়তা কেন্দ্র"
+    slot = case.referral_slot or "বুধবার, সকাল ১০:০০ টা"
+    status_label = "জরুরি অগ্রাধিকার (URGENT)" if case.status == "URGENT" else "প্রাথমিক খসড়া প্রস্তুত (Draft Prepared)"
+    
+    draft_body = (case.draft_complaint or "খসড়া অভিযোগপত্র এখনও প্রস্তুত করা হয়নি।").replace("\n", "<br/>")
+    draft_body = re.sub(
+        r"(\[[^\]]+\])",
+        r'<span style="background:#fef3c7;color:#92400e;border:1px dashed #d97706;padding:1px 4px;border-radius:3px;font-weight:600;">\1</span>',
+        draft_body
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8" />
+  <title>আইনি অভিযোগের খসড়া — {case_id_display}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    @page {{
+      size: A4 portrait;
+      margin: 15mm;
+    }}
+    body {{
+      font-family: 'Hind Siliguri', -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0;
+      padding: 24px;
+      color: #0f172a;
+      background: #f8fafc;
+      line-height: 1.6;
+    }}
+    .document-card {{
+      max-width: 800px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 40px 48px;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }}
+    @media print {{
+      body {{ padding: 0; background: #ffffff; }}
+      .document-card {{ border: none; box-shadow: none; padding: 0; }}
+      .no-print {{ display: none !important; }}
+    }}
+    .action-bar {{
+      max-width: 800px;
+      margin: 0 auto 16px auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }}
+    .btn-print {{
+      background-color: #d92d20;
+      color: white;
+      border: none;
+      padding: 8px 18px;
+      font-size: 14px;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+    }}
+  </style>
+</head>
+<body>
+  <div class="action-bar no-print">
+    <div style="font-size: 14px; color: #64748b; font-weight: 600;">অধিকার (Odhikar) আইনি অভিযোগপত্র খসড়া ভিউয়ার</div>
+    <button class="btn-print" onclick="window.print()">🖨️ প্রিন্ট / PDF সংরক্ষণ করুন</button>
+  </div>
+
+  <div class="document-card">
+    <!-- HEADER -->
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #d92d20; padding-bottom: 12px; margin-bottom: 16px;">
+      <div>
+        <div style="font-size: 20px; font-weight: 800; color: #d92d20;">অধিকার · ODHIKAR</div>
+        <div style="font-size: 15px; font-weight: 700; color: #1e293b;">ব্র্যাক মানবাধিকার ও আইনি সহায়তা কর্মসূচি (HRLS)</div>
+        <div style="font-size: 12px; color: #475569;">BRAC Human Rights and Legal Aid Services</div>
+      </div>
+      <div style="text-align: right;">
+        <div style="background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 10px; font-weight: 800; font-family: monospace;">
+          {case_id_display}
+        </div>
+        <div style="font-size: 11px; color: #64748b; margin-top: 4px;">তারিখ: <strong>{date_display}</strong></div>
+      </div>
+    </div>
+
+    <!-- WARNING BANNER -->
+    <div style="background-color: #fef2f2; border: 1.5px solid #f87171; border-radius: 6px; padding: 10px 14px; margin-bottom: 18px; font-size: 11.5px; color: #991b1b; line-height: 1.45;">
+      <strong>⚠️ খসড়া কপি — প্যারালিগ্যাল পর্যালোচনা ব্যতীত ব্যবহারযোগ্য নয়:</strong><br/>
+      এই নথিটি অধিকার এআই কর্তৃক প্রস্তুতকৃত একটি প্রাথমিক অনানুষ্ঠানিক অভিযোগপত্র। ব্র্যাক লিগ্যাল এইড ক্লিনিকের প্যারালিগ্যাল কর্মকর্তা কর্তৃক যাচাই ও চূড়ান্তকরণের পূর্বে আদালতে বা কোনো সরকারি দপ্তরে দাখিলযোগ্য নয়।
+    </div>
+
+    <!-- TITLE -->
+    <div style="text-align: center; margin-bottom: 16px;">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 800; color: #0f172a;">আইনি বিরোধ মীমাংসার অভিযোগপত্র (প্রাথমিক খসড়া)</h2>
+      <div style="font-size: 12px; color: #475569; margin-top: 2px;">বিষয়শ্রেণি: <strong>{category_label}</strong> · অবস্থা: {status_label}</div>
+    </div>
+
+    <!-- METADATA -->
+    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 12px;">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px;">
+        <div><strong>অভিযোগকারী:</strong> {applicant}</div>
+        <div><strong>বিবাদী:</strong> {respondent}</div>
+        <div><strong>ঠিকানা:</strong> {address}</div>
+        <div><strong>ক্লিনিক:</strong> {clinic} ({slot})</div>
+      </div>
+    </div>
+
+    <!-- BODY -->
+    <div style="border: 1px solid #cbd5e1; border-radius: 8px; padding: 20px; margin-bottom: 24px; font-size: 13.5px; line-height: 1.85; text-align: justify; background: #ffffff;">
+      {draft_body}
+    </div>
+
+    <!-- SIGNATURES -->
+    <div style="border-top: 1.5px dashed #94a3b8; padding-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px;">
+      <div>
+        <div style="font-size: 11px; color: #475569;">উপরে উল্লেখিত বিবরণ আমার জানা মতে সত্য।</div>
+        <div style="border-bottom: 1px solid #0f172a; width: 180px; margin-top: 40px;"></div>
+        <div style="font-size: 11px; font-weight: 700; margin-top: 4px;">অভিযোগকারীর স্বাক্ষর / টিপসহি</div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-size: 11px; color: #475569;">প্যারালিগ্যাল কর্মকর্তা কর্তৃক পরীক্ষিত ও সুপারিশকৃত।</div>
+        <div style="border-bottom: 1px solid #0f172a; width: 220px; margin-top: 40px; margin-left: auto;"></div>
+        <div style="font-size: 11px; font-weight: 700; margin-top: 4px;">প্যারালিগ্যাল কর্মকর্তার স্বাক্ষর ও সিল</div>
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <div style="border-top: 1px solid #e2e8f0; padding-top: 10px; margin-top: 24px; font-size: 10px; color: #94a3b8; display: flex; justify-content: space-between;">
+      <span>অধিকার (Odhikar) AI Paralegal · ব্র্যাক আইটি কোডস্প্রিন্ট ২০২৬ | হেল্পলাইন: ১৬৪৩০</span>
+      <span>DRAFT ONLY</span>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/cases/{case_id}/draft/html", response_class=HTMLResponse)
+def get_case_draft_html(case_id: int, db: Session = Depends(get_db)):
+    """Returns a standalone, high-fidelity printable HTML document for the case draft complaint."""
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return HTMLResponse(content=render_draft_complaint_html(case))
+
+
+@app.get("/cases/{case_id}/draft/download")
+def download_case_draft_txt(case_id: int, db: Session = Depends(get_db)):
+    """Downloads the draft complaint as a clean text document."""
+    case = db.query(models.Case).filter(models.Case.id == case_id).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    content = case.draft_complaint or "খসড়া অভিযোগপত্র এখনও প্রস্তুত করা হয়নি।"
+    filename = f"draft_complaint_case_{case.id}.txt"
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+

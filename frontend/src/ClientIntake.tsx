@@ -6,8 +6,9 @@ import {
   MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
   Volume2, VolumeX, FileText, Mic, Square, Radio,
   Shield, Trash2, Copy, Check, Sparkles, Scale, HeartHandshake, MapPin,
-  ChevronDown, ChevronUp, Edit3
+  ChevronDown, ChevronUp, Edit3, Download, Printer, Loader2
 } from 'lucide-react';
+import { downloadDraftPdf, printDraftPdf } from './utils/draftPdfGenerator';
 
 interface IntakeProps {
   onCaseSubmitted: () => void;
@@ -408,6 +409,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [referralInfo, setReferralInfo] = useState<{ clinic: string; slot: string } | null>(null);
   const [caseId, setCaseId] = useState<number | null>(null);
   const [copiedDraft, setCopiedDraft] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isIntakeCompleted, setIsIntakeCompleted] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -650,6 +652,56 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     navigator.clipboard.writeText(text);
     setCopiedDraft(true);
     setTimeout(() => setCopiedDraft(false), 2500);
+  };
+
+  const handleDownloadDraftPdf = async () => {
+    if (!draftComplaint) return;
+    try {
+      setIsDownloadingPdf(true);
+      const appName = isAnonymous ? '[নাম সংরক্ষিত]' : (applicantName.trim() || sessionState?.applicant_name || '[নাম সংরক্ষিত]');
+      const aggText = aggressorName.trim() 
+        ? `${aggressorName.trim()}${aggressorRelation ? ` (সম্পর্ক: ${aggressorRelation})` : ''}` 
+        : (sessionState?.respondent || '[বিবাদী]');
+      const addr = [unionVillage, thana, zilla, division].filter(Boolean).join(', ') || sessionState?.address || '[ঠিকানা — অপ্রতিষ্ঠিত]';
+
+      await downloadDraftPdf({
+        draftText: draftComplaint,
+        caseId: caseId || sessionState?.case_id,
+        category: sessionState?.category,
+        applicantName: appName,
+        respondent: aggText,
+        address: addr,
+        clinicName: referralInfo?.clinic || sessionState?.referral_clinic,
+        appointmentSlot: referralInfo?.slot || sessionState?.referral_slot,
+        status: safetyMessage ? 'URGENT' : 'New'
+      });
+    } catch (err: any) {
+      console.error('PDF Generation Error:', err);
+      alert('পিডিএফ তৈরিতে সমস্যা হয়েছে: ' + (err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন'));
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  const handlePrintDraft = () => {
+    if (!draftComplaint) return;
+    const appName = isAnonymous ? '[নাম সংরক্ষিত]' : (applicantName.trim() || sessionState?.applicant_name || '[নাম সংরক্ষিত]');
+    const aggText = aggressorName.trim() 
+      ? `${aggressorName.trim()}${aggressorRelation ? ` (সম্পর্ক: ${aggressorRelation})` : ''}` 
+      : (sessionState?.respondent || '[বিবাদী]');
+    const addr = [unionVillage, thana, zilla, division].filter(Boolean).join(', ') || sessionState?.address || '[ঠিকানা — অপ্রতিষ্ঠিত]';
+
+    printDraftPdf({
+      draftText: draftComplaint,
+      caseId: caseId || sessionState?.case_id,
+      category: sessionState?.category,
+      applicantName: appName,
+      respondent: aggText,
+      address: addr,
+      clinicName: referralInfo?.clinic || sessionState?.referral_clinic,
+      appointmentSlot: referralInfo?.slot || sessionState?.referral_slot,
+      status: safetyMessage ? 'URGENT' : 'New'
+    });
   };
 
   // Audio Playback / Voice Output (TTS) State
@@ -2592,29 +2644,78 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           </div>
 
           {/* Draft Complaint Preview */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: 0 }}>
-              প্রাথমিক অভিযোগের খসড়া (Draft First Complaint):
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <FileText size={18} color="#d92d20" />
+              <span>প্রাথমিক অভিযোগের খসড়া (Draft First Complaint):</span>
             </h3>
             {draftComplaint && (
-              <button
-                onClick={() => handleCopyDraft(draftComplaint)}
-                style={{
-                  background: 'none',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                  padding: '4px 10px',
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  color: copiedDraft ? '#16a34a' : '#475569'
-                }}
-              >
-                {copiedDraft ? <Check size={13} /> : <Copy size={13} />}
-                <span>{copiedDraft ? 'কপি হয়েছে!' : 'খসড়া কপি করুন'}</span>
-              </button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleDownloadDraftPdf}
+                  disabled={isDownloadingPdf}
+                  style={{
+                    backgroundColor: '#d92d20',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '6px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: isDownloadingPdf ? 'wait' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 2px 4px rgba(217, 45, 32, 0.25)',
+                    transition: 'all 0.2s'
+                  }}
+                  title="অফিসিয়াল ফরম্যাটে অভিযোগপত্রের খসড়া PDF ডাউনলোড করুন"
+                >
+                  {isDownloadingPdf ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />}
+                  <span>{isDownloadingPdf ? 'পিডিএফ তৈরি হচ্ছে...' : 'PDF ডাউনলোড'}</span>
+                </button>
+
+                <button
+                  onClick={handlePrintDraft}
+                  style={{
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    color: '#334155'
+                  }}
+                  title="প্রিন্ট প্রিভিউ দেখুন অথবা প্রিন্ট করুন"
+                >
+                  <Printer size={13} />
+                  <span>প্রিন্ট</span>
+                </button>
+
+                <button
+                  onClick={() => handleCopyDraft(draftComplaint)}
+                  style={{
+                    background: 'none',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    color: copiedDraft ? '#16a34a' : '#475569'
+                  }}
+                  title="খসড়ার টেক্সট ক্লিপবোর্ডে কপি করুন"
+                >
+                  {copiedDraft ? <Check size={13} /> : <Copy size={13} />}
+                  <span>{copiedDraft ? 'কপি হয়েছে!' : 'খসড়া কপি'}</span>
+                </button>
+              </div>
             )}
           </div>
           <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', whiteSpace: 'pre-line', color: '#334155', maxHeight: '220px', overflowY: 'auto', marginBottom: '24px', lineHeight: '1.7', fontFamily: 'monospace' }}>
