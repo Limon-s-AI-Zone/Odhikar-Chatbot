@@ -1,0 +1,25 @@
+.git
+.gitignore
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+# Include backend/odhikar.db in the image so each deploy seeds Cloud Run from local DB.
+backend/uploads
+backend/service_account.json
+**/service_account.json
+*.pdf
+*.md
+!README.md
+.cursor
+agent-transcripts
+frontend/dist
+**/.DS_Store
+infra
+deploy/*.local

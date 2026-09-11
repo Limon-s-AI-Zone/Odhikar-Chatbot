@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local app data / credentials (never ship to git or images)
+backend/odhikar.db
+backend/uploads/
+backend/service_account.json
+**/service_account.json
