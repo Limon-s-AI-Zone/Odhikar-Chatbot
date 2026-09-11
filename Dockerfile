@@ -30,7 +30,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./
 COPY --from=frontend-build /frontend/dist /app/static
 
-# Ephemeral runtime dirs (SQLite + uploads reset on new revisions)
+# odhikar.db is copied from local backend/ when present (seed on every deploy).
+# Runtime writes still live only on the container disk until the next new instance.
 RUN mkdir -p /app/uploads && \
     useradd --create-home --uid 10001 appuser && \
     chown -R appuser:appuser /app

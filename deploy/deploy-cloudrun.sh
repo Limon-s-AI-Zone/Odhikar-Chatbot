@@ -32,6 +32,16 @@ echo "    Service: $SERVICE_NAME"
 echo "    Image:   $IMAGE_SHA"
 echo
 
+DB_FILE="$ROOT/backend/odhikar.db"
+if [[ ! -f "$DB_FILE" ]]; then
+  echo "ERROR: backend/odhikar.db not found."
+  echo "       Create/run the app locally once so the DB exists, then redeploy."
+  exit 1
+fi
+DB_SIZE="$(wc -c < "$DB_FILE" | tr -d ' ')"
+echo "==> Bundling local SQLite into image: backend/odhikar.db (${DB_SIZE} bytes)"
+echo
+
 # Load non-secret defaults from backend/.env if present
 LLM_PROVIDER="${LLM_PROVIDER:-}"
 MODEL_NAME="${MODEL_NAME:-}"
@@ -136,5 +146,7 @@ echo "============================================================"
 echo " Deployed: $SERVICE_URL"
 echo " API docs: $SERVICE_URL/docs"
 echo "============================================================"
-echo "Note: SQLite is ephemeral on Cloud Run (resets on new revision)."
+echo "Note: Image includes your local backend/odhikar.db snapshot from this deploy."
+echo "      New instances (redeploy / cold start) restore that snapshot;"
+echo "      cases created only in the cloud are lost when the instance is replaced."
 echo "Cold start after idle may take a while (Whisper model download)."

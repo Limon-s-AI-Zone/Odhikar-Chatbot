@@ -10,7 +10,7 @@
 **/.env
 **/.env.*
 !**/.env.example
-backend/odhikar.db
+# Include backend/odhikar.db in the image so each deploy seeds Cloud Run from local DB.
 backend/uploads
 backend/service_account.json
 **/service_account.json
