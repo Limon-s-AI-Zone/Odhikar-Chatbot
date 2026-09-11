@@ -396,6 +396,12 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [referralInfo, setReferralInfo] = useState<{ clinic: string; slot: string } | null>(null);
   const [caseId, setCaseId] = useState<number | null>(null);
   const [copiedDraft, setCopiedDraft] = useState(false);
+  const [isIntakeCompleted, setIsIntakeCompleted] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, isStreaming]);
 
   const handleCopyDraft = (text: string) => {
     if (!text) return;
@@ -848,6 +854,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
         if (finalData.follow_up_question) {
           setFollowUpQuestion(finalData.follow_up_question);
+          setIsIntakeCompleted(false);
           setStep('follow_up');
         } else if (finalData.is_complete) {
           setRightsExplanation(finalData.rights_explanation);
@@ -857,7 +864,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             slot: finalData.referral_slot || 'বুধবার, সকাল ১০:০০ টা'
           });
           setCaseId(finalData.case_id);
-          setStep('rights');
+          setIsIntakeCompleted(true);
+          setFollowUpQuestion(null);
+          setSuggestedReplies([]);
+          setTextNarrative('');
+          setStep('follow_up');
           onCaseSubmitted();
         }
       }
@@ -907,6 +918,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             setSuggestedReplies(data.suggested_replies);
           }
           setFollowUpQuestion(data.follow_up_question);
+          setIsIntakeCompleted(false);
           setStep('follow_up');
         } else if (data.is_complete) {
           setRightsExplanation(data.rights_explanation);
@@ -916,7 +928,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             slot: data.referral_slot || 'বুধবার, সকাল ১০:০০ টা'
           });
           setCaseId(data.case_id);
-          setStep('rights');
+          setIsIntakeCompleted(true);
+          setFollowUpQuestion(null);
+          setSuggestedReplies([]);
+          setTextNarrative('');
+          setStep('follow_up');
           onCaseSubmitted();
         }
       } catch (fallbackErr: any) {
@@ -1009,11 +1025,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           <span className="step-label">বিবরণ</span>
         </div>
         <div className={`step-line ${['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
-        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? 'active' : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
-          <div className="step-circle">{['rights', 'referral'].includes(step) ? <Check size={14} /> : '৩'}</div>
+        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? (isIntakeCompleted ? 'completed' : 'active') : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+          <div className="step-circle">{['rights', 'referral'].includes(step) || isIntakeCompleted ? <Check size={14} /> : '৩'}</div>
           <span className="step-label">প্রশ্নোত্তর</span>
         </div>
-        <div className={`step-line ${['rights', 'referral'].includes(step) ? 'active' : ''}`} />
+        <div className={`step-line ${['rights', 'referral'].includes(step) || isIntakeCompleted ? 'active' : ''}`} />
         <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
           <div className="step-circle">৪</div>
           <span className="step-label">পরামর্শ ও ক্লিনিক</span>
@@ -1523,7 +1539,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               <div style={{ fontSize: '12px', fontWeight: '700', color: '#64748b', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <MessageSquare size={14} /> পূর্ববর্তী কথোপকথন ও তথ্য
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: isIntakeCompleted ? '280px' : '200px', overflowY: 'auto', paddingRight: '4px' }}>
                 {chatHistory.map((msg, idx) => (
                   <div 
                     key={idx}
@@ -1586,140 +1602,188 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                     </div>
                   </div>
                 ))}
+                <div ref={chatEndRef} />
               </div>
             </div>
           )}
 
-          {/* Active Question Highlight Box */}
-          <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
-              <span style={{ fontSize: '12px', fontWeight: '700', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                আইনি পরামর্শের জন্য প্রয়োজনীয় প্রশ্ন:
-              </span>
-              {followUpQuestion && (
-                <button
-                  className="btn btn-outline"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '12px',
-                    padding: '4px 10px',
-                    flexShrink: 0,
-                    backgroundColor: 'white',
-                    borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
-                    color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
-                  }}
-                  onClick={() => playVoice(followUpQuestion)}
-                  title="প্রশ্নটি শুনুন"
-                >
-                  {isLoadingAudio && currentPlayingText === followUpQuestion ? (
-                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
-                  ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
-                    <><VolumeX size={14} /> <span>থামান</span></>
-                  ) : (
-                    <><Volume2 size={14} /> <span>প্রশ্ন শুনুন</span></>
-                  )}
-                </button>
-              )}
-            </div>
-            <h2 style={{ fontSize: '17px', fontWeight: '700', color: '#0c4a6e', margin: 0, lineHeight: '1.6' }}>
-              {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
-            </h2>
-          </div>
-
-          {/* Answer Input Header with Voice Typing Button */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <span style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>আপনার উত্তর:</span>
-            {renderVoiceTypingButton()}
-          </div>
-
-          {voiceStatus && (
-            <div style={{
-              fontSize: '12px',
-              padding: '8px 12px',
-              borderRadius: '8px',
-              marginBottom: '10px',
-              backgroundColor: isListening ? '#fef2f2' : '#f0fdf4',
-              color: isListening ? '#b91c1c' : '#15803d',
-              border: `1px solid ${isListening ? '#fca5a5' : '#86efac'}`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px'
-            }}>
-              {isListening ? (
-                <span className="mic-recording-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }}></span>
-              ) : (
-                <CheckCircle2 size={14} />
-              )}
-              <span>{voiceStatus}</span>
-            </div>
-          )}
-
-          <textarea
-            rows={3}
-            value={textNarrative}
-            onChange={(e) => setTextNarrative(e.target.value)}
-            placeholder="উত্তর মুখে বলুন বা এখানে লিখুন... (কথা বললে সরাসরি লেখা হবে)"
-            style={{
-              width: '100%',
-              padding: '14px',
-              borderRadius: '10px',
-              border: isListening ? '2px solid #0284c7' : '1px solid #cbd5e1',
-              fontFamily: 'inherit',
-              fontSize: '15px',
-              marginBottom: '12px',
-              boxSizing: 'border-box',
-              outline: 'none',
-              lineHeight: '1.6'
-            }}
-          />
-
-          {/* Quick Answer Shortcut Chips */}
-          {(() => {
-            const activeQuestion = followUpQuestion || 
-              (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
-                ? chatHistory[chatHistory.length - 1].content 
-                : '');
-            const chips = getContextualChips(activeQuestion, suggestedReplies, sessionState?.category);
-            if (!chips || chips.length === 0) return null;
-
-            return (
-              <div className="quick-chips-wrapper">
-                <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
-                  সহায়ক উত্তর:
+          {/* Active Question Highlight Box OR Completion Notification */}
+          {isIntakeCompleted ? (
+            <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                <CheckCircle2 size={18} color="#16a34a" />
+                <span style={{ fontSize: '13px', fontWeight: '800', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  প্রশ্নোত্তর পর্ব সম্পন্ন হয়েছে
                 </span>
-                {chips.map((chip, idx) => {
-                  const isSelected = textNarrative === chip.text;
-                  return (
-                    <button
-                      key={idx}
-                      type="button"
-                      className={`quick-chip ${isSelected ? 'active' : ''}`}
-                      onClick={() => setTextNarrative(chip.text)}
-                      title={chip.text}
-                    >
-                      {chip.label}
-                    </button>
-                  );
-                })}
               </div>
-            );
-          })()}
+              <p style={{ margin: 0, fontSize: '14.5px', color: '#166534', lineHeight: '1.6' }}>
+                আপনার বিবরণ ও সকল প্রশ্নের উত্তর সফলভাবে সংরক্ষিত হয়েছে। আপনার আইনগত অধিকার, করণীয় পদক্ষেপ এবং ব্র্যাক লিগ্যাল এইড ক্লিনিকের বিবরণ প্রস্তুত করা হয়েছে। নিচের বাটনে ক্লিক করে পরবর্তী ধাপে যান।
+              </p>
+            </div>
+          ) : (
+            <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  আইনি পরামর্শের জন্য প্রয়োজনীয় প্রশ্ন:
+                </span>
+                {followUpQuestion && (
+                  <button
+                    className="btn btn-outline"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      padding: '4px 10px',
+                      flexShrink: 0,
+                      backgroundColor: 'white',
+                      borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
+                      color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
+                    }}
+                    onClick={() => playVoice(followUpQuestion)}
+                    title="প্রশ্নটি শুনুন"
+                  >
+                    {isLoadingAudio && currentPlayingText === followUpQuestion ? (
+                      <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                    ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
+                      <><VolumeX size={14} /> <span>থামান</span></>
+                    ) : (
+                      <><Volume2 size={14} /> <span>প্রশ্ন শুনুন</span></>
+                    )}
+                  </button>
+                )}
+              </div>
+              <h2 style={{ fontSize: '17px', fontWeight: '700', color: '#0c4a6e', margin: 0, lineHeight: '1.6' }}>
+                {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
+              </h2>
+            </div>
+          )}
 
+          {!isIntakeCompleted && (
+            <>
+              {/* Answer Input Header with Voice Typing Button */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '13px', fontWeight: '700', color: '#334155' }}>আপনার উত্তর:</span>
+                {renderVoiceTypingButton()}
+              </div>
+
+              {voiceStatus && (
+                <div style={{
+                  fontSize: '12px',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  marginBottom: '10px',
+                  backgroundColor: isListening ? '#fef2f2' : '#f0fdf4',
+                  color: isListening ? '#b91c1c' : '#15803d',
+                  border: `1px solid ${isListening ? '#fca5a5' : '#86efac'}`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  {isListening ? (
+                    <span className="mic-recording-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }}></span>
+                  ) : (
+                    <CheckCircle2 size={14} />
+                  )}
+                  <span>{voiceStatus}</span>
+                </div>
+              )}
+
+              <textarea
+                rows={3}
+                value={textNarrative}
+                onChange={(e) => setTextNarrative(e.target.value)}
+                placeholder="উত্তর মুখে বলুন বা এখানে লিখুন... (কথা বললে সরাসরি লেখা হবে)"
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  borderRadius: '10px',
+                  border: isListening ? '2px solid #0284c7' : '1px solid #cbd5e1',
+                  fontFamily: 'inherit',
+                  fontSize: '15px',
+                  marginBottom: '12px',
+                  boxSizing: 'border-box',
+                  outline: 'none',
+                  lineHeight: '1.6'
+                }}
+              />
+
+              {/* Quick Answer Shortcut Chips */}
+              {(() => {
+                const activeQuestion = followUpQuestion || 
+                  (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
+                    ? chatHistory[chatHistory.length - 1].content 
+                    : '');
+                const chips = getContextualChips(activeQuestion, suggestedReplies, sessionState?.category);
+                if (!chips || chips.length === 0) return null;
+
+                return (
+                  <div className="quick-chips-wrapper">
+                    <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                      সহায়ক উত্তর:
+                    </span>
+                    {chips.map((chip, idx) => {
+                      const isSelected = textNarrative === chip.text;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          className={`quick-chip ${isSelected ? 'active' : ''}`}
+                          onClick={() => setTextNarrative(chip.text)}
+                          title={chip.text}
+                        >
+                          {chip.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </>
+          )}
+
+          {/* Action Button: Changes to 'Next Step 4' when questionnaires are completed */}
           <div style={{ marginTop: '14px' }}>
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%', padding: '13px', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-              disabled={isLoading || !textNarrative.trim()}
-              onClick={() => {
-                stopVoice();
-                handleSendMessage();
-              }}
-            >
-              {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Send size={16} />}
-              <span>উত্তর জমা দিন</span>
-            </button>
+            {isIntakeCompleted ? (
+              <button
+                className="btn btn-primary"
+                style={{
+                  width: '100%',
+                  padding: '14px 24px',
+                  fontSize: '16px',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px',
+                  backgroundColor: '#16a34a',
+                  borderColor: '#15803d',
+                  boxShadow: '0 4px 14px rgba(22, 163, 74, 0.25)',
+                  borderRadius: '10px',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  stopVoice();
+                  setStep('rights');
+                }}
+              >
+                <span>পরবর্তী ধাপে যান (ধাপ ৪: পরামর্শ ও ক্লিনিক)</span>
+                <ChevronRight size={20} />
+              </button>
+            ) : (
+              <button
+                className="btn btn-primary"
+                style={{ width: '100%', padding: '13px', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                disabled={isLoading || !textNarrative.trim()}
+                onClick={() => {
+                  stopVoice();
+                  handleSendMessage();
+                }}
+              >
+                {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Send size={16} />}
+                <span>উত্তর জমা দিন</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1770,8 +1834,15 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             </p>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" style={{ padding: '12px 28px', fontSize: '15px' }} onClick={() => { stopVoice(); setStep('referral'); }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+            <button 
+              className="btn btn-outline" 
+              style={{ padding: '12px 20px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }} 
+              onClick={() => { stopVoice(); setStep('follow_up'); }}
+            >
+              <span>← পূর্ববর্তী প্রশ্নোত্তর দেখুন</span>
+            </button>
+            <button className="btn btn-primary" style={{ padding: '12px 28px', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => { stopVoice(); setStep('referral'); }}>
               <span>ক্লিনিক ও আবেদনের খসড়া দেখুন</span> <ChevronRight size={18} />
             </button>
           </div>
@@ -1861,6 +1932,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               setSafetyMessage(null);
               setSessionState(null);
               setChatHistory([]);
+              setIsIntakeCompleted(false);
             }}
           >
             নতুন আরেকটি আবেদন শুরু করুন
