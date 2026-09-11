@@ -2,9 +2,11 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, Response
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi.responses import StreamingResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.orm import Session
 import shutil
 import json
@@ -14,6 +16,7 @@ import edge_tts
 import uuid
 import time
 import re
+from pathlib import Path
 from pydantic import BaseModel
 
 import models
@@ -21,6 +24,23 @@ import schemas
 from database import engine, get_db
 import ai_pipeline
 from middleware import AIPipelineMiddleware, audit_safety_event, audit_llm_error_event, validate_narrative_input
+
+# Production static UI (Cloud Run image copies frontend/dist here)
+STATIC_DIR = Path(os.getenv("STATIC_DIR", str(Path(__file__).resolve().parent / "static")))
+
+
+class StripApiPrefixMiddleware(BaseHTTPMiddleware):
+    """Map /api/* -> /* so the Vite-style frontend paths work without a proxy."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.scope.get("path", "")
+        if path == "/api" or path.startswith("/api/"):
+            new_path = path[4:] or "/"
+            request.scope["path"] = new_path
+            raw = request.scope.get("raw_path")
+            if isinstance(raw, (bytes, bytearray)):
+                request.scope["raw_path"] = new_path.encode("utf-8")
+        return await call_next(request)
 
 # Create database tables and ensure migrations for SQLite
 models.Base.metadata.create_all(bind=engine)
@@ -49,6 +69,7 @@ app = FastAPI(title="Odhikar API — Legal Aid Intake")
 
 # Register AI Pipeline Middleware
 app.add_middleware(AIPipelineMiddleware)
+app.add_middleware(StripApiPrefixMiddleware)
 
 # Enable CORS for React frontend
 app.add_middleware(
@@ -62,6 +83,9 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
+    index = STATIC_DIR / "index.html"
+    if index.is_file():
+        return FileResponse(index)
     return {"message": "Welcome to Odhikar Legal Aid AI API"}
 
 # List all cases for Paralegal Dashboard
@@ -657,3 +681,39 @@ async def get_tts_audio(text: str):
             "Cache-Control": "no-cache"
         }
     )
+
+
+# ---- Production SPA (Cloud Run) ----
+_API_PREFIXES = (
+    "cases",
+    "intake",
+    "tts",
+    "transcribe",
+    "llm",
+    "docs",
+    "openapi.json",
+    "redoc",
+)
+
+if (STATIC_DIR / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str):
+    """Serve built frontend files; fall back to index.html for client routes."""
+    if not STATIC_DIR.is_dir():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    first = full_path.split("/", 1)[0]
+    if first in _API_PREFIXES:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    candidate = STATIC_DIR / full_path
+    if candidate.is_file():
+        return FileResponse(candidate)
+
+    index = STATIC_DIR / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    raise HTTPException(status_code=404, detail="Not found")
