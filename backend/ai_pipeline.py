@@ -16,6 +16,10 @@ from langchain_core.tools import tool
 
 import prompts
 import templates
+from prompt_builder import get_prompt_builder
+
+# Dynamic prompt builder singleton (loads from prompt_config.yaml)
+_pb = get_prompt_builder()
 
 from utils import (
     llm,
@@ -597,201 +601,9 @@ def generate_suggested_replies(
     missing_fields: Optional[List[str]] = None,
     category: Optional[str] = None
 ) -> List[str]:
-    """Generates 3-4 natural, colloquial Bengali suggested quick-replies based on the follow-up question."""
-    q = (question or "").strip()
-    target = (missing_fields[0] if missing_fields and len(missing_fields) > 0 else "").strip()
-
-    # 0a. Desired Solution / Legal Remedy (Court vs Salish)
-    if (
-        target == "desired_solution" or
-        any(w in q for w in ["সালিশের মাধ্যমে", "আদালতে মামলা", "মামলা করতে চান", "আপস চান", "আইনি সমাধান", "আইনি প্রতিকার", "সালিশ চান"]) or
-        (("সালিশ" in q or "আদালত" in q or "মামলা" in q) and ("চান" in q or "প্রতিকার" in q or "সমাধান" in q))
-    ):
-        if category in ("family_dower_maintenance", "dowry"):
-            return [
-                "পারিবারিক আদালতে মামলা করে দেনমোহর ও বকেয়া ভরণপোষণ আদায় করতে চাই",
-                "স্থানীয় ইউনিয়ন পরিষদে চেয়ারম্যান বা মেম্বারের মাধ্যমে শান্তিপূর্ণ সালিশ চাই",
-                "সন্তানের নিয়মিত মাসিক খরচ ও দেনমোহরের বকেয়া টাকা পরিশোধ করতে হবে",
-                "প্রথমে আইনজীবীর মাধ্যমে আইনি নোটিশ পাঠাতে চাই"
-            ]
-        elif category == "land_dispute":
-            return [
-                "দেওয়ানি আদালতে মামলা করে জমির দখল ও স্বত্ব উদ্ধার করতে চাই",
-                "ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল কিন্তু সমাধান হয়নি",
-                "প্রথমে স্থানীয় মুরুব্বিদের মাধ্যমে আপস-মীমাংসার চেষ্টা করতে চাই",
-                "জমিতে যাতে কোনো স্থাপনা না করে সেজন্য আদালতের নিষেধাজ্ঞা চাই"
-            ]
-        elif category == "unpaid_wages":
-            return [
-                "শ্রম আদালতে বা লিগ্যাল এইডে মামলা করে পুরো বকেয়া মজুরি আদায় করতে চাই",
-                "সর্দার বা স্থানীয় মেম্বারের উপস্থিতিতে দেনদরবার করে টাকা পেতে চাই",
-                "মালিকের বিরুদ্ধে থানায় বা শ্রম পরিদপ্তরে লিখিত অভিযোগ দিতে চাই",
-                "কোনো ঝামেলা ছাড়াই বকেয়া টাকা পরিশোধ করে দিলে মিটে যাবে"
-            ]
-        else:
-            return [
-                "আদালতে মামলা করে আইনি প্রতিকার পেতে চাই",
-                "স্থানীয় সালিশে বসে আপস-মীমাংসা করতে চাই",
-                "আইনি নোটিশ পাঠিয়ে সমাধানের সুযোগ দিতে চাই",
-                "লিগ্যাল এইড ক্লিনিকের মাধ্যমে পরামর্শ নিতে চাই"
-            ]
-
-    # 0b. Cause of maintenance / family dispute ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
-    if (
-        ("ভরণপোষণ" in q and ("ঝামেলা" in q or "কেন" in q or "কারণ" in q)) or
-        ("ঝামেলা হয়েছে কেন" in q or "ঝামেলা হয়েছে কেন" in q or "বিরোধের কারণ" in q or "বিরোধের মূল কারণ" in target or target == "cause" and category in ("family_dower_maintenance", "dowry"))
-    ):
-        return [
-            "যৌতুকের দাবিতে ঝগড়া করে খরচ দেওয়া বন্ধ করেছে",
-            "স্বামী দ্বিতীয় বিয়ে করে আমাদের ছেড়ে চলে গেছে",
-            "শ্বশুরবাড়ির অত্যাচার ও বনিবনা না হওয়ায় আলাদা হয়ে গেছে",
-            "বিনা কারণে হঠাৎ ঝগড়া করে বাড়ি থেকে তাড়িয়ে দিয়েছে"
-        ]
-
-    # 1. Kabinnama / Marriage document evidence
-    if (
-        ("কাবিন" in q or "কাবিননামা" in q or "কাবিননামা" in target) or
-        (("দলিল" in q or "কাগজ" in q) and category in ("family_dower_maintenance", "dowry"))
-    ):
-        if any(w in q for w in ["মামলা", "প্রস্তুত", "আদালত"]):
-            return [
-                "হ্যাঁ, কাবিননামা ও প্রয়োজনীয় সব কাগজ আমার কাছে প্রস্তুত আছে",
-                "কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি",
-                "রেজিস্ট্রি হয়েছিল, কাজী অফিসে কাবিনের নকল পাওয়া যাবে",
-                "আমাদের কোনো লিখিত কাবিননামা বা বিয়ের কাগজ নেই"
-            ]
-        return [
-            "কাবিননামার কাগজটি বাবার বাড়িতে রাখা আছে",
-            "কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি",
-            "রেজিস্ট্রি হয়েছিল, কাজী অফিসে কাবিনের নকল পাওয়া যাবে",
-            "আমাদের কোনো লিখিত কাবিননামা বা বিয়ের কাগজ নেই"
-        ]
-
-    # 2. Dower / Dowry / Claim amount
-    if "দেনমোহর" in q or "টাকার পরিমাণ" in target or "টাকা" in q or "দাবি" in q:
-        return [
-            "দেনমোহর ধার্য করা হয়েছিল ১ লাখ টাকা",
-            "দেনমোহর ধার্য করা হয়েছিল ২ লাখ টাকা",
-            "দেনমোহর ধার্য করা হয়েছিল ৫ লাখ টাকা",
-            "কাবিননামার কাগজ দেখে সঠিক টাকার পরিমাণ বলতে পারব"
-        ]
-
-    # 3. Marriage Date / Timeline
-    if ("বিয়ে" in q or "বিয়ে" in q) and ("সন" in q or "কবে" in q or "সাল" in q or "বছর" in q or "তারিখ" in q or "বিয়ের সন" in target or target == "history" and category in ("family_dower_maintenance", "dowry")):
-        return [
-            "আনুমানিক ১ থেকে ২ বছর আগে আমাদের বিয়ে হয়েছে",
-            "আনুমানিক ৪ থেকে ৫ বছর আগে বিয়ে হয়েছিল",
-            "১০ বছরেরও বেশি সময় আগে আমাদের বিয়ে হয়েছে",
-            "সঠিক সন মনে নেই, তবে কয়েক বছর হয়ে গেছে"
-        ]
-
-    # 4. Wages / Unpaid Salary
-    if "মজুরি" in q or "বেতন" in q or "বকেয়া" in target or "বকেয়া" in target or "মজুরির মোট পরিমাণ" in target:
-        return [
-            "১ মাসের পুরো মজুরি বা বেতন বকেয়া রয়েছে",
-            "প্রায় ২ থেকে ৩ মাসের বেতন এখনও বকেয়া আছে",
-            "হিসাব অনুযায়ী প্রায় ৫ থেকে ১০ হাজার টাকা পাওনা আছে",
-            "কাজের চুক্তি অনুযায়ী এখনো পুরো টাকা পরিশোধ করা হয়নি"
-        ]
-
-    # 5. Work Period / Duration
-    if "কতদিন" in q or "কাজের সময়" in target or "কোন সময়" in q:
-        return [
-            "গত ১ মাস ধরে আমি এই কাজটি করেছি",
-            "টানা ৬ মাস ধরে সেখানে নিয়মিত কাজ করেছি",
-            "১ বছরেরও বেশি সময় ধরে সেখানে কাজ করেছি",
-            "১০ থেকে ১৫ দিনের নির্দিষ্ট চুক্তিভিত্তিক কাজ ছিল"
-        ]
-
-    # 6. Work Evidence / Witness / Sardar / Slip
-    if "সাক্ষী" in q or "সর্দার" in q or "স্লিপ" in q or "হাজিরা" in q or "সাক্ষী" in target:
-        return [
-            "কাজের দৈনিক হাজিরা খাতা বা স্লিপের প্রমাণ রয়েছে",
-            "কাজের জায়গায় সহকর্মী ও সর্দার সরাসরি সাক্ষী আছেন",
-            "শুধুমাত্র মৌখিক চুক্তি হয়েছিল, লিখিত কোনো কাগজ নেই",
-            "মালিক ও ঠিকাদারের পূর্ণ নাম এবং ফোন নম্বর জানা আছে"
-        ]
-
-    # 7a. Land Possession & Nature of Dispute
-    if (
-        category == "land_dispute" and 
-        ("দখল" in q or "দখলে" in q or "ওয়ারিশ" in q or "সীমানা" in q or "বেদখল" in q or "দখল" in target or "কারণ" in target or target == "cause")
-    ):
-        return [
-            "জমিটি বর্তমানে আমাদের দখলেই রয়েছে",
-            "প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে",
-            "পৈতৃক ওয়ারিশ ও অংশ বণ্টন নিয়ে বিরোধ চলছে",
-            "জমির সীমানা নির্ধারণ ও বেদখল নিয়ে বিরোধ তৈরি হয়েছে"
-        ]
-
-    # 7b. Land Deeds / Records / Evidence
-    if (
-        (category == "land_dispute" or "জমি" in q) and 
-        ("দলিল" in q or "খতিয়ান" in q or "পর্চা" in q or "কাগজ" in q or "রেজিস্ট্রি" in q or "দলিল" in target or "খতিয়ান" in target or target == "history")
-    ):
-        return [
-            "জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে",
-            "জমির পর্চা ও খতিয়ানের সত্যায়িত কপি আছে",
-            "জমির মূল কাগজপত্র বা দলিল প্রতিপক্ষের দখলে আটকে আছে",
-            "আমাদের কাছে বর্তমানে কোনো বৈধ দলিল বা পর্চা নেই"
-        ]
-
-    # 7c. Land Salish / Opponent / Chairman / Member
-    if (
-        (category == "land_dispute" or "জমি" in q) and 
-        ("সালিশ" in q or "চেয়ারম্যান" in q or "চেয়ারম্যান" in q or "মেম্বার" in q or "প্রতিপক্ষ" in q or "শরিক" in q or "সালিশ" in target or "বিবাদী" in target or "বিরোধ" in target or target in ("impact", "desired_solution"))
-    ):
-        return [
-            "ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল কিন্তু সমাধান হয়নি",
-            "পারিবারিক শরিক ও আত্মীয়দের সাথে জমি নিয়ে বিরোধ",
-            "বাইরের প্রভাবশালী দখলদারদের সাথে বিরোধ",
-            "স্থানীয়ভাবে এখনো কোনো সালিশ বা মীমাংসার বৈঠক হয়নি"
-        ]
-
-    # 7d. General Land Dispute fallback
-    if category == "land_dispute" or "জমি" in q:
-        return [
-            "জমিটি বর্তমানে আমাদের দখলেই রয়েছে",
-            "জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে",
-            "প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে",
-            "স্থানীয়ভাবে এখনো কোনো সালিশ বা মীমাংসার বৈঠক হয়নি"
-        ]
-
-    # 8. Children / Maintenance
-    if "সন্তান" in q or "বাচ্চা" in q or "ভরণপোষণ" in q:
-        return [
-            "হ্যাঁ, আমাদের ১টি সন্তান আছে এবং সে আমার কাছেই থাকে",
-            "হ্যাঁ, আমাদের ২টি সন্তান আছে এবং তাদের দেখাশোনা আমি করছি",
-            "না, আমাদের কোনো সন্তান নেই",
-            "স্বামী সন্তান বা আমার কারও কোনো ভরণপোষণ বা খরচ দেয় না"
-        ]
-
-
-    # 10. Disambiguation
-    if category == "unclassifiable" or "পারিবারিক" in q:
-        return [
-            "পারিবারিক দেনমোহর বা ভরণপোষণ",
-            "বকেয়া মজুরি বা শ্রমিকের পাওনা",
-            "জমিজমা সংক্রান্ত বিরোধ",
-            "যৌতুক ও নির্যাতন সংক্রান্ত"
-        ]
-
-    # 10. Confirmation / Yes-No
-    if "কি না" in q or "কিনা" in q or "আছে কি" in q or "হয়েছে কি" in q or "হয়েছে কি" in q or q.endswith("?"):
-        return [
-            "হ্যাঁ, এই বিষয়ে প্রমাণ ও তথ্য আছে",
-            "না, এই ধরনের কোনো প্রমাণ বা তথ্য নেই",
-            "হ্যাঁ, ঘটনাটি এইভাবেই হয়েছিল",
-            "কিছু অংশ দেওয়া হয়েছিল, তবে পুরোটা এখনো বাকি আছে"
-        ]
-
-    # 11. General fallback
-    return [
-        "হ্যাঁ, এই বিষয়ে প্রয়োজনীয় সব তথ্য আমার কাছে আছে",
-        "কোনো লিখিত প্রমাণ বা কাগজপত্র নেই, সবই মৌখিক",
-        "সব আলোচনা ও চুক্তি মৌখিকভাবে হয়েছিল",
-        "এই পরিস্থিতিতে কীভাবে অগ্রসর হব সেই আইনি পরামর্শ চাই"
-    ]
+    """Generates 3-4 natural, colloquial Bengali suggested quick-replies based on the follow-up question.
+    Now delegates to PromptBuilder which loads replies from prompt_config.yaml."""
+    return _pb.get_suggested_replies(question, missing_fields, category)
 
 def check_uncertainty_or_missing_doc(text: str) -> Tuple[bool, Optional[str]]:
     """Detects if client indicates lack of documents/proof or inability to remember in response to a question."""
@@ -853,148 +665,18 @@ def generate_extra_fallback_question(
     """
     Generates an empathetic extra question and tailored suggested replies
     when client indicates lack of documents or inability to remember.
+    Now delegates to PromptBuilder which loads from prompt_config.yaml.
     """
-    cat = (category or "").lower()
-    prev_q = (previous_question or "").lower()
-
-    # If question was about documents OR client indicated document uncertainty:
-    is_doc_context = (
-        match_type == "document_nei" or 
-        any(w in prev_q for w in ["কাবিন", "কাবিননামা", "দলিল", "কাগজ", "খতিয়ান", "খতিয়ান", "পর্চা", "স্লিপ", "হাজিরা", "রেজিস্ট্রি"])
+    return _pb.get_fallback_question(
+        match_type=match_type,
+        category=category,
+        previous_question=previous_question
     )
-
-    if is_doc_context:
-        if cat in ("family_dower_maintenance", "dowry") or "কাবিন" in prev_q or "বিয়ে" in prev_q or "বিয়ে" in prev_q:
-            question = (
-                "লিখিত কাবিননামা বা কাগজ সাথে না থাকলেও কোনো অসুবিধা নেই, আইন অনুযায়ী আপনার দেনমোহর ও ভরণপোষণের অধিকার সম্পূর্ণ সংরক্ষিত। "
-                "বিয়ের সময় কি কোনো কাজী উপস্থিত ছিলেন, অথবা বিয়ের কোনো প্রত্যক্ষদর্শী সাক্ষী বা কাজী অফিসের এলাকা কি জানা আছে?"
-            )
-            chips = [
-                "কাজী অফিসের নাম ও এলাকা জানা আছে",
-                "বিয়ের প্রত্যক্ষদর্শী সাক্ষী আছেন",
-                "পরিবার ও আত্মীয়রা বিয়েতে ছিলেন",
-                "কোনো কাজী বা সাক্ষী নেই"
-            ]
-            return question, chips
-        elif cat == "unpaid_wages" or "মজুরি" in prev_q or "বেতন" in prev_q or "কাজ" in prev_q:
-            question = (
-                "কাজের লিখিত চুক্তি বা স্লিপ না থাকলেও শ্রম আইন অনুযায়ী আপনি বকেয়া পাওয়ার অধিকারী। "
-                "কাজের জায়গায় কি কোনো সহকর্মী, সর্দার বা স্থানীয় কেউ আছেন যিনি আপনার কাজের সাক্ষী দিতে পারবেন?"
-            )
-            chips = [
-                "সহকর্মী ও সর্দার সাক্ষী আছেন",
-                "গ্রামের মেম্বার ও লোকজন জানেন",
-                "মালিকের নাম ও ফোন নম্বর আছে",
-                "সরাসরি কোনো সাক্ষী নেই"
-            ]
-            return question, chips
-        elif cat == "land_dispute" or "জমি" in prev_q or "দলিল" in prev_q:
-            question = (
-                "জমির মূল দলিল আপনার কাছে সংরক্ষিত না থাকলেও সমস্যা নেই। "
-                "জমিটি কি বর্তমানে আপনাদের দখলে আছে অথবা স্থানীয় ইউনিয়ন মেম্বার বা প্রতিবেশীরা কি দখলের বিষয়ে জানেন?"
-            )
-            chips = [
-                "জমিটি আমাদের দখলে আছে",
-                "খাজনার দাখিলা বা রশিদ আছে",
-                "মেম্বার ও প্রতিবেশীরা জানেন",
-                "কোনো দখল বা কাগজ নেই"
-            ]
-            return question, chips
-        else:
-            question = (
-                "লিখিত কোনো কাগজপত্র না থাকলেও অসুবিধা নেই। "
-                "এই ঘটনার বিষয়ে কি কোনো মৌখিক সাক্ষী বা স্থানীয় মেম্বার/গণ্যমান্য ব্যক্তি অবগত আছেন?"
-            )
-            chips = [
-                "স্থানীয় লোকজন ও মেম্বার জানেন",
-                "পরিবারের সদস্যরা সাক্ষী আছেন",
-                "মৌখিকভাবে সিদ্ধান্ত হয়েছিল",
-                "কোনো মৌখিক সাক্ষী নেই"
-            ]
-            return question, chips
-
-    # Timeline / Date inquiry:
-    if any(w in prev_q for w in ["কবে", "সন", "সাল", "বছর", "তারিখ", "সময়", "কতদিন"]):
-        question = (
-            "নির্দিষ্ট সন বা তারিখ মনে না থাকলেও কোনো সমস্যা নেই। "
-            "আনুমানিক কত বছর আগে ঘটনাটি ঘটেছিল (যেমন ২-৩ বছর নাকি ৫ বছর আগে), অথবা তখনকার কোনো বিশেষ স্মৃতি মনে পড়ে?"
-        )
-        chips = [
-            "আনুমানিক ১ থেকে ২ বছর আগে",
-            "আনুমানিক ৩ থেকে ৫ বছর আগে",
-            "১০ বছরের বেশি সময় আগে",
-            "সঠিক সময় মনে করা যাচ্ছে না"
-        ]
-        return question, chips
-
-    # Explicit money inquiry (ONLY if question specifically asked for money amount):
-    if any(w in prev_q for w in ["কত টাকা", "টাকার পরিমাণ", "দেনমোহর কত", "বেতন কত", "মজুরি কত", "দাবি কত"]):
-        question = (
-            "সঠিক টাকার অঙ্ক নির্দিষ্ট মনে না থাকলেও কোনো চিন্তা করবেন না। "
-            "আনুমানিক বা কাছাকাছি কোনো ধারণা কি আছে (যেমন ৫০ হাজার, ১ লাখ নাকি তার বেশি), অথবা পরিবারের কেউ কি জানেন?"
-        )
-        chips = [
-            "আনুমানিক ৫০ হাজার থেকে ১ লাখ",
-            "আনুমানিক ১ থেকে ২ লাখ টাকা",
-            "পরিবারের মুরব্বিরা সঠিক জানেন",
-            "একদম নির্দিষ্ট মনে নেই"
-        ]
-        return question, chips
-
-    # General memory fallback:
-    question = (
-        "এই তথ্যটি নির্দিষ্টভাবে মনে না থাকলেও কোনো সমস্যা নেই। "
-        "আপনার পরিবারের কেউ, আত্মীয়স্বজন বা কোনো প্রত্যক্ষদর্শী কি এ বিষয়ে প্রয়োজনীয় তথ্য দিয়ে সাহায্য করতে পারবেন?"
-    )
-    chips = [
-        "বাবার বাড়ির লোকজন তথ্য দিতে পারবেন",
-        "স্থানীয় মেম্বার বিষয়টি জানেন",
-        "আত্মীয়রা খোঁজ নিয়ে জানাতে পারবেন",
-        "কারও কাছেই তথ্য নেই"
-    ]
-    return question, chips
 
 def get_stage_fallback_question(category: Optional[str], stage: str, missing_item: Optional[str] = None) -> str:
-    cat = category or "general"
-    if cat == "land_dispute":
-        if stage == "cause":
-            return "জমিটি নিয়ে বিরোধের সূত্রপাত কীভাবে হয়েছিল এবং জমিটি বর্তমানে কার দখলে আছে?"
-        elif stage == "history":
-            if missing_item == "documents_for_court" or (missing_item and any(w in missing_item for w in ["মামলা", "কাগজ", "আদালত"])):
-                return "দেওয়ানি আদালতে মামলা দায়েরের জন্য জমির মূল রেজিস্ট্রি দলিল, পর্চা বা খতিয়ানের কপি কি আপনার কাছে প্রস্তুত আছে?"
-            return "জমির মূল রেজিস্ট্রি দলিল বা খতিয়ান কি আপনাদের কাছে সংরক্ষিত আছে?"
-        elif stage == "impact":
-            return "জমিটি বেদখল বা বিরোধে থাকায় আপনাদের চাষাবাদ বা বসবাস করতে কী ধরণের সমস্যা বা ক্ষতি হচ্ছে?"
-        elif stage == "desired_solution":
-            return "এই জমি নিয়ে ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে কোনো সালিশ হয়েছিল কি, নাকি আপনারা সরাসরি দেওয়ানি আদালতে মামলা করতে চান?"
-        else:
-            return "জমিটির দখল ও বিরোধ সম্পর্কে বিস্তারিত জানালে সঠিক আইনি পরামর্শ দেওয়া সহজ হবে।"
-    elif cat in ("family_dower_maintenance", "dowry"):
-        if stage == "cause":
-            return "আপনার স্বামী যে খরচ বা ভরণপোষণ দেওয়া বন্ধ করেছেন, এই ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন বা কী কারণে উনি আলাদা থাকছেন?"
-        elif stage == "history":
-            if missing_item == "documents_for_court" or (missing_item and any(w in missing_item for w in ["মামলা", "কাগজ", "আদালত"])):
-                return "পারিবারিক আদালতে মামলা দায়েরের জন্য বিয়ের কাবিননামা বা কাজী অফিসের নকল, এবং আপনার ও সন্তানের এনআইডি বা জন্মসনদ প্রয়োজন। এই কাগজপত্রগুলো কি বর্তমানে আপনার কাছে প্রস্তুত আছে?"
-            return "আপনাদের বিয়ে আনুমানিক কত বছর আগে হয়েছিল এবং কাবিননামার কাগজটি কার কাছে আছে?"
-        elif stage == "impact":
-            return "বাচ্চা নিয়ে বর্তমানে বাবার বাড়িতে দিনযাপন করতে আপনার কেমন আর্থিক কষ্ট বা টানাপোড়েন হচ্ছে?"
-        elif stage == "desired_solution":
-            return "কাবিননামা থাকা আপনার দাবির একটি শক্ত ভিত্তি। এখন আপনি কি স্থানীয় ইউনিয়ন পরিষদে সালিশের মাধ্যমে আপস চান, নাকি সরাসরি পারিবারিক আদালতে মামলা করতে চান?"
-        else:
-            return "ভরণপোষণ ও পারিবারিক বিরোধের বিষয়ে বিস্তারিত জানালে সঠিক পথরেখা তৈরি করা সম্ভব হবে।"
-    elif cat == "unpaid_wages":
-        if stage == "cause":
-            return "মালিক বা ঠিকাদার কী কারণে আপনার মজুরি বকেয়া রেখেছেন বা কোনো বিরোধ হয়েছিল কি না?"
-        elif stage == "history":
-            return "আপনি কতদিন সেখানে কাজ করেছেন এবং কাজের দৈনিক হাজিরা খাতা বা স্লিপের কোনো প্রমাণ আছে কি না?"
-        elif stage == "impact":
-            return "বকেয়া মজুরি না পাওয়ায় আপনার পরিবারে কেমন টানাপোড়েন বা সংসার চালাতে কী ধরণের সমস্যা হচ্ছে?"
-        elif stage == "desired_solution":
-            return "আপনি কি সর্দার বা স্থানীয় সালিশে দেনদরবার করতে চান, নাকি শ্রম আদালতে বা লিগ্যাল এইডে আইনি প্রতিকার চান?"
-        else:
-            return "বকেয়া মজুরির বিবরণ জানালে শ্রম অধিকার অনুযায়ী সহায়তার ব্যবস্থা করা যাবে।"
-    else:
-        return f"আপনার সমস্যাটির সুষ্ঠু সমাধানের জন্য একটি বিষয় জানা প্রয়োজন: {missing_item or 'বিরোধের মূল কারণ'} সম্পর্কে কি বিস্তারিত জানাবেন?"
+    """Gets the fallback follow-up question for a given category and stage.
+    Now delegates to PromptBuilder which loads from prompt_config.yaml."""
+    return _pb.get_stage_fallback_question(category, stage, missing_item)
 
 def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     """Identifies missing facts and formulates a dynamic, context-aware follow-up question."""
@@ -1036,35 +718,39 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         if "cause" not in existing_covered:
             existing_covered.append("cause")
 
-    # 2. History & Evidence: requires knowing document possession or local salish (not merely mentioning the word 'কাবিন' or 'বিয়ে')
-    has_evidence_info = any(w in lower_all for w in [
-        "কাবিননামা আছে", "কাবিন আছে", "কাবিননামা বাবার", "কাবিন বাবার", "কাবিননামা স্বামীর",
-        "কাবিন স্বামীর", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে", "কাবিন নেই", "কাবিন নাই", "কাজী অফিসে",
-        "কোথায় আছে মনে পড়ছে না", "কোথায় আছে মনে নাই", "কোথায় আছে জানি না", "মনে পড়ছে না", "মনে পরছে না", "খুঁজে পাচ্ছি না",
-        "কাজী অফিসের এলাকা", "কোনো সাক্ষী নেই", "কোনো কাজী বা সাক্ষী নেই", "সাক্ষী বা কাজী নেই",
-        "দলিল আছে", "দলিল সংরক্ষিত", "দলিল প্রতিপক্ষের", "দলিল নেই", "দলিল নাই", "খতিয়ান আছে",
-        "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "মৌখিক চুক্তি", "সালিশ হয়েছিল", "সালিশ হয়েছে",
+    # 2. History & Evidence: requires knowing actual possession/availability of documents or local salish
+    # (NOT merely saying "বাবার বাড়িতে আছি" in one sentence and "কাবিনে লেখা ছিল" in another!)
+    extracted_ev = state.get("evidence") or ""
+    has_evidence_in_state = bool(extracted_ev and str(extracted_ev).strip().lower() not in ("[অপ্রতিষ্ঠিত]", "null", "", "none"))
+    doc_possession_patterns = [
+        "কাবিননামা আছে", "কাবিননামা নাই", "কাবিননামা নেই", "কাবিন আছে", "কাবিন নাই", "কাবিন নেই",
+        "কাবিননামা আমার", "কাবিন আমার", "কাবিননামা সাথে", "কাবিন সাথে", "কাবিননামা কাছে", "কাবিন কাছে",
+        "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "কাবিন স্বামীর কাছে", "কাবিননামা স্বামীর কাছে", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে",
+        "কাজী অফিস থেকে নকল", "কাজী অফিসের নকল", "কাজী অফিসে যেতে", "নকল তুলতে হবে", "কাজী অফিসের এলাকা",
         "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত", "সব কাগজ আমার কাছে", "সব কাগজপত্র আমার কাছে",
-        "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "নকল তুলতে হবে", "কাজী অফিস থেকে তুলতে",
-        "কাজী অফিস থেকে নকল", "কাগজ বাবার", "কাগজপত্র বাবার", "কাগজ স্বামীর", "কাগজপত্র স্বামীর",
-        "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই", "কোনো লিখিত কাবিননামা", "কোনো লিখিত কাগজ", "কাগজপত্র নেই"
-    ])
+        "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই",
+        "দলিল আছে", "দলিল নেই", "দলিল নাই", "দলিল সংরক্ষিত", "দলিল আমার", "দলিল সাথে", "দলিল প্রতিপক্ষের",
+        "খতিয়ান আছে", "খতিয়ান আছে", "খাজনার দাখিলা", "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "সাক্ষী আছে"
+    ]
+    has_evidence_info = has_evidence_in_state or any(p in lower_all for p in doc_possession_patterns)
     if has_evidence_info:
         if "history" not in existing_covered:
             existing_covered.append("history")
 
     # 3. Impact: current hardship, living condition, or residence
-    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "জমিতে যেতে বাধা"]):
+    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "জমিতে যেতে বাধা", "আলাদা"]):
         if "impact" not in existing_covered:
             existing_covered.append("impact")
 
-    # 4. Desired Solution: specific remedy or legal route confirmed
+    # 4. Desired Solution: specific remedy, action, or seeking advice
     if any(w in lower_all for w in [
         "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
         "সালিশের মাধ্যমে", "শান্তিপূর্ণ মীমাংসা", "সালিশ চাই", "মীমাংসা চাই",
         "আইনি নোটিশ", "আদালতে যাব", "আদালতে যেতে",
         "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়",
-        "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ"
+        "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ",
+        "তালাক", "উকিল", "আইনজীবী", "কি করব", "কী করব", "পরামর্শ চাই", "সমাধান কি", "সমাধান কী", "আইনি ব্যবস্থা", "কী করণীয়", "কি করণীয়"
     ]):
         if "desired_solution" not in existing_covered:
             existing_covered.append("desired_solution")
@@ -1073,30 +759,9 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     if extra_question_asked:
         if "history" not in existing_covered:
             existing_covered.append("history")
-        
-        remaining_stages = [s for s in stages_order if s not in existing_covered]
-        if "desired_solution" in remaining_stages and turn_count < 5:
-            extra_q = get_stage_fallback_question(cat, "desired_solution")
-            extra_chips = generate_suggested_replies(question=extra_q, missing_fields=["desired_solution"], category=cat)
-            return {
-                "is_complete": False,
-                "current_stage": "desired_solution",
-                "stages_covered": existing_covered,
-                "missing_fields": ["desired_solution"],
-                "follow_up_question": extra_q,
-                "suggested_replies": extra_chips,
-                "extra_question_asked": False
-            }
-        else:
-            return {
-                "is_complete": True,
-                "current_stage": "complete",
-                "stages_covered": existing_covered,
-                "missing_fields": [],
-                "follow_up_question": None,
-                "suggested_replies": None,
-                "extra_question_asked": False
-            }
+        # Do not return a hardcoded static question.
+        # Let execution flow to dialogue_llm so it dynamically generates the next question
+        # acknowledging the client's specific answer (e.g. Kazi office details, witnesses) from chat history.
 
     # 3. Check if client's response expresses "mone nei" or "document nei"
     is_uncertain, match_type = check_uncertainty_or_missing_doc(latest_user_text)
@@ -1178,13 +843,13 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     target_stage = remaining_stages[0] if remaining_stages else "complete"
 
     # Enforce thorough intake depth:
-    # If the user reaches completion or selects desired_solution without clarifying essential documents/evidence,
-    # route to 'history' to ask about required documentation before completing!
+    # If the user selected desired_solution (e.g. court lawsuit) or reaches completion
+    # without clarifying essential documents/evidence, route to 'history' to ask about required filing documents!
     if (target_stage == "complete" or "desired_solution" in existing_covered) and not has_evidence_info and turn_count < 6:
         target_stage = "history"
 
-    # If both desired_solution AND essential documentation are covered, complete!
-    if (target_stage == "complete" and turn_count >= 3 and has_evidence_info) or (turn_count >= 4 and "desired_solution" in existing_covered and has_evidence_info) or (turn_count >= 4 and len(existing_covered) >= 4 and has_evidence_info) or (turn_count >= 6):
+    # If all stages are covered (or target_stage is complete) AND essential documentation is covered, complete immediately!
+    if (target_stage == "complete" and has_evidence_info) or (len(existing_covered) >= 5 and has_evidence_info) or ("desired_solution" in existing_covered and has_evidence_info and len(existing_covered) >= 4) or (turn_count >= 6):
         return {
             "is_complete": True,
             "current_stage": "complete",
@@ -1220,11 +885,11 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     if state.get("address"):
         known.append(f"ঠিকানা: {state.get('address')}")
 
-    # Format recent conversation history for deep context
-    recent_history = state.get("chat_history", [])[-6:]
+    # Format full conversation history for deep context (up to last 16 messages / 8 turns)
+    chat_hist = state.get("chat_history", [])[-16:]
     formatted_history = "\n".join([
-        f"{'ক্লায়েন্ট' if m.get('role') == 'user' else 'প্যারালিগ্যাল সহকারী'}: {m.get('content', '')}"
-        for m in recent_history if m.get("content")
+        f"{'👤 ক্লায়েন্ট' if m.get('role') == 'user' else '⚖️ প্যারালিগ্যাল সহকারী'}: {m.get('content', '')}"
+        for m in chat_hist if m.get("content")
     ])
 
     target_stage_bn = stage_bn_map.get(target_stage, target_stage)
@@ -1235,25 +900,24 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         ("user", (
             "মামলার ক্যাটাগরি: {category}\n\n"
             "ক্লায়েন্টের সম্পূর্ণ বিবরণ (Cumulative Story):\n{client_narrative}\n\n"
-            "সাম্প্রতিক কথোপকথন রেকর্ড:\n{chat_history}\n\n"
+            "পূর্ববর্তী সকল কথোপকথন রেকর্ড (Full Chat History):\n{chat_history}\n\n"
             "ইতিমধ্যে প্রতিষ্ঠিত ও সংগৃহীত তথ্যসমূহ:\n{known_facts}\n\n"
             "ইতিমধ্যে সম্পন্ন হওয়া ধাপসমূহ (Covered Stages): {stages_covered_bn}\n"
             "পরবর্তী লক্ষ্য ধাপ (Target Stage): {target_stage} ({target_stage_bn})\n\n"
-            "ক্লায়েন্টের সর্বশেষ উত্তর: {latest_user_text}\n"
+            "ক্লায়েন্টের সর্বশেষ উত্তর (Latest User Reply): {latest_user_text}\n"
             "বর্তমান টার্ন সংখ্যা: {turn_count}\n\n"
             "টাস্ক নির্দেশিকা:\n"
-            "1. Problem → Cause → History → Impact → Desired Solution ধাপসমূহ অনুযায়ী পর্যায়ক্রমে এগোতে হবে।\n"
-            "2. মানবিক সেতুবন্ধন (Empathetic Bridging): ক্লায়েন্টের সর্বশেষ বক্তব্যটি (যেমন 'আমি টাকা চেয়েছিলাম' বা 'কাবিননামা বাবার বাড়িতে আছে') প্রথমে সংক্ষিপ্ত সহানুভূতি ও উপলব্ধির সাথে স্বীকার করুন (যেমন সংসারের খরচের টাকা চাওয়ায় এমন নির্যাতন করা অন্যায়, অথবা কাবিননামা থাকা অধিকার প্রতিষ্ঠার শক্ত প্রমাণ), তারপর বুঝিয়ে বলুন পরবর্তী তথ্যটি আইনত তাদের অধিকার প্রতিষ্ঠায় কীভাবে প্রয়োজন। হুট করে সরাসরি আমলাতান্ত্রিক প্রশ্ন করবেন না।\n"
+            "1. কথোপকথনের গভীর ধারাবাহিকতা (Chat History Continuity): ক্লায়েন্টের পূর্ববর্তী সকল কথোপকথন রেকর্ড মনোযোগ দিয়ে পর্যবেক্ষণ করুন। ক্লায়েন্ট সর্বশেষ উত্তরে বা আগের কোনো উত্তরে যা কিছু উল্লেখ করেছেন (যেমন নির্দিষ্ট পরিমাণ টাকা, স্বামী/বিবাদীর নাম ও আচরণ, সন্তান, বাবার বাড়ির অবস্থান, কাজের মেয়াদ, জমি দখলের ধরন ইত্যাদি), আপনার উত্তরে স্পষ্টভাবে সেই প্রসঙ্গের সহানুভূতিশীল স্বীকৃতি (acknowledgement) দিন।\n"
+            "2. লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) অনুযায়ী পরবর্তী স্বাভাবিক কথ্য বাংলা প্রশ্নটি করুন। পূর্বের কোনো উত্তরের সাথে সরাসরি মিলিয়ে প্রশ্ন করবেন, বিচ্ছিন্ন বা রোবোটিক প্রশ্ন করবেন না।\n"
             "3. ইতিমধ্যে যে ধাপগুলো সম্পন্ন হয়েছে ({stages_covered_bn}) সে বিষয়ে পুনরাবৃত্তিমূলক প্রশ্ন করবেন না।\n"
-            "4. পরবর্তী লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) সম্পর্কে কথ্য বাংলায় একটিমাত্র আন্তরিক ও প্রাসঙ্গিক প্রশ্ন করুন:\n"
-            "   - যদি target_stage='history' হয়:\n"
-            "     * যদি ক্লায়েন্ট ইতিমধ্যে মামলা করার বা সালিশের কথা বলে থাকেন (যেমন 'পারিবারিক আদালতে মামলা করতে চাই' বা 'সালিশ চাই'), তবে সেই প্রতিকার পাওয়ার জন্য প্রয়োজনীয় মৌলিক কাগজপত্র (যেমন পারিবারিক আদালতের জন্য মূল কাবিননামা বা কাজী অফিসের নকল, আবেদনকারী ও সন্তানের এনআইডি/জন্মসনদ) তাঁদের কাছে বর্তমানে প্রস্তুত আছে কি না তা আন্তরিকভাবে জানতে চান।\n"
-            "     * অন্যথায় দেনমোহর/ভরণপোষণের ক্ষেত্রে কাবিননামা কার কাছে আছে জানতে চান; জমির ক্ষেত্রে রেজিস্ট্রি দলিল বা খতিয়ান কার কাছে আছে তা জানতে চান।\n"
-            "   - যদি target_stage='desired_solution' হয়: কাবিন বা নথির তথ্য পেয়ে থাকলে তা অধিকার প্রমাণের জন্য গুরুত্বপূর্ণ উল্লেখ করে ক্লায়েন্ট কী ধরণের আইনি সমাধান বা প্রতিকার চান (যেমন স্থানীয়ভাবে ইউনিয়ন পরিষদে সালিশ বা আপস চান, নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করে দেনমোহর ও বকেয়া খোরপোষ আদায় করতে চান) তা জানতে চান।\n"
-            "   - যদি target_stage='impact' হয়: বিরোধ বা বঞ্চনার ফলে বর্তমানে তিনি ও তাঁর পরিবার কী ধরনের আর্থিক টানাপোড়েন বা সংকটে দিন কাটাচ্ছেন তা জানতে চান।\n"
-            "   - যদি target_stage='cause' হয়: বিরোধের সূত্রপাত বা আলাদা থাকার মূল কারণ কী ছিল তা জানতে চান।\n"
-            "5. এই প্রশ্নের সাথে সরাসরি মানানসই ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) প্রদান করুন।\n"
-            "6. ক্লায়েন্ট যদি প্রয়োজনীয় মৌলিক উত্তরগুলো এখনো সম্পন্ন না করে থাকেন, তবে is_complete=False দিন।"
+            "   - অযাচিত অনুমান নিষেধ: ক্লায়েন্ট যদি শুধু বলেন 'কাবিনে লেখা ছিল দুই লাখ টাকা' বা দেনমোহরের অঙ্ক উল্লেখ করেন, তবে এর অর্থ তিনি দেনমোহরের পরিমাণ জানেন। এর অর্থ এই নয় যে কাবিননামার মূল কাগজটি তাঁর নিজের কাছেই আছে! ক্লায়েন্ট নিজে পরিষ্কারভাবে না বললে কখনোই 'আপনার কাবিননামা যেহেতু আপনার কাছে আছে' বলে ধরে নেবেন না। কাগজটি তাঁর কাছে আছে নাকি স্বামীর কাছে বা কাজী অফিসে তা নিশ্চিত হতে প্রশ্ন করুন।\n"
+            "   - কঠোর সতর্কতা: ক্লায়েন্ট যদি ইতিমধ্যে বলে থাকেন যে কাবিননামা/দলিল তাঁর কাছে বা সাথে আছে (যেমন 'আমার কাবিননামা আমার সাথেই আছে'), তবে কাবিননামা আছে কি না বা কার কাছে আছে তা কোনোভাবেই পুনরায় জিজ্ঞাসা করবেন না! সরাসরি তাদের আইনি সমাধান (আদালতে মামলা নাকি সালিশ) সম্পর্কে প্রশ্ন করুন।\n"
+            "   - যদি target_stage='history' হয়: পূর্ববর্তী উত্তরে কোনো সালিশ বা আদালতের উল্লেখ থাকলে সেই অনুসারে প্রয়োজনীয় কাগজপত্র (কাবিননামা/দলিল/এনআইডি) প্রস্তুত আছে কি না তা প্রাসঙ্গিকভাবে জানতে চান।\n"
+            "   - যদি target_stage='desired_solution' হয়: পূর্বের নথিপত্র ও পরিস্থিতি উল্লেখ করে ক্লায়েন্ট সালিশ চান নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করতে চান তা জানতে চান।\n"
+            "   - যদি target_stage='impact' হয়: ক্লায়েন্টের পারিবারিক সংকট বা বর্তমান বসবাসের কষ্টের বিষয়ে আন্তরিকভাবে জানতে চান।\n"
+            "   - যদি target_stage='cause' হয়: বিরোধ বা আলাদা থাকার মূল কারণ কী ছিল তা পূর্ববর্তী বক্তব্যের সূত্রে জানতে চান।\n"
+            "4. ক্লায়েন্টের সর্বশেষ জবাব ও আপনার করা প্রশ্নের সাথে সরাসরি প্রাসঙ্গিক ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) দিন।\n"
+            "5. ক্লায়েন্ট যদি একটিমাত্র বক্তব্যে সমস্যা, কারণ, কাবিননামা/প্রমাণ এবং করণীয় প্রশ্ন বলে থাকেন এবং প্রয়োজনীয় মৌলিক তথ্য সম্পন্ন হয়ে থাকে, তবে is_complete=True দিন। অন্যথায় is_complete=False দিন।"
         ))
     ])
 
@@ -1289,7 +953,7 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             missing_item = getattr(res, "missing_aspect", None)
             new_facts = getattr(res, "newly_identified_facts", None) or {}
 
-        if is_comp and has_evidence_info and (target_stage == "complete" or (turn_count >= 4 and "desired_solution" in existing_covered)):
+        if is_comp and (has_evidence_info or target_stage == "complete" or "desired_solution" in existing_covered):
             return {
                 "is_complete": True,
                 "current_stage": "complete",
@@ -1306,25 +970,19 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             is_repetitive = True
         
         prev_assistant_questions = [
-            m.get("content", "") for m in state.get("chat_history", [])
+            m.get("content", "").strip() for m in state.get("chat_history", [])
             if m.get("role") == "assistant" and m.get("content") and not m.get("content").startswith("⚠️")
         ]
-        if any(q.strip() == prev_q.strip() or (len(q) > 25 and q[:35] in prev_q) for prev_q in prev_assistant_questions):
-            is_repetitive = True
-        elif target_stage != "cause" and any(w in (q or "") for w in ["সূত্রপাত", "ঝামেলা হয়েছে কেন", "ঝামেলা হয়েছে কেন", "কেন আপনার থেকে আলাদা", "আলাদা থাকছেন এবং", "কোনো বিশেষ কারণ"]):
-            is_repetitive = True
-        elif target_stage == "history" and not any(w in (q or "") for w in ["কাবিন", "কাগজ", "দলিল", "খতিয়ান", "খতিয়ান", "প্রমাণ", "নথি", "সাক্ষী", "রেজিস্ট্রি", "বিয়ে", "বিয়ে", "আদালতের জন্য"]):
-            is_repetitive = True
-        elif target_stage != "history" and any(w in (q or "") for w in ["কাবিননামা কি আপনাদের কাছে", "কাবিননামা কার কাছে", "বিয়ে কবে হয়েছিল", "রেজিস্ট্রি দলিল বা খতিয়ান"]):
-            is_repetitive = True
-        elif target_stage == "desired_solution" and not any(w in (q or "") for w in ["সালিশ", "আদালত", "মামলা", "প্রতিকার", "সমাধান", "মীমাংসা", "আইনি পদক্ষেপ", "পদক্ষেপ"]):
+        # Only fallback if question is empty or an exact duplicate of an already asked assistant question
+        if q and any(q.strip() == prev_q for prev_q in prev_assistant_questions if prev_q):
             is_repetitive = True
 
         if is_repetitive:
             fallback_missing = "documents_for_court" if "desired_solution" in existing_covered else (missing_item or "marriage_documents")
             q = get_stage_fallback_question(cat, target_stage, fallback_missing)
 
-        if not replies or len(replies) == 0 or (target_stage != "cause" and any("দখল করে রেখেছে" in r for r in (replies or []))) or (target_stage == "desired_solution" and not any("আদালত" in r or "সালিশ" in r or "মামলা" in r for r in (replies or []))):
+        # Preserve the LLM's dynamic suggested replies; only fall back to static generator if empty
+        if not replies or len(replies) == 0:
             replies = generate_suggested_replies(
                 question=q,
                 missing_fields=[target_stage],

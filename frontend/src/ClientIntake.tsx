@@ -6,8 +6,9 @@ import {
   MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
   Volume2, VolumeX, FileText, Mic, Square, Radio,
   Shield, Trash2, Copy, Check, Sparkles, Scale, HeartHandshake, MapPin,
-  ChevronDown, ChevronUp, Edit3
+  ChevronDown, ChevronUp, Edit3, Download, Printer, Loader2
 } from 'lucide-react';
+import { downloadDraftPdf, printDraftPdf } from './utils/draftPdfGenerator';
 
 interface IntakeProps {
   onCaseSubmitted: () => void;
@@ -408,7 +409,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [referralInfo, setReferralInfo] = useState<{ clinic: string; slot: string } | null>(null);
   const [caseId, setCaseId] = useState<number | null>(null);
   const [copiedDraft, setCopiedDraft] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [isIntakeCompleted, setIsIntakeCompleted] = useState(false);
+  const [category, setCategory] = useState<string | null>(null);
+  const isOutOfScope = category === 'out_of_scope' || sessionState?.category === 'out_of_scope';
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   // Personal & Aggressor Info State (Collected right before Step 4 to match nearby BRAC clinic)
@@ -439,6 +443,36 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       profileRecognitionRef.current = null;
     }
     setIsListeningProfile(false);
+  };
+
+  const handleStartNewCase = () => {
+    stopVoice();
+    stopProfileVoiceTyping();
+    setStep('welcome');
+    setTextNarrative('');
+    setSafetyMessage(null);
+    setSessionState(null);
+    setCategory(null);
+    setChatHistory([]);
+    setIsIntakeCompleted(false);
+    setFollowUpQuestion(null);
+    setSuggestedReplies([]);
+    setRightsExplanation(null);
+    setDraftComplaint(null);
+    setReferralInfo(null);
+    setCaseId(null);
+    setApplicantName('');
+    setFatherName('');
+    setThana('');
+    setUnionVillage('');
+    setContactNumber('');
+    setIsAnonymous(false);
+    setAggressorName('');
+    setAggressorRelation('স্বামী');
+    setAggressorAddress('');
+    setShowManualForm(false);
+    setProfileVoiceTranscript('');
+    setHasVoiceExtracted(false);
   };
 
   const handleExtractProfileVoice = async (textOverride?: string) => {
@@ -609,7 +643,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         aggressor_address: aggressorAddress.trim() || undefined
       };
 
-      const res = await axios.post('/intake/finalize_profile', payload);
+      const res = await axios.post('/api/intake/finalize_profile', payload);
       if (res.data) {
         if (res.data.referral_clinic) {
           setReferralInfo({
@@ -631,11 +665,12 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
       }
       stopVoice();
-      setStep('rights');
+      // Rights step commented out, route directly to referral
+      setStep('referral');
     } catch (err) {
       console.error('Finalize profile error:', err);
       stopVoice();
-      setStep('rights');
+      setStep('referral');
     } finally {
       setIsFinalizingProfile(false);
     }
@@ -650,6 +685,56 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     navigator.clipboard.writeText(text);
     setCopiedDraft(true);
     setTimeout(() => setCopiedDraft(false), 2500);
+  };
+
+  const handleDownloadDraftPdf = async () => {
+    if (!draftComplaint) return;
+    try {
+      setIsDownloadingPdf(true);
+      const appName = isAnonymous ? '[নাম সংরক্ষিত]' : (applicantName.trim() || sessionState?.applicant_name || '[নাম সংরক্ষিত]');
+      const aggText = aggressorName.trim() 
+        ? `${aggressorName.trim()}${aggressorRelation ? ` (সম্পর্ক: ${aggressorRelation})` : ''}` 
+        : (sessionState?.respondent || '[বিবাদী]');
+      const addr = [unionVillage, thana, zilla, division].filter(Boolean).join(', ') || sessionState?.address || '[ঠিকানা — অপ্রতিষ্ঠিত]';
+
+      await downloadDraftPdf({
+        draftText: draftComplaint,
+        caseId: caseId || sessionState?.case_id,
+        category: sessionState?.category,
+        applicantName: appName,
+        respondent: aggText,
+        address: addr,
+        clinicName: referralInfo?.clinic || sessionState?.referral_clinic,
+        appointmentSlot: referralInfo?.slot || sessionState?.referral_slot,
+        status: safetyMessage ? 'URGENT' : 'New'
+      });
+    } catch (err: any) {
+      console.error('PDF Generation Error:', err);
+      alert('পিডিএফ তৈরিতে সমস্যা হয়েছে: ' + (err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন'));
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  const handlePrintDraft = () => {
+    if (!draftComplaint) return;
+    const appName = isAnonymous ? '[নাম সংরক্ষিত]' : (applicantName.trim() || sessionState?.applicant_name || '[নাম সংরক্ষিত]');
+    const aggText = aggressorName.trim() 
+      ? `${aggressorName.trim()}${aggressorRelation ? ` (সম্পর্ক: ${aggressorRelation})` : ''}` 
+      : (sessionState?.respondent || '[বিবাদী]');
+    const addr = [unionVillage, thana, zilla, division].filter(Boolean).join(', ') || sessionState?.address || '[ঠিকানা — অপ্রতিষ্ঠিত]';
+
+    printDraftPdf({
+      draftText: draftComplaint,
+      caseId: caseId || sessionState?.case_id,
+      category: sessionState?.category,
+      applicantName: appName,
+      respondent: aggText,
+      address: addr,
+      clinicName: referralInfo?.clinic || sessionState?.referral_clinic,
+      appointmentSlot: referralInfo?.slot || sessionState?.referral_slot,
+      status: safetyMessage ? 'URGENT' : 'New'
+    });
   };
 
   // Audio Playback / Voice Output (TTS) State
@@ -920,26 +1005,30 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     };
   }, []);
 
-  const renderVoiceTypingButton = () => (
-    <button
-      type="button"
-      onClick={isListening ? stopVoiceTyping : startVoiceTyping}
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
-        padding: '6px 14px',
-        fontSize: '13px',
-        fontWeight: '600',
-        borderRadius: '20px',
-        border: isListening ? '1px solid #ef4444' : '1px solid #bae6fd',
-        cursor: 'pointer',
-        backgroundColor: isListening ? '#fef2f2' : '#f0f9ff',
-        color: isListening ? '#b91c1c' : '#0284c7',
-        transition: 'all 0.15s ease'
-      }}
-      title={isListening ? 'রেকর্ডিং বন্ধ করুন' : 'মুখে বলে বাংলায় লিখুন'}
-    >
+  const renderVoiceTypingButton = () => {
+    const isGenerating = isLoading || isStreaming;
+    return (
+      <button
+        type="button"
+        disabled={isGenerating}
+        onClick={isListening ? stopVoiceTyping : startVoiceTyping}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '6px 14px',
+          fontSize: '13px',
+          fontWeight: '600',
+          borderRadius: '20px',
+          border: isGenerating ? '1px solid #e2e8f0' : (isListening ? '1px solid #ef4444' : '1px solid #bae6fd'),
+          cursor: isGenerating ? 'not-allowed' : 'pointer',
+          backgroundColor: isGenerating ? '#f8fafc' : (isListening ? '#fef2f2' : '#f0f9ff'),
+          color: isGenerating ? '#94a3b8' : (isListening ? '#b91c1c' : '#0284c7'),
+          opacity: isGenerating ? 0.6 : 1,
+          transition: 'all 0.15s ease'
+        }}
+        title={isListening ? 'রেকর্ডিং বন্ধ করুন' : (isGenerating ? 'অপেক্ষা করুন...' : 'মুখে বলে বাংলায় লিখুন')}
+      >
       {isListening ? (
         <>
           <span className="mic-recording-pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#dc2626', display: 'inline-block' }} />
@@ -953,7 +1042,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </>
       )}
     </button>
-  );
+    );
+  };
 
 
   const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false) => {
@@ -982,6 +1072,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     }
     setTextNarrative('');
     setSuggestedReplies([]);
+    setFollowUpQuestion(null);
 
     // Switch to conversational view immediately so the user sees live activity
     if (step === 'recording') {
@@ -1096,6 +1187,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
 
         setSessionState(finalData.session_state);
+        if (finalData.category) {
+          setCategory(finalData.category);
+        } else if (finalData.session_state?.category) {
+          setCategory(finalData.session_state.category);
+        }
         if (finalData.chat_history && finalData.chat_history.length > 0) {
           setChatHistory(finalData.chat_history);
         }
@@ -1164,6 +1260,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         }
 
         setSessionState(data.session_state);
+        if (data.category) {
+          setCategory(data.category);
+        } else if (data.session_state?.category) {
+          setCategory(data.session_state.category);
+        }
 
         if (data.chat_history && data.chat_history.length > 0) {
           setChatHistory(data.chat_history);
@@ -1292,14 +1393,14 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           <span className="step-label">বিবরণ</span>
         </div>
         <div className={`step-line ${['follow_up', 'continuation', 'rights', 'referral'].includes(step) ? 'active' : ''}`} />
-        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? (isIntakeCompleted ? 'completed' : 'active') : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
-          <div className="step-circle">{['rights', 'referral'].includes(step) || isIntakeCompleted ? <Check size={14} /> : '৩'}</div>
-          <span className="step-label">প্রশ্নোত্তর</span>
+        <div className={`step-item ${['follow_up', 'continuation'].includes(step) ? 'active' : ['rights', 'referral'].includes(step) ? 'completed' : ''}`}>
+          <div className="step-circle">{['rights', 'referral'].includes(step) ? <Check size={14} /> : '৩'}</div>
+          <span className="step-label">{isOutOfScope ? 'আওতাভুক্ত নয়' : (isIntakeCompleted ? 'প্রোফাইল' : 'প্রশ্নোত্তর')}</span>
         </div>
-        <div className={`step-line ${['rights', 'referral'].includes(step) || isIntakeCompleted ? 'active' : ''}`} />
+        <div className={`step-line ${['rights', 'referral'].includes(step) ? 'active' : ''}`} />
         <div className={`step-item ${['rights', 'referral'].includes(step) ? 'active' : ''}`}>
           <div className="step-circle">৪</div>
-          <span className="step-label">পরামর্শ ও ক্লিনিক</span>
+          <span className="step-label">ক্লিনিক ও আবেদন</span>
         </div>
       </div>
 
@@ -1876,17 +1977,198 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
           {/* Active Question Highlight Box OR Completion Notification */}
           {isIntakeCompleted ? (
-            <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                <CheckCircle2 size={18} color="#16a34a" />
-                <span style={{ fontSize: '13px', fontWeight: '800', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  প্রশ্নোত্তর পর্ব সম্পন্ন হয়েছে
-                </span>
+            isOutOfScope ? (
+              <div style={{
+                backgroundColor: '#fffbeb',
+                border: '1.5px solid #fcd34d',
+                borderRadius: '14px',
+                padding: '18px',
+                marginBottom: '18px',
+                boxShadow: '0 2px 8px rgba(245, 158, 11, 0.08)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <AlertTriangle size={20} color="#d97706" />
+                    <span style={{ fontSize: '14px', fontWeight: '800', color: '#b45309', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      আইনি সেবার আওতাভুক্ত নয় (Out of Scope)
+                    </span>
+                  </div>
+                  {rightsExplanation && (
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '12px',
+                        padding: '4px 10px',
+                        backgroundColor: 'white',
+                        borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#d97706',
+                        color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === rightsExplanation ? '#e11d48' : '#b45309'
+                      }}
+                      onClick={() => playVoice(rightsExplanation)}
+                      title="পরামর্শ শুনুন"
+                    >
+                      {isLoadingAudio && currentPlayingText === rightsExplanation ? (
+                        <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                      ) : isPlayingAudio && currentPlayingText === rightsExplanation ? (
+                        <><VolumeX size={14} /> <span>থামান</span></>
+                      ) : (
+                        <><Volume2 size={14} /> <span>পরামর্শ শুনুন</span></>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                <p style={{ margin: '0 0 16px 0', fontSize: '14.5px', color: '#78350f', lineHeight: '1.7', whiteSpace: 'pre-line' }}>
+                  {rightsExplanation || 'আপনার বিষয়টি আমাদের এই মুহূর্তের বিনামূল্যে পারিবারিক ও শ্রম আইনি সহায়তার আওতাভুক্ত নয়। তবে এ বিষয়ে আপনি সাধারণ ডায়েরি (GD) বা থানা এবং নিকটস্থ সরকারি লিগ্যাল এইড অফিসে যোগাযোগ করতে পারেন। প্রয়োজনে জাতীয় হেল্পলাইন ৩৩৩ বা ৯৯৯-এ যোগাযোগ করুন।'}
+                </p>
+
+                {/* Relevant Emergency & Legal Helplines for Out-of-Scope Issues */}
+                <div style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #fde68a',
+                  borderRadius: '10px',
+                  padding: '14px',
+                  marginBottom: '16px'
+                }}>
+                  <div style={{ fontSize: '12.5px', fontWeight: '700', color: '#92400e', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <PhoneCall size={14} /> জরুরি সহায়তা ও জাতীয় হেল্পলাইন নম্বর:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                    <a
+                      href="tel:999"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#991b1b',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <Shield size={18} color="#dc2626" />
+                      <div>
+                        <div>৯৯৯ (জাতীয় জরুরি সেবা)</div>
+                        <div style={{ fontSize: '11px', color: '#7f1d1d', fontWeight: 'normal' }}>পুলিশ, ফায়ার সার্ভিস ও অ্যাম্বুলেন্স</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href="tel:16430"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#eff6ff',
+                        border: '1px solid #bfdbfe',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#1e40af',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <Scale size={18} color="#2563eb" />
+                      <div>
+                        <div>১৬৪৩০ (আইনি সহায়তা)</div>
+                        <div style={{ fontSize: '11px', color: '#1e3a8a', fontWeight: 'normal' }}>সরকারি জাতীয় লিগ্যাল এইড কলসেন্টার</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href="tel:333"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#f0fdf4',
+                        border: '1px solid #bbf7d0',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#166534',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <PhoneCall size={18} color="#16a34a" />
+                      <div>
+                        <div>৩৩৩ (সরকারি সেবা কলসেন্টার)</div>
+                        <div style={{ fontSize: '11px', color: '#14532d', fontWeight: 'normal' }}>সরকারি সেবা ও পরামর্শ</div>
+                      </div>
+                    </a>
+
+                    <a
+                      href="tel:109"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px 12px',
+                        backgroundColor: '#faf5ff',
+                        border: '1px solid #e9d5ff',
+                        borderRadius: '8px',
+                        textDecoration: 'none',
+                        color: '#6b21a8',
+                        fontSize: '13px',
+                        fontWeight: '600'
+                      }}
+                    >
+                      <HeartHandshake size={18} color="#9333ea" />
+                      <div>
+                        <div>১০৯ (নারী ও শিশু নির্যাতন)</div>
+                        <div style={{ fontSize: '11px', color: '#581c87', fontWeight: 'normal' }}>সহায়তা ও প্রতিরোধ হেল্পলাইন</div>
+                      </div>
+                    </a>
+                  </div>
+                </div>
+
+                {/* Reset / Start New Intake Button */}
+                <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      backgroundColor: '#d97706',
+                      borderColor: '#b45309',
+                      padding: '10px 20px',
+                      fontSize: '14px',
+                      fontWeight: '700',
+                      borderRadius: '8px',
+                      boxShadow: '0 2px 6px rgba(217, 119, 6, 0.25)',
+                      cursor: 'pointer'
+                    }}
+                    onClick={handleStartNewCase}
+                  >
+                    <RefreshCw size={15} />
+                    <span>নতুন আরেকটি আইনি আবেদন শুরু করুন</span>
+                  </button>
+                </div>
               </div>
-              <p style={{ margin: 0, fontSize: '14.5px', color: '#166534', lineHeight: '1.6' }}>
-                আপনার বিবরণ ও সকল প্রশ্নের উত্তর সফলভাবে সংরক্ষিত হয়েছে। এখন আপনার এলাকা অনুযায়ী <strong>নিকটস্থ ব্র্যাক লিগ্যাল এইড ক্লিনিক</strong> খুঁজে বের করতে এবং আপনার নামে সঠিক <strong>অভিযোগপত্র (Draft Complaint)</strong> তৈরি করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য দিন:
-              </p>
-            </div>
+            ) : (
+              <div style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <CheckCircle2 size={18} color="#16a34a" />
+                  <span style={{ fontSize: '13px', fontWeight: '800', color: '#15803d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    প্রশ্নোত্তর পর্ব সম্পন্ন হয়েছে
+                  </span>
+                </div>
+                <p style={{ margin: 0, fontSize: '14.5px', color: '#166534', lineHeight: '1.6' }}>
+                  আপনার বিবরণ ও সকল প্রশ্নের উত্তর সফলভাবে সংরক্ষিত হয়েছে। এখন আপনার এলাকা অনুযায়ী <strong>নিকটস্থ ব্র্যাক লিগ্যাল এইড ক্লিনিক</strong> খুঁজে বের করতে এবং আপনার নামে সঠিক <strong>অভিযোগপত্র (Draft Complaint)</strong> তৈরি করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য দিন:
+                </p>
+              </div>
+            )
           ) : (
             <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
@@ -1927,7 +2209,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           )}
 
           {/* VOICE-FIRST PROFILE & AGGRESSOR DETAILS ASSISTANT (Right Before Step 4) */}
-          {isIntakeCompleted && (
+          {isIntakeCompleted && !isOutOfScope && (
             <div style={{
               backgroundColor: '#ffffff',
               border: '2px solid #0284c7',
@@ -2382,6 +2664,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
               {/* Quick Answer Shortcut Chips */}
               {(() => {
+                const isGenerating = isLoading || isStreaming;
                 const activeQuestion = followUpQuestion || 
                   (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
                      ? chatHistory[chatHistory.length - 1].content 
@@ -2391,7 +2674,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
                 return (
                   <div className="quick-chips-wrapper">
-                    <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                    <span style={{ fontSize: '11px', color: isGenerating ? '#94a3b8' : '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
                       সহায়ক উত্তর:
                     </span>
                     {chips.map((chip, idx) => {
@@ -2400,9 +2683,25 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                         <button
                           key={idx}
                           type="button"
+                          disabled={isGenerating}
                           className={`quick-chip ${isSelected ? 'active' : ''}`}
-                          onClick={() => setTextNarrative(chip.text)}
-                          title={chip.text}
+                          onClick={() => {
+                            if (!isGenerating) {
+                              setTextNarrative(chip.text);
+                            }
+                          }}
+                          title={isGenerating ? 'উত্তর প্রস্তুত হওয়া পর্যন্ত অপেক্ষা করুন' : chip.text}
+                          style={
+                            isGenerating
+                              ? {
+                                  opacity: 0.45,
+                                  cursor: 'not-allowed',
+                                  backgroundColor: '#f1f5f9',
+                                  borderColor: '#e2e8f0',
+                                  color: '#94a3b8'
+                                }
+                              : undefined
+                          }
                         >
                           {chip.label}
                         </button>
@@ -2417,77 +2716,80 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           {/* Action Button: Changes to 'Confirm Profile & View Step 4' when questionnaires are completed */}
           <div style={{ marginTop: '14px' }}>
             {isIntakeCompleted ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <button
-                  className="btn btn-primary"
-                  disabled={isFinalizingProfile}
-                  style={{
-                    width: '100%',
-                    padding: '14px 24px',
-                    fontSize: '16px',
-                    fontWeight: '700',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '10px',
-                    backgroundColor: '#16a34a',
-                    borderColor: '#15803d',
-                    boxShadow: '0 4px 14px rgba(22, 163, 74, 0.25)',
-                    borderRadius: '10px',
-                    cursor: isFinalizingProfile ? 'not-allowed' : 'pointer'
-                  }}
-                  onClick={handleFinalizeProfile}
-                >
-                  {isFinalizingProfile ? (
-                    <>
-                      <RefreshCw className="animate-spin" size={18} />
-                      <span>নিকটস্থ ব্র্যাক কেন্দ্র ও অভিযোগপত্র প্রস্তুত হচ্ছে...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>নিকটস্থ ব্র্যাক কেন্দ্র নিশ্চিত করুন ও আইনি পরামর্শ দেখুন (ধাপ ৪)</span>
-                      <ChevronRight size={20} />
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    stopVoice();
-                    setStep('rights');
-                  }}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#64748b',
-                    fontSize: '13px',
-                    cursor: 'pointer',
-                    padding: '6px',
-                    textDecoration: 'underline'
-                  }}
-                >
-                  তথ্য পূরণ ছাড়াই সরাসরি এগিয়ে যান (Skip to Step 4)
-                </button>
-              </div>
+              !isOutOfScope ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <button
+                    className="btn btn-primary"
+                    disabled={isFinalizingProfile}
+                    style={{
+                      width: '100%',
+                      padding: '14px 24px',
+                      fontSize: '16px',
+                      fontWeight: '700',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '10px',
+                      backgroundColor: '#16a34a',
+                      borderColor: '#15803d',
+                      boxShadow: '0 4px 14px rgba(22, 163, 74, 0.25)',
+                      borderRadius: '10px',
+                      cursor: isFinalizingProfile ? 'not-allowed' : 'pointer'
+                    }}
+                    onClick={handleFinalizeProfile}
+                  >
+                    {isFinalizingProfile ? (
+                      <>
+                        <RefreshCw className="animate-spin" size={18} />
+                        <span>নিকটস্থ ব্র্যাক কেন্দ্র ও অভিযোগপত্র প্রস্তুত হচ্ছে...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>নিকটস্থ ব্র্যাক কেন্দ্র ও অভিযোগপত্র দেখুন (ধাপ ৪)</span>
+                        <ChevronRight size={20} />
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopVoice();
+                      setStep('referral');
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#64748b',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      padding: '6px',
+                      textDecoration: 'underline'
+                    }}
+                  >
+                    তথ্য পূরণ ছাড়াই সরাসরি এগিয়ে যান (Skip to Step 4)
+                  </button>
+                </div>
+              ) : null
             ) : (
               <button
                 className="btn btn-primary"
                 style={{ width: '100%', padding: '13px', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                disabled={isLoading || !textNarrative.trim()}
+                disabled={isLoading || isStreaming || !textNarrative.trim()}
                 onClick={() => {
                   stopVoice();
                   handleSendMessage();
                 }}
               >
-                {isLoading ? <RefreshCw className="animate-spin" size={18} /> : <Send size={16} />}
-                <span>উত্তর জমা দিন</span>
+                {isLoading || isStreaming ? <RefreshCw className="animate-spin" size={18} /> : <Send size={16} />}
+                <span>{isLoading || isStreaming ? 'তথ্য তৈরি হচ্ছে...' : 'উত্তর জমা দিন'}</span>
               </button>
             )}
           </div>
         </div>
       )}
 
-      {/* SCREEN 4: YOUR RIGHTS */}
+      {/* SCREEN 4: YOUR RIGHTS (Commented out per user request) */}
+      {/*
       {step === 'rights' && (
         <div className="card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
@@ -2547,6 +2849,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           </div>
         </div>
       )}
+      */}
 
       {/* SCREEN 5: REFERRAL & DRAFT COMPLAINT */}
       {step === 'referral' && (
@@ -2592,50 +2895,102 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           </div>
 
           {/* Draft Complaint Preview */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: 0 }}>
-              প্রাথমিক অভিযোগের খসড়া (Draft First Complaint):
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#1e293b', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <FileText size={18} color="#d92d20" />
+              <span>প্রাথমিক অভিযোগের খসড়া (Draft First Complaint):</span>
             </h3>
             {draftComplaint && (
-              <button
-                onClick={() => handleCopyDraft(draftComplaint)}
-                style={{
-                  background: 'none',
-                  border: '1px solid #cbd5e1',
-                  borderRadius: '6px',
-                  padding: '4px 10px',
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  color: copiedDraft ? '#16a34a' : '#475569'
-                }}
-              >
-                {copiedDraft ? <Check size={13} /> : <Copy size={13} />}
-                <span>{copiedDraft ? 'কপি হয়েছে!' : 'খসড়া কপি করুন'}</span>
-              </button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleDownloadDraftPdf}
+                  disabled={isDownloadingPdf}
+                  style={{
+                    backgroundColor: '#d92d20',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '6px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: isDownloadingPdf ? 'wait' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 2px 4px rgba(217, 45, 32, 0.25)',
+                    transition: 'all 0.2s'
+                  }}
+                  title="অফিসিয়াল ফরম্যাটে অভিযোগপত্রের খসড়া PDF ডাউনলোড করুন"
+                >
+                  {isDownloadingPdf ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />}
+                  <span>{isDownloadingPdf ? 'পিডিএফ তৈরি হচ্ছে...' : 'PDF ডাউনলোড'}</span>
+                </button>
+
+                <button
+                  onClick={handlePrintDraft}
+                  style={{
+                    backgroundColor: '#f8fafc',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    color: '#334155'
+                  }}
+                  title="প্রিন্ট প্রিভিউ দেখুন অথবা প্রিন্ট করুন"
+                >
+                  <Printer size={13} />
+                  <span>প্রিন্ট</span>
+                </button>
+
+                <button
+                  onClick={() => handleCopyDraft(draftComplaint)}
+                  style={{
+                    background: 'none',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: '6px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    color: copiedDraft ? '#16a34a' : '#475569'
+                  }}
+                  title="খসড়ার টেক্সট ক্লিপবোর্ডে কপি করুন"
+                >
+                  {copiedDraft ? <Check size={13} /> : <Copy size={13} />}
+                  <span>{copiedDraft ? 'কপি হয়েছে!' : 'খসড়া কপি'}</span>
+                </button>
+              </div>
             )}
           </div>
           <div style={{ backgroundColor: '#f8fafc', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '13px', whiteSpace: 'pre-line', color: '#334155', maxHeight: '220px', overflowY: 'auto', marginBottom: '24px', lineHeight: '1.7', fontFamily: 'monospace' }}>
             {draftComplaint}
           </div>
 
-          <button 
-            className="btn btn-primary" 
-            style={{ width: '100%', padding: '14px', fontSize: '16px' }}
-            onClick={() => {
-              stopVoice();
-              setStep('welcome');
-              setTextNarrative('');
-              setSafetyMessage(null);
-              setSessionState(null);
-              setChatHistory([]);
-              setIsIntakeCompleted(false);
-            }}
-          >
-            নতুন আরেকটি আবেদন শুরু করুন
-          </button>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <button 
+              type="button"
+              className="btn btn-outline" 
+              style={{ flex: 1, padding: '13px', fontSize: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} 
+              onClick={() => { stopVoice(); setStep('follow_up'); }}
+            >
+              <span>← পূর্ববর্তী প্রশ্নোত্তর ও তথ্য দেখুন</span>
+            </button>
+            <button 
+              type="button"
+              className="btn btn-primary" 
+              style={{ flex: 1.5, padding: '13px', fontSize: '15px' }}
+              onClick={handleStartNewCase}
+            >
+              নতুন আরেকটি আবেদন শুরু করুন
+            </button>
+          </div>
         </div>
       )}
     </div>

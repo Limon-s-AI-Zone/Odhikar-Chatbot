@@ -315,6 +315,21 @@ body {
   box-shadow: 0 2px 5px rgba(2, 132, 199, 0.25);
 }
 
+.quick-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+  box-shadow: none;
+}
+
+.quick-chip:disabled:hover {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+}
+
 /* Buttons */
 .btn {
   font-family: inherit;
