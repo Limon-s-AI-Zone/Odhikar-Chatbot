@@ -19,7 +19,7 @@ from pydantic import BaseModel
 import models
 import schemas
 from database import engine, get_db
-import ai_pipeline
+import agent as ai_pipeline
 from middleware import AIPipelineMiddleware, audit_safety_event, audit_llm_error_event, validate_narrative_input
 
 # Create database tables and ensure migrations for SQLite
@@ -465,7 +465,7 @@ def finalize_profile(req: schemas.FinalizeProfileRequest, db: Session = Depends(
         "evidence": state_dict.get("evidence") or "[অপ্রতিষ্ঠিত]"
     }
 
-    import templates
+    from agent import templates
     draft = templates.generate_draft_complaint(category, facts)
 
     # 6. Synthesize personalized rights explanation

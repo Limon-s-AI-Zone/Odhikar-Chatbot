@@ -7,7 +7,10 @@ The module-level constants below are backward-compatible aliases so existing cod
 (e.g. `prompts.CLASSIFICATION_SYSTEM_PROMPT`) continues to work without changes.
 """
 
-from prompt_builder import get_prompt_builder
+try:
+    from .prompt_builder import get_prompt_builder
+except ImportError:
+    from prompt_builder import get_prompt_builder
 
 _pb = get_prompt_builder()
 

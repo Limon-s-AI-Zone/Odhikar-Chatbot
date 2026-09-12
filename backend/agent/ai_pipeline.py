@@ -14,9 +14,14 @@ from langgraph.graph import StateGraph, END
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 
-import prompts
-import templates
-from prompt_builder import get_prompt_builder
+try:
+    from . import prompts
+    from . import templates
+    from .prompt_builder import get_prompt_builder
+except ImportError:
+    import prompts
+    import templates
+    from prompt_builder import get_prompt_builder
 
 # Dynamic prompt builder singleton (loads from prompt_config.yaml)
 _pb = get_prompt_builder()

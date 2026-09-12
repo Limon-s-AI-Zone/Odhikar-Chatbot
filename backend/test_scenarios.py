@@ -2,7 +2,7 @@ import sys
 import os
 sys.stdout.reconfigure(encoding='utf-8')
 
-import ai_pipeline
+from agent import ai_pipeline
 
 def test_n1_baseline():
     print("\n" + "="*50)
