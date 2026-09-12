@@ -427,6 +427,69 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const isOutOfScope = category === 'out_of_scope' || sessionState?.category === 'out_of_scope';
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
+  // Multi-Model Selection State (Gemini 2.5 to latest, and Local Llama)
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem('odhikar_selected_model') || 'gemini-2.5-flash';
+  });
+  // Thinking Level Selection State (Reasoning budget for Gemini models: off, low, medium, high)
+  const [thinkingLevel, setThinkingLevel] = useState<string>(() => {
+    return localStorage.getItem('odhikar_thinking_level') || 'medium';
+  });
+  const [availableModels, setAvailableModels] = useState<any[]>([
+    { id: 'gemini-2.5-flash', name: 'Google Gemini 2.5 Flash', badge: 'Gemini 2.5 Flash (Latest)', is_local: false },
+    { id: 'gemini-2.5-flash-lite', name: 'Google Gemini 2.5 Flash-Lite', badge: 'Gemini 2.5 Flash-Lite', is_local: false },
+    { id: 'gemini-3.7-flash', name: 'Google Gemini 3.7 Flash', badge: 'Gemini 3.7 Flash (Hybrid Thinking)', is_local: false },
+    { id: 'gemini-3.8-flash', name: 'Google Gemini 3.8 Flash', badge: 'Gemini 3.8 Flash (Next-Gen)', is_local: false },
+    { id: 'gemini-3.1-pro', name: 'Google Gemini 3.1 Pro', badge: 'Gemini 3.1 Pro (Flagship Thinking)', is_local: false },
+    { id: 'gemini-2.5-pro', name: 'Google Gemini 2.5 Pro', badge: 'Gemini 2.5 Pro', is_local: false },
+    { id: 'gemini-2.0-flash', name: 'Google Gemini 2.0 Flash', badge: 'Gemini 2.0 Flash', is_local: false },
+    { id: 'local-llama', name: 'Meta Llama 3.1 (Local Ollama)', badge: 'Local Llama 3.1', is_local: true }
+  ]);
+  const [ollamaStatus, setOllamaStatus] = useState<{ online: boolean; models: string[]; has_llama: boolean; recommended_command?: string } | null>(null);
+
+  const fetchAvailableModels = async () => {
+    try {
+      const res = await axios.get('/api/llm/models');
+      if (res.data?.models) {
+        setAvailableModels(res.data.models);
+      }
+      if (res.data?.ollama_status) {
+        setOllamaStatus(res.data.ollama_status);
+      }
+      if (res.data?.default_thinking_level && !localStorage.getItem('odhikar_thinking_level')) {
+        setThinkingLevel(res.data.default_thinking_level);
+      }
+    } catch (e) {
+      console.warn('Could not fetch model list:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchAvailableModels();
+  }, []);
+
+  const handleModelChange = (newModelId: string) => {
+    setSelectedModel(newModelId);
+    localStorage.setItem('odhikar_selected_model', newModelId);
+    if (newModelId === 'local-llama' && ollamaStatus && !ollamaStatus.online) {
+      setLlmError({
+        title: 'লোকাল Llama অফলাইন (Ollama Not Running)',
+        message: 'লোকাল Llama ব্যবহারের জন্য আপনার কম্পিউটারে Ollama চালু থাকতে হবে। টার্মিনালে চালান: ollama run llama3.1',
+        errorType: 'connection_error',
+        troubleshooting: [
+          "টার্মিনালে 'ollama serve' অথবা 'ollama run llama3.1' চালান।",
+          "http://localhost:11434 এ সার্ভিসটি সচল আছে কি না পরীক্ষা করুন।",
+          "অথবা ড্রপডাউন থেকে 'Google Gemini 2.5 Flash' ক্লাউড মডেল নির্বাচন করুন।"
+        ]
+      });
+    }
+  };
+
+  const handleThinkingChange = (newLevel: string) => {
+    setThinkingLevel(newLevel);
+    localStorage.setItem('odhikar_thinking_level', newLevel);
+  };
+
   // Personal & Aggressor Info State (Collected right before Step 4 to match nearby BRAC clinic)
   const [applicantName, setApplicantName] = useState('');
   const [fatherName, setFatherName] = useState('');
@@ -1206,7 +1269,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           transcript: message || "",
           existing_state: sessionState,
           is_continuation: isContinuation,
-          is_summarized: isSummarized
+          is_summarized: isSummarized,
+          selected_model: selectedModel,
+          thinking_level: thinkingLevel
         })
       });
 
@@ -1375,7 +1440,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           transcript: message || "",
           existing_state: sessionState,
           is_continuation: isContinuation,
-          is_summarized: isSummarized
+          is_summarized: isSummarized,
+          selected_model: selectedModel,
+          thinking_level: thinkingLevel
         });
 
         const data = fallbackRes.data;
@@ -1536,6 +1603,73 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
   return (
     <div style={{ maxWidth: '680px', margin: '0 auto' }}>
+      {/* AI ENGINE SELECTOR BAR */}
+      <div className="model-selector-bar">
+        <div className="model-selector-left">
+          <div className="model-tag-icon">
+            <Sparkles size={14} color="#0284c7" />
+          </div>
+          <span className="model-bar-title">এআই ইঞ্জিন:</span>
+          <div className="model-select-wrapper">
+            <select
+              value={selectedModel}
+              onChange={(e) => handleModelChange(e.target.value)}
+              className="model-select-dropdown"
+              title="এআই মডেল নির্বাচন করুন"
+            >
+              <optgroup label="🌐 Google Gemini (Cloud AI)">
+                <option value="gemini-2.5-flash">✨ Google Gemini 2.5 Flash (Latest · দ্রুততম)</option>
+                <option value="gemini-2.5-flash-lite">⚡ Google Gemini 2.5 Flash-Lite (অতি দ্রুত ও সাশ্রয়ী)</option>
+                <option value="gemini-3.7-flash">🧠 Google Gemini 3.7 Flash (Hybrid Thinking · চিন্তাশীল)</option>
+                <option value="gemini-3.8-flash">🔮 Google Gemini 3.8 Flash (Next-Gen · উন্নত চিন্তা)</option>
+                <option value="gemini-3.1-pro">🚀 Google Gemini 3.1 Pro (Flagship Thinking · গভীরতম যুক্তি)</option>
+                <option value="gemini-2.5-pro">🏛️ Google Gemini 2.5 Pro (জটিল আইনি বিশ্লেষণ)</option>
+                <option value="gemini-2.0-flash">💨 Google Gemini 2.0 Flash (লো-লেটেন্সি)</option>
+              </optgroup>
+              <optgroup label="🔒 Meta Llama (Local / Offline Deployment)">
+                <option value="local-llama">
+                  🦙 Meta Llama 3.1 Local (Ollama — ১০০% অফলাইন ও নিরাপদ)
+                </option>
+              </optgroup>
+            </select>
+          </div>
+
+          {selectedModel !== 'local-llama' && selectedModel !== 'gemini-2.0-flash' && (
+            <div className="thinking-selector-wrapper" title="থিংকিং লেভেল (Thinking Effort / Reasoning Budget)">
+              <span className="thinking-icon" title="চিন্তার বাজেট">🧠</span>
+              <select
+                value={thinkingLevel}
+                onChange={(e) => handleThinkingChange(e.target.value)}
+                className="thinking-select-dropdown"
+                title="মডেলের চিন্তার স্তর নির্বাচন করুন (Thinking Level)"
+              >
+                <option value="off">Off (তাৎক্ষণিক · ০ টোকেন)</option>
+                <option value="low">Low (সংক্ষিপ্ত · ১K)</option>
+                <option value="medium">Medium (ভারসাম্য · ২K)</option>
+                <option value="high">Deep (গভীর চিন্তা · ৪K)</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="model-selector-right">
+          {selectedModel === 'local-llama' ? (
+            <span
+              className={`model-badge-status ${ollamaStatus?.online ? 'badge-local-online' : 'badge-local-offline'}`}
+              title={ollamaStatus?.online ? "Ollama লোকাল সার্ভার সক্রিয় আছে" : "Ollama সার্ভার চালু নেই। টার্মিনালে চালান: ollama run llama3.1"}
+            >
+              <span className={`status-indicator-dot ${ollamaStatus?.online ? 'dot-online' : 'dot-offline'}`} />
+              {ollamaStatus?.online ? 'লোকাল সক্রিয় (অফলাইন)' : 'Ollama অফলাইন'}
+            </span>
+          ) : (
+            <span className="model-badge-status badge-cloud" title="গুগল ক্লাউড এআই ইঞ্জিন সক্রিয়">
+              <span className="status-indicator-dot dot-cloud" />
+              Google Cloud AI
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* STEP PROGRESS WIZARD */}
       <div className="stepper-container">
         <div className={`step-item ${step === 'welcome' ? 'active' : 'completed'}`}>

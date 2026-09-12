@@ -28,6 +28,9 @@ _pb = get_prompt_builder()
 
 from utils import (
     llm,
+    get_llm_for_model,
+    MODEL_REGISTRY,
+    check_local_ollama_status,
     OPENROUTER_API_KEY,
     MODEL_NAME,
     TOKEN_BUDGET_LIMIT,
@@ -285,10 +288,39 @@ class IntakeDialogueOutput(BaseModel):
         description="Any newly extracted case facts (e.g. respondent, marriage_date, dower_amount, current_status, evidence, children, unpaid_wages_claim, address)"
     )
 
-dialogue_llm = llm.with_structured_output(IntakeDialogueOutput)
+# LLM Bundle Cache for dynamic model switching (Gemini 2.5 to latest, and Local Llama)
+_bundle_cache: Dict[str, Dict[str, Any]] = {}
+
+def get_model_bundle(model_id: Optional[str] = None, thinking_level: Optional[str] = None) -> Dict[str, Any]:
+    """Dynamically returns a cached bundle containing base LLM, structured outputs, and tool-bound LLMs."""
+    target_id = model_id or "gemini-2.5-flash"
+    lvl = (thinking_level or "medium").lower()
+    cache_key = f"{target_id}::{lvl}"
+    if cache_key in _bundle_cache:
+        return _bundle_cache[cache_key]
+
+    target_llm = get_llm_for_model(target_id, thinking_level=lvl)
+    bundle = {
+        "llm": target_llm,
+        "classification_llm": target_llm.with_structured_output(ClassificationOutput),
+        "extraction_llm": target_llm.with_structured_output(ExtractedFactsOutput),
+        "dialogue_llm": target_llm.with_structured_output(IntakeDialogueOutput),
+        "clinic_tool_llm": target_llm.bind_tools([find_nearby_legal_aid_center])
+    }
+    _bundle_cache[cache_key] = bundle
+    return bundle
+
+# Default legacy singleton aliases for backward compatibility with external imports
+_default_bundle = get_model_bundle("gemini-2.5-flash")
+clinic_tool_llm = _default_bundle["clinic_tool_llm"]
+classification_llm = _default_bundle["classification_llm"]
+extraction_llm = _default_bundle["extraction_llm"]
+dialogue_llm = _default_bundle["dialogue_llm"]
 
 # LangGraph State Schema
 class IntakeState(TypedDict):
+    selected_model: Optional[str]
+    thinking_level: Optional[str]
     audio_path: Optional[str]
     transcript: str
     client_own_words: str
@@ -506,7 +538,8 @@ def safety_check_node(state: IntakeState) -> Dict[str, Any]:
         ("user", "{text}")
     ])
     try:
-        res = llm.invoke(prompt.format_messages(text=text_to_eval))
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["llm"].invoke(prompt.format_messages(text=text_to_eval))
         is_danger = ("DANGER" in res.content.upper()) or prev_safety_flag
         return {
             "safety_flag": is_danger,
@@ -557,11 +590,37 @@ def classification_node(state: IntakeState) -> Dict[str, Any]:
     """Classifies category and checks confidence."""
     if state.get("llm_error"):
         return {}
+
+    # If category is already established in a previous turn with high confidence, retain it
+    existing_cat = state.get("category")
+    existing_conf = state.get("confidence") or 0
+    if existing_cat and existing_cat != "unclassifiable" and existing_conf >= 65 and state.get("turn_count", 1) > 1:
+        return {
+            "category": existing_cat,
+            "confidence": existing_conf,
+            "classification_reason": state.get("classification_reason") or "পূর্ববর্তী ধাপে নির্ধারিত বিষয় অপরিবর্তিত রাখা হলো",
+            "disambiguation_needed": False
+        }
+
     text_to_eval = state.get("client_own_words") or state.get("transcript", "")
     latest_transcript = (state.get("transcript") or "").strip().lower()
     lower_eval = text_to_eval.strip().lower()
 
-    # Fast-path keyword shortcut for land dispute selection (e.g. from disambiguation chips or direct submission)
+    # Fast-path keyword shortcut for category selection (e.g. from disambiguation chips or direct submission)
+    if any(k in latest_transcript for k in ["পারিবারিক দেনমোহর বা ভরণপোষণ", "দেনমোহর বা ভরণপোষণ", "ভরণপোষণ", "পারিবারিক দেনমোহর", "দেনমোহর"]):
+        return {
+            "category": "family_dower_maintenance",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর দেনমোহর/ভরণপোষণ বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
+    if any(k in latest_transcript for k in ["বকেয়া মজুরি বা শ্রমিকের পাওনা", "বকেয়া মজুরি", "শ্রমিকের পাওনা", "মজুরি পাওনা"]):
+        return {
+            "category": "unpaid_wages",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর বকেয়া মজুরি বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
     land_keywords = [
         "জমিজমা সংক্রান্ত", "জমিজমা", "জমির বিরোধ", "জমি নিয়ে বিরোধ", "জমি নিয়ে বিরোধ",
         "সীমানা বেদখল", "জমি দখল", "পৈতৃক জমি", "জমিজমা সংক্রান্ত বিরোধে", "জমিজমা সংক্রান্ত বিরোধ"
@@ -579,7 +638,8 @@ def classification_node(state: IntakeState) -> Dict[str, Any]:
         ("user", "{text}")
     ])
     try:
-        res = classification_llm.invoke(prompt.format_messages(text=text_to_eval))
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["classification_llm"].invoke(prompt.format_messages(text=text_to_eval))
         if res is None:
             cat = "unclassifiable"
             conf = 0
@@ -625,7 +685,8 @@ def extraction_node(state: IntakeState) -> Dict[str, Any]:
         ("user", "Category: {category}\nNarrative: {text}")
     ])
     try:
-        res = extraction_llm.invoke(
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["extraction_llm"].invoke(
             prompt.format_messages(category=cat, text=text_to_eval)
         )
         if res is None:
@@ -762,13 +823,14 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         existing_covered.append(prev_stage)
 
     # Fact-based detection of stages from accumulated text
-    lower_all = (text_to_eval + " " + latest_user_text).lower()
+    lower_all = (text_to_eval + " " + latest_user_text).lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
     
     # 1. Cause: specific trigger/reason for conflict or separation
     if any(w in lower_all for w in [
         "যৌতুক", "দ্বিতীয় বিয়ে", "দ্বিতীয় বিয়ে", "জোরপূর্বক দখল", "বেদখল", "দখল করে",
         "ঝগড়া করে আলাদা", "ঝগড়া করে আলাদা", "মেরে বের করে", "তাড়িয়ে দিয়েছে", "তাড়িয়ে দিছে",
-        "বের করে দিয়েছে", "বের করে দিছে", "বাড়ি থেকে বের", "বাড়ি থেকে বের", "বাড়ি ছাড়তে বাধ্য", "বাড়ি ছাড়তে বাধ্য"
+        "বের করে দিয়েছে", "বের করে দিছে", "বাড়ি থেকে বের", "বাড়ি থেকে বের", "বাড়ি ছাড়তে বাধ্য", "বাড়ি ছাড়তে বাধ্য",
+        "টাকা চেয়েছিলাম", "টাকা চেয়েছিলাম", "টাকা চেয়েছি", "টাকা চেয়েছি"
     ]):
         if "cause" not in existing_covered:
             existing_covered.append("cause")
@@ -781,29 +843,34 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         "কাবিননামা আছে", "কাবিননামা নাই", "কাবিননামা নেই", "কাবিন আছে", "কাবিন নাই", "কাবিন নেই",
         "কাবিননামা আমার", "কাবিন আমার", "কাবিননামা সাথে", "কাবিন সাথে", "কাবিননামা কাছে", "কাবিন কাছে",
         "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "বাবার বাড়িতে আছে", "বাবার বাড়ি আছে", "বাবার বাড়িতে আছে", "বাবার বাড়ি আছে",
         "কাবিন স্বামীর কাছে", "কাবিননামা স্বামীর কাছে", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে",
+        "কাবিন হারিয়েছে", "কাবিন হারিয়েছে", "কাবিননামা হারিয়েছে", "কাবিননামা হারিয়েছে",
         "কাজী অফিস থেকে নকল", "কাজী অফিসের নকল", "কাজী অফিসে যেতে", "নকল তুলতে হবে", "কাজী অফিসের এলাকা",
         "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত", "সব কাগজ আমার কাছে", "সব কাগজপত্র আমার কাছে",
         "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই",
         "দলিল আছে", "দলিল নেই", "দলিল নাই", "দলিল সংরক্ষিত", "দলিল আমার", "দলিল সাথে", "দলিল প্রতিপক্ষের",
         "খতিয়ান আছে", "খতিয়ান আছে", "খাজনার দাখিলা", "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "সাক্ষী আছে"
     ]
-    has_evidence_info = has_evidence_in_state or any(p in lower_all for p in doc_possession_patterns)
+    has_evidence_info = has_evidence_in_state or any(p.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for p in doc_possession_patterns)
     if has_evidence_info:
         if "history" not in existing_covered:
             existing_covered.append("history")
 
     # 3. Impact: current hardship, living condition, or residence
-    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "জমিতে যেতে বাধা", "আলাদা"]):
+    if any(w.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "আশ্রয়হীন", "জমিতে যেতে বাধা", "আলাদা"]):
         if "impact" not in existing_covered:
             existing_covered.append("impact")
 
     # 4. Desired Solution: specific remedy, action, or seeking advice
-    if any(w in lower_all for w in [
+    if any(w.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for w in [
         "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
+        "আদালতে মামলা", "আদালতে মামলা করে",
         "সালিশের মাধ্যমে", "শান্তিপূর্ণ মীমাংসা", "সালিশ চাই", "মীমাংসা চাই",
         "আইনি নোটিশ", "আদালতে যাব", "আদালতে যেতে",
         "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়",
+        "ভরণপোষণ চাই", "খরচ চাই", "দেনমোহর চাই", "পাওনা চাই", "টাকা চাই", "নিয়মিত খরচ", "নিয়মিত খরচ", "খরচ ও ভরণপোষণ",
         "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ",
         "তালাক", "উকিল", "আইনজীবী", "কি করব", "কী করব", "পরামর্শ চাই", "সমাধান কি", "সমাধান কী", "আইনি ব্যবস্থা", "কী করণীয়", "কি করণীয়"
     ]):
@@ -904,7 +971,12 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
         target_stage = "history"
 
     # If all stages are covered (or target_stage is complete) AND essential documentation is covered, complete immediately!
-    if (target_stage == "complete" and has_evidence_info) or (len(existing_covered) >= 5 and has_evidence_info) or ("desired_solution" in existing_covered and has_evidence_info and len(existing_covered) >= 4) or (turn_count >= 6):
+    if (
+        (target_stage == "complete" and has_evidence_info) or 
+        (len(existing_covered) >= 5 and has_evidence_info) or 
+        ("desired_solution" in existing_covered and has_evidence_info and (len(existing_covered) >= 4 or turn_count >= 4)) or 
+        (turn_count >= 6)
+    ):
         return {
             "is_complete": True,
             "current_stage": "complete",
@@ -977,7 +1049,8 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     ])
 
     try:
-        res = dialogue_llm.invoke(dialogue_prompt.format_messages(
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["dialogue_llm"].invoke(dialogue_prompt.format_messages(
             category=cat or "সাধারণ বিরোধ",
             client_narrative=text_to_eval,
             chat_history=formatted_history or "কথোপকথন সবে শুরু হয়েছে।",
@@ -1126,7 +1199,8 @@ def template_output_node(state: IntakeState) -> Dict[str, Any]:
             f"Extracted Location/Address: {user_location or 'Not explicitly provided'}\n\n"
             "Task: You MUST call the tool find_nearby_legal_aid_center with the detected or inferred location and legal issue category to locate the nearest BRAC Legal Aid Clinic and available appointment slot."
         )
-        tool_res = clinic_tool_llm.invoke(tool_prompt)
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        tool_res = bundle["clinic_tool_llm"].invoke(tool_prompt)
         if tool_res.tool_calls:
             tool_args = tool_res.tool_calls[0].get("args", {})
             clinic_info = find_nearby_legal_aid_center.invoke(tool_args)
@@ -1164,7 +1238,8 @@ def template_output_node(state: IntakeState) -> Dict[str, Any]:
                 ("system", prompts.DYNAMIC_SOLUTION_SYSTEM_PROMPT),
                 ("user", "Client Full Narrative & Follow-up Answers:\n{client_narrative}\n\nExtracted Facts:\n{known_facts}\n\nStandard Legal Guidelines:\n{legal_framework}\n\nPlease generate the personalized Bengali legal explanation and actionable roadmap ('আপনার আইনি অধিকার ও পথ') for this client.")
             ])
-            res = llm.invoke(prompt.format_messages(
+            bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+            res = bundle["llm"].invoke(prompt.format_messages(
                 client_narrative=text_to_eval,
                 category=cat,
                 known_facts=str({k: v for k, v in facts.items() if "[অপ্রতিষ্ঠিত]" not in str(v) and "[নাম সংরক্ষিত]" not in str(v)}),
@@ -1338,7 +1413,8 @@ def generate_action_summary(state: Dict[str, Any]) -> str:
             ("system", ACTION_SUMMARY_SYSTEM_PROMPT),
             ("user", f"Client Facts:\n{facts_summary}\n\nRecent Dialogue:\n{chat_context}\n\nPlease generate the '📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ':")
         ])
-        res = llm.invoke(prompt.format_messages())
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["llm"].invoke(prompt.format_messages())
         if res.content and len(res.content.strip()) > 50:
             return res.content.strip()
     except Exception as exc:
@@ -1386,11 +1462,55 @@ def run_intake(
     audio_path: Optional[str] = None, 
     existing_state: Optional[Dict[str, Any]] = None,
     is_continuation: bool = False,
-    is_summarized: bool = False
+    is_summarized: bool = False,
+    selected_model: Optional[str] = None,
+    thinking_level: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Processes a single conversational turn in Bangla with token continuation, summarization, and LLM error support."""
-    # Check if API Key is configured before running LangGraph
-    if not is_model_configured():
+    """Processes a single conversational turn in Bangla with multi-model selection (Gemini 2.5 to latest, and Local Llama) and thinking level control."""
+    model_to_use = selected_model or (existing_state.get("selected_model") if existing_state else None) or "gemini-2.5-flash"
+    thinking_to_use = thinking_level or (existing_state.get("thinking_level") if existing_state else None) or "medium"
+
+    # Check model availability
+    if model_to_use == "local-llama":
+        ollama_status = check_local_ollama_status()
+        if not ollama_status["online"]:
+            err_details = {
+                "status_code": 503,
+                "error_type": "connection_error",
+                "title": "লোকাল এলএলএম সংযোগ বিচ্ছিন্ন (Ollama Offline)",
+                "message_bn": "লোকাল এলএলএম (Ollama) সার্ভার চালু নেই। টার্মিনালে 'ollama run llama3.1' কমান্ডটি চালান অথবা Gemini ক্লাউড মডেল ব্যবহার করুন।",
+                "message_en": "Local Ollama server is offline. Please run 'ollama run llama3.1' or switch to Gemini."
+            }
+            history = list(existing_state.get("chat_history", [])) if existing_state else []
+            if transcript and transcript.strip():
+                history.append({"role": "user", "content": transcript.strip()})
+            history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
+            return {
+                "transcript": transcript,
+                "client_own_words": transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else transcript),
+                "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
+                "safety_flag": False,
+                "safety_message": None,
+                "is_complete": False,
+                "current_stage": None,
+                "stages_covered": [],
+                "requires_continuation": False,
+                "continuation_prompt": None,
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "rights_explanation": None,
+                "draft_complaint": None,
+                "referral_clinic": None,
+                "referral_slot": None,
+                "action_summary": None,
+                "chat_history": history,
+                "llm_error": err_details["message_bn"],
+                "llm_error_details": err_details,
+                "selected_model": model_to_use,
+                "thinking_level": thinking_to_use
+            }
+    elif not is_model_configured():
         err_details = get_error_message("authentication_error", "Missing or unconfigured LLM API key in backend/.env")
         history = list(existing_state.get("chat_history", [])) if existing_state else []
         if transcript and transcript.strip():
@@ -1417,7 +1537,9 @@ def run_intake(
             "action_summary": None,
             "chat_history": history,
             "llm_error": err_details["message_bn"],
-            "llm_error_details": err_details
+            "llm_error_details": err_details,
+            "selected_model": model_to_use,
+            "thinking_level": thinking_to_use
         }
 
     was_continuation = is_continuation or is_summarized or (existing_state and existing_state.get("is_continuation_confirmed"))
@@ -1444,6 +1566,8 @@ def run_intake(
     )
 
     state: IntakeState = {
+        "selected_model": model_to_use,
+        "thinking_level": thinking_to_use,
         "audio_path": audio_path,
         "transcript": transcript,
         "client_own_words": client_words,
@@ -1538,6 +1662,8 @@ def run_intake(
         })
     
     result["chat_history"] = history
+    result["selected_model"] = model_to_use
+    result["thinking_level"] = thinking_to_use
     return result
 
 
