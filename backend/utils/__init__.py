@@ -35,6 +35,7 @@ from .model_connection import (
     get_llm_for_model,
     get_ollama_base_url,
     get_ollama_v1_url,
+    get_ollama_api_key,
     THINKING_LEVELS,
     THINKING_LEVEL_DEFAULT,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "get_llm_for_model",
     "get_ollama_base_url",
     "get_ollama_v1_url",
+    "get_ollama_api_key",
     "THINKING_LEVELS",
     "THINKING_LEVEL_DEFAULT",
     "parse_llm_error",

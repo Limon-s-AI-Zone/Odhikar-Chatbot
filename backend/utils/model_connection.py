@@ -129,7 +129,7 @@ def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]
     # 2. Local LLM (Ollama, LM Studio, vLLM - No API Key Required)
     if prov in ("local", "ollama", "lmstudio", "vllm"):
         is_ollama = (prov == "ollama") or ("11434" in base_url)
-        default_url = "http://localhost:11434/v1" if is_ollama else "http://localhost:1234/v1"
+        default_url = get_ollama_v1_url() if is_ollama else "http://localhost:1234/v1"
         default_model = "mistral" if is_ollama else "local-model"
         display = "Ollama (Local LLM)" if is_ollama else "Local LLM (LM Studio / vLLM)"
 
@@ -137,8 +137,8 @@ def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]
             "provider": "local",
             "display_name": display,
             "requires_api_key": False,
-            "api_key_env": "LLM_API_KEY",
-            "api_key": LLM_API_KEY_RAW or "local",
+            "api_key_env": "OLLAMA_API_KEY",
+            "api_key": get_ollama_api_key(),
             "base_url": base_url or default_url,
             "model": MODEL_NAME or default_model
         }
@@ -213,6 +213,7 @@ def get_ollama_base_url() -> str:
     Supports: OLLAMA_BASE_URL, OLLAMA_MODEL_URL, OLLAMA_URL, OLLAMA_HOST, LOCAL_LLM_URL,
     or LLM_BASE_URL (if contains 11434 or provider is local).
     Defaults to 'http://localhost:11434'.
+    Normalizes by stripping trailing paths such as /v1/models, /models, /v1, /api/tags, /api.
     """
     url = (
         os.getenv("OLLAMA_BASE_URL", "").strip()
@@ -227,9 +228,10 @@ def get_ollama_base_url() -> str:
     if not url.startswith("http://") and not url.startswith("https://"):
         url = f"http://{url}"
 
-    # Strip trailing /v1 if provided, so native endpoints (/api/tags) work properly
-    if url.endswith("/v1"):
-        url = url[:-3]
+    # Strip trailing endpoint paths so base URL works for both native (/api/tags) and OpenAI (/v1) endpoints
+    for suffix in ("/v1/models", "/models", "/v1", "/api/tags", "/api"):
+        if url.endswith(suffix):
+            url = url[:-len(suffix)].rstrip("/")
 
     return url
 
@@ -237,6 +239,22 @@ def get_ollama_base_url() -> str:
 def get_ollama_v1_url() -> str:
     """Returns the OpenAI-compatible /v1 endpoint for Ollama derived from .env."""
     return f"{get_ollama_base_url()}/v1"
+
+
+def get_ollama_api_key() -> str:
+    """
+    Reads the Ollama/Local LLM API key or Bearer token from the environment variables (.env).
+    Supports: OLLAMA_API_KEY, OLLAM_API_KEY, LOCAL_LLM_API_KEY, OLLAMA_AUTH_TOKEN, LLM_API_KEY.
+    Defaults to 'local' (dummy key required by OpenAI-compatible clients if not set).
+    """
+    return (
+        os.getenv("OLLAMA_API_KEY", "").strip()
+        or os.getenv("OLLAM_API_KEY", "").strip()
+        or os.getenv("LOCAL_LLM_API_KEY", "").strip()
+        or os.getenv("OLLAMA_AUTH_TOKEN", "").strip()
+        or os.getenv("LLM_API_KEY", "").strip()
+        or "local"
+    )
 
 
 # Thinking Level Configurations for Reasoning Models (Gemini 2.5/3.7/3.8/3.1 Pro)
@@ -363,7 +381,7 @@ def create_llm_client(
         default_url = get_ollama_v1_url()
 
     target_base_url = url or default_url
-    target_api_key = key or ("local" if provider == "local" else "dummy")
+    target_api_key = key or (get_ollama_api_key() if provider == "local" else "dummy")
 
     kwargs: Dict[str, Any] = {
         "base_url": target_base_url,
@@ -490,32 +508,62 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
 
 
 def check_local_ollama_status() -> Dict[str, Any]:
-    """Checks if local Ollama server is running at the configured URL from .env and lists installed models."""
+    """Checks if local Ollama or remote model server is running at the configured URL from .env and lists installed models."""
     base_url = get_ollama_base_url()
+    v1_url = get_ollama_v1_url()
+    api_key = get_ollama_api_key()
+
+    headers = {"User-Agent": "Odhikar-AI"}
+    if api_key and api_key != "local":
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    timeout = 6.0 if base_url.startswith("https://") else 2.5
+    models: List[str] = []
+    last_err: Optional[str] = None
+
+    # 1. Try Ollama native endpoint: /api/tags
     try:
-        req = urllib.request.Request(f"{base_url}/api/tags", headers={"User-Agent": "Odhikar-AI"})
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
+        req = urllib.request.Request(f"{base_url}/api/tags", headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             if resp.status == 200:
                 data = json.loads(resp.read().decode("utf-8"))
-                models = [m.get("name") for m in data.get("models", [])]
-                has_llama = any("llama" in m.lower() for m in models)
-                return {
-                    "online": True,
-                    "base_url": base_url,
-                    "models": models,
-                    "has_llama": has_llama,
-                    "recommended_command": None if has_llama else "ollama run llama3.1"
-                }
+                models = [m.get("name") for m in data.get("models", []) if isinstance(m, dict) and m.get("name")]
     except Exception as e:
+        last_err = str(e)
+
+    # 2. If /api/tags didn't succeed, try OpenAI-compatible endpoint: /v1/models
+    if not models:
+        try:
+            req = urllib.request.Request(f"{v1_url}/models", headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, dict):
+                        if "data" in data and isinstance(data["data"], list):
+                            models = [m.get("id") for m in data["data"] if isinstance(m, dict) and m.get("id")]
+                        elif "models" in data and isinstance(data["models"], list):
+                            models = [m.get("name") or m.get("id") for m in data["models"] if isinstance(m, dict)]
+        except Exception as e:
+            last_err = str(e)
+
+    if models:
+        has_llama = any("llama" in m.lower() for m in models)
         return {
-            "online": False,
+            "online": True,
             "base_url": base_url,
-            "models": [],
-            "has_llama": False,
-            "error": str(e),
-            "recommended_command": "ollama run llama3.1"
+            "models": models,
+            "has_llama": has_llama,
+            "recommended_command": None if has_llama else "ollama run llama3.1"
         }
-    return {"online": False, "base_url": base_url, "models": [], "has_llama": False, "recommended_command": "ollama run llama3.1"}
+
+    return {
+        "online": False,
+        "base_url": base_url,
+        "models": [],
+        "has_llama": False,
+        "error": last_err,
+        "recommended_command": "ollama run llama3.1"
+    }
 
 
 def resolve_local_llama_model_name() -> str:
@@ -581,7 +629,7 @@ def get_llm_for_model(model_id: Optional[str] = None, thinking_level: Optional[s
 
     resolved_level = (thinking_level or THINKING_LEVEL_DEFAULT or "medium").lower()
     if resolved_level not in THINKING_LEVELS:
-        resolved_level = "medium"
+        resolved_level = "low"
 
     cache_key = f"{target_id}::{resolved_level}"
     if cache_key in _client_cache:
