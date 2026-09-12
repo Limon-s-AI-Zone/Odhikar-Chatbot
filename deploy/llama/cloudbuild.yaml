@@ -13,13 +13,15 @@ steps:
       - -c
       - |
         set -euo pipefail
+        # $$ escapes bash vars so Cloud Build does not treat them as substitutions.
+        # ${_MODEL_BUCKET}, ${_GGUF_NAME}, ${PROJECT_ID} are valid Cloud Build substitutions.
         BUCKET="${_MODEL_BUCKET}"
-        if [[ -z "$BUCKET" ]]; then
+        if [[ -z "$$BUCKET" ]]; then
           BUCKET="${PROJECT_ID}-odhikar-models"
         fi
-        SRC="gs://${BUCKET}/${_GGUF_NAME}"
-        echo "Downloading ${SRC} -> deploy/llama/model.gguf"
-        gcloud storage cp "$SRC" deploy/llama/model.gguf
+        SRC="gs://$${BUCKET}/${_GGUF_NAME}"
+        echo "Downloading $${SRC} -> deploy/llama/model.gguf"
+        gcloud storage cp "$$SRC" deploy/llama/model.gguf
         ls -lh deploy/llama/model.gguf
 
   - name: gcr.io/cloud-builders/docker

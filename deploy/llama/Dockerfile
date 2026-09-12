@@ -1,6 +1,7 @@
 # llama.cpp OpenAI-compatible server with baked-in Llama 3.2 1B GGUF.
 # Build context: deploy/llama/ (model.gguf provided by Cloud Build from GCS).
-FROM ghcr.io/ggerganov/llama.cpp:server
+# Official images live under ggml-org (ggerganov org tags are gone / unknown).
+FROM ghcr.io/ggml-org/llama.cpp:server
 
 USER root
 RUN mkdir -p /models
