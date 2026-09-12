@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { 
-  Send, AlertTriangle, PhoneCall, 
+  Send, AlertTriangle, AlertCircle, PhoneCall, 
   CheckCircle2, ChevronRight, RefreshCw, ArrowRightCircle,
   MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
   Volume2, VolumeX, FileText, Mic, Square, Radio,
@@ -17,6 +17,7 @@ interface IntakeProps {
 interface ChatMessage {
   role: string;
   content: string;
+  failed?: boolean;
 }
 
 export interface LlmErrorInfo {
@@ -47,6 +48,17 @@ export function getContextualChips(
         else if (reply.includes('স্বামীর কাছে')) label = 'স্বামীর কাছে আছে';
         else if (reply.includes('কাজী অফিস')) label = 'কাজী অফিসের তথ্য আছে';
         else if (reply.includes('কাগজ নেই') || reply.includes('দলিল নেই')) label = 'কোনো কাগজ নেই';
+        else if (reply.includes('সমস্ত প্রয়োজনীয়') || reply.includes('সমস্ত প্রয়োজনীয়') || reply.includes('প্রয়োজনীয় সকল কাগজপত্র')) label = 'সব কাগজপত্র প্রস্তুত আছে';
+        else if (reply.includes('কিছু কাগজপত্র আছে') || reply.includes('কিছু কাগজ আছে')) label = 'কিছু কাগজ আছে, সব নেই';
+        else if (reply.includes('কোনো লিখিত কাগজপত্র') || reply.includes('কোনো লিখিত প্রমাণ নেই')) label = 'কোনো কাগজপত্র নেই';
+        else if (reply.includes('প্রক্রিয়াটি সম্পন্ন করতে চাই') || reply.includes('প্রক্রিয়াটি সম্পন্ন করতে চাই')) label = 'হ্যাঁ, সম্পন্ন করতে চাই';
+        else if (reply.includes('না, এখন নয়') || reply.includes('পরে বিবেচনা')) label = 'না, এখন নয়';
+        else if (reply.includes('বিদ্যমান কাগজের') || reply.includes('বিদ্যমান কাগজেই')) label = 'বিদ্যমান কাগজেই অগ্রসর';
+        else if (reply.includes('বিকল্প কোনো উপায়') || reply.includes('বিকল্প কোনো উপায়')) label = 'বিকল্প উপায় চাই';
+        else if (reply.includes('দেনমোহর ও ভরণপোষণ আদায়ের')) label = 'দেনমোহর ও ভরণপোষণ';
+        else if (reply.includes('বকেয়া মজুরি ও ক্ষতিপূরণ')) label = 'বকেয়া মজুরি আদায়';
+        else if (reply.includes('জমিজমা দখল উদ্ধার')) label = 'জমিজমা দখল/স্বত্ব';
+        else if (reply.includes('যৌতুক ও পারিবারিক নির্যাতন')) label = 'যৌতুক ও নির্যাতন';
         else if (reply.includes('১ লাখ')) label = '১ লাখ টাকা';
         else if (reply.includes('২ লাখ')) label = '২ লাখ টাকা';
         else if (reply.includes('৫ লাখ')) label = '৫ লাখ টাকা';
@@ -86,6 +98,10 @@ export function getContextualChips(
         else if (reply.includes('জাল দলিল')) label = 'জাল দলিল তৈরি';
         else if (reply.includes('সীমানা কেটে')) label = 'সীমানা কেটে দখল';
         else if (reply.includes('ছাঁটাই')) label = 'কাজ থেকে ছাঁটাই';
+        else if (reply.includes('টালবাহানা') || reply.includes('ঘোরাচ্ছে')) label = 'অজুহাতে টালবাহানা';
+        else if (reply.includes('বিল পায়নি') || reply.includes('বিল পায়নি')) label = 'বিল পায়নি অজুহাত';
+        else if (reply.includes('কোনো কারণ ছাড়াই') || reply.includes('কোনো বিরোধ হয়নি') || reply.includes('কোনো বিরোধ হয়নি')) label = 'কোনো বিরোধ হয়নি';
+        else if (reply.includes('অংশ দিতে অস্বীকার')) label = 'ন্যায্য অংশ দিচ্ছে না';
         else if (reply.includes('নির্দিষ্ট মনে নেই') || reply.includes('মনে করা যাচ্ছে না')) label = 'নির্দিষ্ট মনে নেই';
         else if (reply.includes('কারও কাছেই তথ্য নেই')) label = 'কারও তথ্য নেই';
         else label = reply.slice(0, 18) + '...';
@@ -97,7 +113,33 @@ export function getContextualChips(
   const q = (question || '').toLowerCase();
   const cat = (category || '').toLowerCase();
 
-  // 0. Cause of dispute / why maintenance problem occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
+  // 0a. Cause of unpaid wages / why wages withheld ("মালিক বা ঠিকাদার কী কারণে আপনার মজুরি বকেয়া রেখেছেন বা কোনো বিরোধ হয়েছিল কি না?")
+  if (
+    (q.includes('কারণ') || q.includes('কেন') || q.includes('বিরোধ') || q.includes('ঝামেলা') || q.includes('সূত্রপাত') || q.includes('অজুহাত')) &&
+    (cat === 'unpaid_wages' || q.includes('মজুরি') || q.includes('বেতন') || q.includes('ঠিকাদার') || q.includes('মালিক'))
+  ) {
+    return [
+      { label: 'অজুহাতে টালবাহানা করছে', text: 'কাজ শেষ করার পরও নানা অজুহাতে ঘোরাচ্ছে ও টালবাহানা করছে' },
+      { label: 'বিল পায়নি বলে দিচ্ছে না', text: 'মালিকের কাছ থেকে বিল পায়নি বলে ঠিকাদার টাকা দিচ্ছে না' },
+      { label: 'মজুরি চাওয়ায় ছাঁটাই', text: 'বকেয়া মজুরি চাওয়ায় উল্টো কাজ থেকে ছাঁটাই/বের করে দিয়েছে' },
+      { label: 'কোনো বিরোধ হয়নি', text: 'কোনো বিরোধ হয়নি, কাজ শেষে কোনো কারণ ছাড়াই বেতন আটকে রেখেছে' }
+    ];
+  }
+
+  // 0b. Cause of land dispute / why land grabbed
+  if (
+    (q.includes('কারণ') || q.includes('সূত্রপাত') || q.includes('কীভাবে') || q.includes('বিরোধ') || q.includes('ঝামেলা')) &&
+    (cat === 'land_dispute' || q.includes('জমি'))
+  ) {
+    return [
+      { label: 'প্রতিপক্ষ দখল করেছে', text: 'প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে' },
+      { label: 'পৈতৃক ওয়ারিশ বিরোধ', text: 'পৈতৃক সম্পত্তির ওয়ারিশ ও ন্যায্য অংশ দিতে অস্বীকার করছে' },
+      { label: 'সীমানা কেটে দখল', text: 'জমির সীমানা কেটে জোর করে দখলের চেষ্টা করছে' },
+      { label: 'জাল দলিল তৈরি', text: 'জাল দলিল তৈরি করে জমির মালিকানা দাবি করছে' }
+    ];
+  }
+
+  // 0c. Cause of family dispute / why maintenance problem occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
   if (
     (q.includes('ঝামেলা') || q.includes('কারণ') || q.includes('কেন') || q.includes('সূত্রপাত')) && 
     (q.includes('ভরণপোষণ') || cat.includes('family') || cat.includes('dower'))
@@ -127,10 +169,11 @@ export function getContextualChips(
 
   // 2. Dower / Dowry / Claim amount
   if (
-    q.includes('দেনমোহর') || 
-    (q.includes('টাকা') && (q.includes('ধার্য') || q.includes('পরিমাণ') || q.includes('দাবি'))) ||
-    q.includes('কত টাকা') ||
-    q.includes('টাকার পরিমাণ')
+    cat !== 'unpaid_wages' && cat !== 'land_dispute' && (
+      q.includes('দেনমোহর') || 
+      (q.includes('টাকা') && (q.includes('ধার্য') || q.includes('দাবি'))) ||
+      ((cat === 'family_dower_maintenance' || cat === 'dowry') && (q.includes('কত টাকা') || q.includes('টাকার পরিমাণ')))
+    )
   ) {
     return [
       { label: '১ লাখ টাকা', text: 'দেনমোহর ধার্য করা হয়েছিল ১ লাখ টাকা' },
@@ -153,10 +196,11 @@ export function getContextualChips(
     ];
   }
 
-  // 4. Wages / Unpaid Salary Amount
+  // 4. Wages / Unpaid Salary Amount (Only when asking for amount / money)
   if (
-    (q.includes('মজুরি') || q.includes('বেতন') || q.includes('পাওনা')) && 
-    (q.includes('টাকা') || q.includes('কত') || q.includes('বকেয়া') || q.includes('বকেয়া'))
+    (cat === 'unpaid_wages' && (q.includes('টাকা') || q.includes('কত টাকা') || q.includes('পরিমাণ') || q.includes('বকেয়া') || q.includes('বকেয়া') || q.includes('পাওনা'))) ||
+    ((q.includes('মজুরি') || q.includes('বেতন') || q.includes('পাওনা')) && 
+     (q.includes('টাকা') || q.includes('কত টাকা') || q.includes('পরিমাণ') || q.includes('কত মাসের')))
   ) {
     return [
       { label: '১ মাসের বেতন', text: '১ মাসের পুরো মজুরি বা বেতন বকেয়া রয়েছে' },
@@ -397,13 +441,24 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [llmError, setLlmError] = useState<LlmErrorInfo | null>(null);
   const [lastAttemptedMessage, setLastAttemptedMessage] = useState<string>('');
 
+  // Auto-dismiss floating toast notification after 10 seconds
+  useEffect(() => {
+    if (!llmError) return;
+    const timer = setTimeout(() => {
+      setLlmError(null);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [llmError]);
+
   // Session & Chat History State
   const [sessionState, setSessionState] = useState<any>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
   const [suggestedReplies, setSuggestedReplies] = useState<string[]>([]);
   const [continuationPrompt, setContinuationPrompt] = useState<string | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
   const [safetyMessage, setSafetyMessage] = useState<string | null>(null);
+  const [isSafetyCollapsed, setIsSafetyCollapsed] = useState<boolean>(false); // Starts full on first detection
   const [rightsExplanation, setRightsExplanation] = useState<string | null>(null);
   const [draftComplaint, setDraftComplaint] = useState<string | null>(null);
   const [referralInfo, setReferralInfo] = useState<{ clinic: string; slot: string } | null>(null);
@@ -414,6 +469,69 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [category, setCategory] = useState<string | null>(null);
   const isOutOfScope = category === 'out_of_scope' || sessionState?.category === 'out_of_scope';
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Multi-Model Selection State (Gemini 2.5 to latest, and Local Llama)
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem('odhikar_selected_model') || 'gemini-2.5-flash';
+  });
+  // Thinking Level Selection State (Reasoning budget for Gemini models: off, low, medium, high)
+  const [thinkingLevel, setThinkingLevel] = useState<string>(() => {
+    return localStorage.getItem('odhikar_thinking_level') || 'medium';
+  });
+  const [availableModels, setAvailableModels] = useState<any[]>([
+    { id: 'gemini-2.5-flash', name: 'Google Gemini 2.5 Flash', badge: 'Gemini 2.5 Flash (Latest)', is_local: false },
+    { id: 'gemini-2.5-flash-lite', name: 'Google Gemini 2.5 Flash-Lite', badge: 'Gemini 2.5 Flash-Lite', is_local: false },
+    { id: 'gemini-3.7-flash', name: 'Google Gemini 3.7 Flash', badge: 'Gemini 3.7 Flash (Hybrid Thinking)', is_local: false },
+    { id: 'gemini-3.8-flash', name: 'Google Gemini 3.8 Flash', badge: 'Gemini 3.8 Flash (Next-Gen)', is_local: false },
+    { id: 'gemini-3.1-pro', name: 'Google Gemini 3.1 Pro', badge: 'Gemini 3.1 Pro (Flagship Thinking)', is_local: false },
+    { id: 'gemini-2.5-pro', name: 'Google Gemini 2.5 Pro', badge: 'Gemini 2.5 Pro', is_local: false },
+    { id: 'gemini-2.0-flash', name: 'Google Gemini 2.0 Flash', badge: 'Gemini 2.0 Flash', is_local: false },
+    { id: 'local-llama', name: 'Meta Llama 3.1 (Local Ollama)', badge: 'Local Llama 3.1', is_local: true }
+  ]);
+  const [ollamaStatus, setOllamaStatus] = useState<{ online: boolean; models: string[]; has_llama: boolean; recommended_command?: string } | null>(null);
+
+  const fetchAvailableModels = async () => {
+    try {
+      const res = await axios.get('/api/llm/models');
+      if (res.data?.models) {
+        setAvailableModels(res.data.models);
+      }
+      if (res.data?.ollama_status) {
+        setOllamaStatus(res.data.ollama_status);
+      }
+      if (res.data?.default_thinking_level && !localStorage.getItem('odhikar_thinking_level')) {
+        setThinkingLevel(res.data.default_thinking_level);
+      }
+    } catch (e) {
+      console.warn('Could not fetch model list:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchAvailableModels();
+  }, []);
+
+  const handleModelChange = (newModelId: string) => {
+    setSelectedModel(newModelId);
+    localStorage.setItem('odhikar_selected_model', newModelId);
+    if (newModelId === 'local-llama' && ollamaStatus && !ollamaStatus.online) {
+      setLlmError({
+        title: 'লোকাল Llama অফলাইন (Ollama Not Running)',
+        message: 'লোকাল Llama ব্যবহারের জন্য আপনার কম্পিউটারে Ollama চালু থাকতে হবে। টার্মিনালে চালান: ollama run llama3.1',
+        errorType: 'connection_error',
+        troubleshooting: [
+          "টার্মিনালে 'ollama serve' অথবা 'ollama run llama3.1' চালান।",
+          "http://localhost:11434 এ সার্ভিসটি সচল আছে কি না পরীক্ষা করুন।",
+          "অথবা ড্রপডাউন থেকে 'Google Gemini 2.5 Flash' ক্লাউড মডেল নির্বাচন করুন।"
+        ]
+      });
+    }
+  };
+
+  const handleThinkingChange = (newLevel: string) => {
+    setThinkingLevel(newLevel);
+    localStorage.setItem('odhikar_thinking_level', newLevel);
+  };
 
   // Personal & Aggressor Info State (Collected right before Step 4 to match nearby BRAC clinic)
   const [applicantName, setApplicantName] = useState('');
@@ -451,6 +569,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     setStep('welcome');
     setTextNarrative('');
     setSafetyMessage(null);
+    setIsSafetyCollapsed(false);
     setSessionState(null);
     setCategory(null);
     setChatHistory([]);
@@ -527,7 +646,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognitionClass) {
-      alert('আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।');
+      setLlmError({
+        title: 'ভয়েস টাইপিং অনুপলব্ধ',
+        message: 'আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।',
+        errorType: 'compatibility_error'
+      });
       return;
     }
 
@@ -535,7 +658,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
     } catch (err: any) {
-      alert('মাইক্রোফোনের অনুমতি প্রয়োজন। ব্রাউজারে Microphone "Allow" করুন।');
+      setLlmError({
+        title: 'মাইক্রোফোনের অনুমতি প্রয়োজন',
+        message: 'মাইক্রোফোনের অনুমতি দেওয়া হয়নি। ব্রাউজার সেটিংসে Microphone "Allow" করুন।',
+        errorType: 'permission_error'
+      });
       return;
     }
 
@@ -710,7 +837,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       });
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
-      alert('পিডিএফ তৈরিতে সমস্যা হয়েছে: ' + (err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন'));
+      setLlmError({
+        title: 'পিডিএফ তৈরিতে সমস্যা',
+        message: 'পিডিএফ তৈরিতে সমস্যা হয়েছে: ' + (err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন।'),
+        errorType: 'pdf_error'
+      });
     } finally {
       setIsDownloadingPdf(false);
     }
@@ -890,6 +1021,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
     if (!SpeechRecognitionClass) {
       setVoiceStatus('আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।');
+      setLlmError({
+        title: 'ভয়েস টাইপিং অনুপলব্ধ',
+        message: 'আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।',
+        errorType: 'compatibility_error'
+      });
       return;
     }
 
@@ -901,6 +1037,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     } catch (err: any) {
       console.warn('Microphone permission denied:', err);
       setVoiceStatus('মাইক্রোফোনের অনুমতি প্রয়োজন। ব্রাউজারে Microphone "Allow" করুন।');
+      setLlmError({
+        title: 'মাইক্রোফোনের অনুমতি প্রয়োজন',
+        message: 'মাইক্রোফোনের অনুমতি দেওয়া হয়নি। ব্রাউজার সেটিংসে Microphone "Allow" করুন।',
+        errorType: 'permission_error'
+      });
       return;
     }
 
@@ -1046,7 +1187,85 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   };
 
 
-  const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false) => {
+  const handleSummarizeAndContinue = async () => {
+    let textToSummarize = lastAttemptedMessage.trim() || textNarrative.trim();
+    if (!textToSummarize) {
+      for (let i = chatHistory.length - 1; i >= 0; i--) {
+        if (chatHistory[i].role === 'user' && chatHistory[i].content.trim()) {
+          textToSummarize = chatHistory[i].content.trim();
+          break;
+        }
+      }
+    }
+    if (!textToSummarize) {
+      handleSendMessage("", true, false);
+      return;
+    }
+
+    try {
+      setIsSummarizing(true);
+      const res = await axios.post('/api/intake/summarize', {
+        transcript: textToSummarize,
+        existing_state: sessionState
+      });
+      const summarizedText = res.data.summarized_text;
+      setIsSummarizing(false);
+      setContinuationPrompt(null);
+
+      if (summarizedText) {
+        // Update user message in chatHistory to indicate it was summarized
+        setChatHistory((prev) => {
+          const next = [...prev];
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].role === 'user') {
+              next[i] = {
+                ...next[i],
+                content: `${summarizedText}\n\n[✨ অতিরিক্ত টোকেন এড়াতে এআই দ্বারা সংক্ষেপিত]`
+              };
+              break;
+            }
+          }
+          return next;
+        });
+
+        // Run intake with summarized text
+        await handleSendMessage(summarizedText, false, true);
+      } else {
+        await handleSendMessage("", true, false);
+      }
+    } catch (err) {
+      console.error('Summarization failed, proceeding with standard continuation:', err);
+      setIsSummarizing(false);
+      setContinuationPrompt(null);
+      await handleSendMessage("", true, false);
+    }
+  };
+
+  const handleEditNarrative = () => {
+    let textToEdit = lastAttemptedMessage.trim() || textNarrative.trim();
+    if (!textToEdit) {
+      for (let i = chatHistory.length - 1; i >= 0; i--) {
+        if (chatHistory[i].role === 'user' && chatHistory[i].content.trim()) {
+          textToEdit = chatHistory[i].content.trim();
+          break;
+        }
+      }
+    }
+    stopVoice();
+    setTextNarrative(textToEdit);
+    setContinuationPrompt(null);
+    setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+    setStep('follow_up');
+  };
+
+  const handleRetryMessage = (content: string, failedIndex?: number) => {
+    if (failedIndex !== undefined) {
+      setChatHistory((prev) => prev.filter((_, idx) => idx !== failedIndex));
+    }
+    handleSendMessage(content);
+  };
+
+  const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false, isSummarized: boolean = false) => {
     stopVoiceTyping();
     const message = textToSend !== undefined ? textToSend : textNarrative;
     if (!message.trim() && !isContinuation) return;
@@ -1054,8 +1273,13 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     stopVoice();
     setVoiceStatus(null);
     setLlmError(null);
+    setContinuationPrompt(null);
     if (!sessionState) {
       setSafetyMessage(null);
+      setIsSafetyCollapsed(false);
+    } else if (safetyMessage) {
+      // User is answering follow-up questions after seeing safety banner once -> Auto-collapse on second turn!
+      setIsSafetyCollapsed(true);
     }
     setLastAttemptedMessage(message || "");
     setIsLoading(true);
@@ -1075,7 +1299,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     setFollowUpQuestion(null);
 
     // Switch to conversational view immediately so the user sees live activity
-    if (step === 'recording') {
+    if (step === 'recording' || step === 'continuation') {
       setStep('follow_up');
     }
 
@@ -1087,7 +1311,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         body: JSON.stringify({
           transcript: message || "",
           existing_state: sessionState,
-          is_continuation: isContinuation
+          is_continuation: isContinuation,
+          is_summarized: isSummarized,
+          selected_model: selectedModel,
+          thinking_level: thinkingLevel
         })
       });
 
@@ -1182,7 +1409,16 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             details: errDetails.message_en || errDetails.raw_error || '',
             errorType: errDetails.error_type
           });
-          setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+          setChatHistory((prev) => {
+            const cleaned = prev.filter(m => m.content.trim() !== '');
+            const lastUserIdx = cleaned.map(m => m.role).lastIndexOf('user');
+            if (lastUserIdx !== -1) {
+              const updated = [...cleaned];
+              updated[lastUserIdx] = { ...updated[lastUserIdx], failed: true };
+              return updated;
+            }
+            return cleaned;
+          });
           return;
         }
 
@@ -1198,16 +1434,20 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
         // 1. Safety Information Handling (Only show helpline on active/immediate danger)
         if (finalData.safety_flag) {
+          if (!safetyMessage) {
+            setIsSafetyCollapsed(false); // First detection -> show full expanded card
+          }
           setSafetyMessage(finalData.safety_message);
           onCaseSubmitted();
         } else {
           setSafetyMessage(null);
+          setIsSafetyCollapsed(false);
         }
 
         // 2. Token Budget Continuation
         if (finalData.requires_continuation) {
           setContinuationPrompt(finalData.continuation_prompt);
-          setStep('continuation');
+          setStep('follow_up');
           return;
         }
 
@@ -1242,7 +1482,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         const fallbackRes = await axios.post('/api/intake/message', {
           transcript: message || "",
           existing_state: sessionState,
-          is_continuation: isContinuation
+          is_continuation: isContinuation,
+          is_summarized: isSummarized,
+          selected_model: selectedModel,
+          thinking_level: thinkingLevel
         });
 
         const data = fallbackRes.data;
@@ -1255,7 +1498,16 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             details: errDetails.message_en || errDetails.raw_error || '',
             errorType: errDetails.error_type
           });
-          setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+          setChatHistory((prev) => {
+            const cleaned = prev.filter(m => m.content.trim() !== '');
+            const lastUserIdx = cleaned.map(m => m.role).lastIndexOf('user');
+            if (lastUserIdx !== -1) {
+              const updated = [...cleaned];
+              updated[lastUserIdx] = { ...updated[lastUserIdx], failed: true };
+              return updated;
+            }
+            return cleaned;
+          });
           return;
         }
 
@@ -1272,15 +1524,19 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
         // 1. Safety Information Handling (Only show helpline on active/immediate danger)
         if (data.safety_flag) {
+          if (!safetyMessage) {
+            setIsSafetyCollapsed(false); // First detection -> show full expanded card
+          }
           setSafetyMessage(data.safety_message);
           onCaseSubmitted();
         } else {
           setSafetyMessage(null);
+          setIsSafetyCollapsed(false);
         } 
         
         if (data.requires_continuation) {
           setContinuationPrompt(data.continuation_prompt);
-          setStep('continuation');
+          setStep('follow_up');
         } else if (data.follow_up_question) {
           if (data.suggested_replies && data.suggested_replies.length > 0) {
             setSuggestedReplies(data.suggested_replies);
@@ -1357,7 +1613,16 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           errorType: errType,
           troubleshooting: troubleshootingList
         });
-        setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+        setChatHistory((prev) => {
+          const cleaned = prev.filter(m => m.content.trim() !== '');
+          const lastUserIdx = cleaned.map(m => m.role).lastIndexOf('user');
+          if (lastUserIdx !== -1) {
+            const updated = [...cleaned];
+            updated[lastUserIdx] = { ...updated[lastUserIdx], failed: true };
+            return updated;
+          }
+          return cleaned;
+        });
       }
     } finally {
       setIsLoading(false);
@@ -1381,6 +1646,73 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
   return (
     <div style={{ maxWidth: '680px', margin: '0 auto' }}>
+      {/* AI ENGINE SELECTOR BAR */}
+      <div className="model-selector-bar">
+        <div className="model-selector-left">
+          <div className="model-tag-icon">
+            <Sparkles size={14} color="#0284c7" />
+          </div>
+          <span className="model-bar-title">এআই ইঞ্জিন:</span>
+          <div className="model-select-wrapper">
+            <select
+              value={selectedModel}
+              onChange={(e) => handleModelChange(e.target.value)}
+              className="model-select-dropdown"
+              title="এআই মডেল নির্বাচন করুন"
+            >
+              <optgroup label="🌐 Google Gemini (Cloud AI)">
+                <option value="gemini-2.5-flash">✨ Google Gemini 2.5 Flash (Latest · দ্রুততম)</option>
+                <option value="gemini-2.5-flash-lite">⚡ Google Gemini 2.5 Flash-Lite (অতি দ্রুত ও সাশ্রয়ী)</option>
+                <option value="gemini-3.7-flash">🧠 Google Gemini 3.7 Flash (Hybrid Thinking · চিন্তাশীল)</option>
+                <option value="gemini-3.8-flash">🔮 Google Gemini 3.8 Flash (Next-Gen · উন্নত চিন্তা)</option>
+                <option value="gemini-3.1-pro">🚀 Google Gemini 3.1 Pro (Flagship Thinking · গভীরতম যুক্তি)</option>
+                <option value="gemini-2.5-pro">🏛️ Google Gemini 2.5 Pro (জটিল আইনি বিশ্লেষণ)</option>
+                <option value="gemini-2.0-flash">💨 Google Gemini 2.0 Flash (লো-লেটেন্সি)</option>
+              </optgroup>
+              <optgroup label="🔒 Meta Llama (Local / Offline Deployment)">
+                <option value="local-llama">
+                  🦙 Meta Llama 3.1 Local (Ollama — ১০০% অফলাইন ও নিরাপদ)
+                </option>
+              </optgroup>
+            </select>
+          </div>
+
+          {selectedModel !== 'local-llama' && selectedModel !== 'gemini-2.0-flash' && (
+            <div className="thinking-selector-wrapper" title="থিংকিং লেভেল (Thinking Effort / Reasoning Budget)">
+              <span className="thinking-icon" title="চিন্তার বাজেট">🧠</span>
+              <select
+                value={thinkingLevel}
+                onChange={(e) => handleThinkingChange(e.target.value)}
+                className="thinking-select-dropdown"
+                title="মডেলের চিন্তার স্তর নির্বাচন করুন (Thinking Level)"
+              >
+                <option value="off">Off (তাৎক্ষণিক · ০ টোকেন)</option>
+                <option value="low">Low (সংক্ষিপ্ত · ১K)</option>
+                <option value="medium">Medium (ভারসাম্য · ২K)</option>
+                <option value="high">Deep (গভীর চিন্তা · ৪K)</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="model-selector-right">
+          {selectedModel === 'local-llama' ? (
+            <span
+              className={`model-badge-status ${ollamaStatus?.online ? 'badge-local-online' : 'badge-local-offline'}`}
+              title={ollamaStatus?.online ? "Ollama লোকাল সার্ভার সক্রিয় আছে" : "Ollama সার্ভার চালু নেই। টার্মিনালে চালান: ollama run llama3.1"}
+            >
+              <span className={`status-indicator-dot ${ollamaStatus?.online ? 'dot-online' : 'dot-offline'}`} />
+              {ollamaStatus?.online ? 'লোকাল সক্রিয় (অফলাইন)' : 'Ollama অফলাইন'}
+            </span>
+          ) : (
+            <span className="model-badge-status badge-cloud" title="গুগল ক্লাউড এআই ইঞ্জিন সক্রিয়">
+              <span className="status-indicator-dot dot-cloud" />
+              Google Cloud AI
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* STEP PROGRESS WIZARD */}
       <div className="stepper-container">
         <div className={`step-item ${step === 'welcome' ? 'active' : 'completed'}`}>
@@ -1404,196 +1736,323 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </div>
       </div>
 
-      {/* URGENT SAFETY & EMERGENCY HELPLINE BANNER (Non-blocking: questionnaires continue) */}
+      {/* URGENT SAFETY & EMERGENCY HELPLINE RIBBON (Collapsible & Non-blocking) */}
       {safetyMessage && (
         <div 
-          className="card" 
           style={{ 
-            border: '2px solid #e11d48', 
+            border: '1.5px solid #fca5a5', 
+            borderLeft: '5px solid #e11d48',
             backgroundColor: '#fff1f2', 
-            marginBottom: '20px',
-            boxShadow: '0 4px 12px rgba(225, 29, 72, 0.12)'
+            borderRadius: '10px',
+            marginBottom: '16px',
+            boxShadow: '0 2px 8px rgba(225, 29, 72, 0.08)',
+            padding: isSafetyCollapsed ? '8px 14px' : '14px 18px',
+            transition: 'all 0.2s ease-in-out'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-            <div style={{ 
-              backgroundColor: '#ffe4e6', 
-              color: '#e11d48', 
-              borderRadius: '10px', 
-              padding: '10px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              flexShrink: 0
-            }}>
-              <AlertTriangle size={26} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#be123c', margin: 0 }}>
-                  জরুরি নিরাপত্তা সহায়তা (হেল্পলাইন: ১৬৪৩০ / ১০৯ / ৯৯৯)
-                </h3>
+          {isSafetyCollapsed ? (
+            /* COMPACT SLIM RIBBON (Only ~40px high) */
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flexWrap: 'wrap' }}>
+                <AlertTriangle size={18} color="#e11d48" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '13.5px', fontWeight: '700', color: '#be123c', whiteSpace: 'nowrap' }}>
+                  জরুরি হেল্পলাইন:
+                </span>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => window.open('tel:16430')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: '#e11d48',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '5px',
+                      padding: '3px 9px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                    title="১৬৪৩০-এ কল করুন"
+                  >
+                    <PhoneCall size={12} /> ১৬৪৩০
+                  </button>
+                  <button
+                    onClick={() => window.open('tel:109')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: '#ffffff',
+                      color: '#be123c',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      padding: '3px 8px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                    title="১০৯-এ কল করুন"
+                  >
+                    <PhoneCall size={12} /> ১০৯
+                  </button>
+                  <button
+                    onClick={() => window.open('tel:999')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: '#ffffff',
+                      color: '#be123c',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      padding: '3px 8px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                    title="৯৯৯-এ কল করুন"
+                  >
+                    <PhoneCall size={12} /> ৯৯৯
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
-                  className="btn btn-outline"
+                  onClick={() => playVoice(safetyMessage)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '4px',
                     fontSize: '12px',
-                    padding: '4px 10px',
-                    borderColor: '#fda4af',
+                    padding: '3px 8px',
+                    backgroundColor: 'white',
+                    border: '1px solid #fda4af',
+                    borderRadius: '5px',
                     color: '#be123c',
-                    backgroundColor: 'white'
+                    cursor: 'pointer'
                   }}
-                  onClick={() => playVoice(safetyMessage)}
+                  title="শুনুন"
                 >
                   {isLoadingAudio && currentPlayingText?.includes(safetyMessage) ? (
-                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত...</span></>
+                    <RefreshCw className="animate-spin" size={12} />
                   ) : isPlayingAudio && currentPlayingText?.includes(safetyMessage) ? (
-                    <><VolumeX size={14} /> <span>থামান</span></>
+                    <VolumeX size={12} />
                   ) : (
-                    <><Volume2 size={14} /> <span>শুনুন</span></>
+                    <Volume2 size={12} />
                   )}
+                  <span>শুনুন</span>
+                </button>
+                <button
+                  onClick={() => setIsSafetyCollapsed(false)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#be123c',
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '3px 6px'
+                  }}
+                >
+                  <span>বিস্তারিত</span>
+                  <ChevronDown size={14} />
                 </button>
               </div>
-              <p style={{ fontSize: '14px', lineHeight: '1.6', color: '#881337', margin: '0 0 12px 0', whiteSpace: 'pre-line' }}>
+            </div>
+          ) : (
+            /* EXPANDED DETAILED CARD */
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={20} color="#e11d48" />
+                  <h3 style={{ fontSize: '15.5px', fontWeight: '700', color: '#be123c', margin: 0 }}>
+                    জরুরি নিরাপত্তা সহায়তা (হেল্পলাইন: ১৬৪৩০ / ১০৯ / ৯৯৯)
+                  </h3>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button
+                    onClick={() => playVoice(safetyMessage)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      fontSize: '12px',
+                      padding: '4px 10px',
+                      color: '#be123c',
+                      backgroundColor: 'white',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {isLoadingAudio && currentPlayingText?.includes(safetyMessage) ? (
+                      <><RefreshCw className="animate-spin" size={13} /> <span>প্রস্তুত...</span></>
+                    ) : isPlayingAudio && currentPlayingText?.includes(safetyMessage) ? (
+                      <><VolumeX size={13} /> <span>থামান</span></>
+                    ) : (
+                      <><Volume2 size={13} /> <span>শুনুন</span></>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setIsSafetyCollapsed(true)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '3px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: '#9f1239',
+                      backgroundColor: 'white',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      padding: '4px 8px',
+                      cursor: 'pointer'
+                    }}
+                    title="ব্যানার সংক্ষেপ করুন"
+                  >
+                    <span>সংক্ষেপ করুন</span>
+                    <ChevronUp size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <p style={{ fontSize: '13.5px', lineHeight: '1.6', color: '#881337', margin: '0 0 10px 0', whiteSpace: 'pre-line' }}>
                 {safetyMessage}
               </p>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <button 
-                  className="btn btn-urgent" 
-                  style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
                   onClick={() => window.open('tel:16430')}
+                  style={{
+                    backgroundColor: '#e11d48',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '6px 13px',
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 2px rgba(225, 29, 72, 0.2)'
+                  }}
                 >
-                  <PhoneCall size={14} /> ১৬৪৩০-এ কল করুন
+                  <PhoneCall size={13} /> ১৬৪৩০-এ কল করুন
                 </button>
                 <button 
-                  className="btn btn-outline" 
-                  style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', borderColor: '#f43f5e', color: '#e11d48' }}
                   onClick={() => window.open('tel:109')}
+                  style={{
+                    backgroundColor: 'white',
+                    color: '#e11d48',
+                    border: '1px solid #f43f5e',
+                    borderRadius: '6px',
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
                 >
-                  <PhoneCall size={14} /> ১০৯ (নারী ও শিশু)
+                  <PhoneCall size={13} /> ১০৯ (নারী ও শিশু)
                 </button>
-                <span style={{ fontSize: '12.5px', color: '#9f1239', fontWeight: 500 }}>
-                  ✓ আপনার নিরাপত্তা সবার আগে। তবে আপনার আইনি অভিযোগ গ্রহণের প্রশ্নোত্তর নিচে চলমান রয়েছে।
+                <button 
+                  onClick={() => window.open('tel:999')}
+                  style={{
+                    backgroundColor: 'white',
+                    color: '#e11d48',
+                    border: '1px solid #f43f5e',
+                    borderRadius: '6px',
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <PhoneCall size={13} /> ৯৯৯ (জরুরি পুলিশ)
+                </button>
+                <span style={{ fontSize: '12px', color: '#9f1239', fontWeight: 500, marginLeft: 'auto' }}>
+                  ✓ আপনার নিরাপত্তা সবার আগে। প্রশ্নোত্তর নিচে চলমান রয়েছে।
                 </span>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* GLOBAL LLM ERROR BANNER (401, Disconnection, Token / Rate Limits) */}
+      {/* FLOATING TOAST NOTIFICATION (Connection errors, 502, 401, Rate limits) */}
       {llmError && (
         <div 
-          className="card" 
-          style={{ 
-            border: '2px solid #f43f5e', 
-            backgroundColor: '#fff1f2', 
-            marginBottom: '20px',
-            boxShadow: '0 4px 12px rgba(244, 63, 94, 0.12)'
+          className="toast-container"
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1.5px solid #fecdd3',
+            borderLeft: '5px solid #e11d48',
+            borderRadius: '12px',
+            boxShadow: '0 10px 25px -5px rgba(225, 29, 72, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+            padding: '14px 16px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
             <div style={{ 
               backgroundColor: '#ffe4e6', 
               color: '#e11d48', 
-              borderRadius: '10px', 
-              padding: '10px', 
+              borderRadius: '8px', 
+              padding: '8px', 
               display: 'flex', 
               alignItems: 'center', 
               justifyContent: 'center',
               flexShrink: 0
             }}>
               {llmError.errorType === 'authentication_error' || llmError.code === 401 ? (
-                <KeyRound size={26} />
-              ) : llmError.errorType === 'connection_error' ? (
-                <WifiOff size={26} />
+                <KeyRound size={20} />
+              ) : llmError.errorType === 'connection_error' || llmError.code === 502 ? (
+                <WifiOff size={20} />
+              ) : llmError.errorType === 'permission_error' ? (
+                <Mic size={20} />
+              ) : llmError.errorType === 'pdf_error' ? (
+                <FileText size={20} />
               ) : (
-                <AlertOctagon size={26} />
+                <AlertOctagon size={20} />
               )}
             </div>
 
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
-                <h3 style={{ fontSize: '17px', fontWeight: '700', color: '#9f1239', margin: 0 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                <h4 style={{ fontSize: '15px', fontWeight: '700', color: '#9f1239', margin: 0 }}>
                   {llmError.title}
-                </h3>
-                {llmError.code && (
-                  <span style={{ 
-                    fontSize: '12px', 
-                    fontWeight: '700', 
-                    padding: '2px 8px', 
-                    borderRadius: '6px', 
-                    backgroundColor: '#fecdd3', 
-                    color: '#881337',
-                    border: '1px solid #fda4af'
-                  }}>
-                    {typeof llmError.code === 'number' ? `Error ${llmError.code}` : llmError.code}
-                  </span>
-                )}
+                </h4>
+                <button
+                  onClick={() => setLlmError(null)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                  title="বন্ধ করুন (Dismiss)"
+                >
+                  <XCircle size={18} />
+                </button>
               </div>
 
-              <p style={{ fontSize: '14px', lineHeight: '1.6', color: '#881337', margin: '4px 0 10px' }}>
+              <p style={{ fontSize: '13.5px', lineHeight: '1.5', color: '#64748b', margin: '4px 0 0' }}>
                 {llmError.message}
               </p>
-
-              {/* Troubleshooting helper tips */}
-              <div style={{ backgroundColor: 'white', padding: '10px 14px', borderRadius: '8px', border: '1px solid #fecdd3', marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', fontWeight: '700', color: '#be123c', marginBottom: '4px' }}>
-                  সম্ভাব্য সমাধান (Troubleshooting):
-                </div>
-                <ul style={{ fontSize: '12px', color: '#475569', margin: 0, paddingLeft: '18px', lineHeight: '1.6' }}>
-                  {llmError.troubleshooting && llmError.troubleshooting.length > 0 ? (
-                    llmError.troubleshooting.map((tip, idx) => (
-                      <li key={idx}>{tip}</li>
-                    ))
-                  ) : llmError.code === 401 || llmError.errorType === 'authentication_error' ? (
-                    <>
-                      <li>প্রকল্পের <code>backend/.env</code> ফাইলে API কী বা ক্রেডেনশিয়াল (Vertex AI / OpenRouter) সঠিক আছে কি না তা যাচাই করুন।</li>
-                      <li>কী বা সেটিংস পরিবর্তন করলে ব্যাকএন্ড সার্ভার রিস্টার্ট করুন।</li>
-                    </>
-                  ) : llmError.code === 429 || llmError.errorType === 'rate_limit_error' ? (
-                    <>
-                      <li>মডেলের বর্তমান রিকোয়েস্ট লিমিট বা কোটা শেষ হয়েছে — কিছুক্ষণ অপেক্ষা করে পুনরায় চেষ্টা করুন।</li>
-                      <li>অথবা <code>backend/.env</code> ফাইলে ব্যাকআপ প্রোভাইডার কনফিগার করুন।</li>
-                    </>
-                  ) : llmError.code === 402 || llmError.errorType === 'token_credit_error' ? (
-                    <>
-                      <li>আপনার প্রোভাইডার একাউন্টে টোকেন ব্যালেন্স বা ক্রেডিট যোগ করুন।</li>
-                    </>
-                  ) : (
-                    <>
-                      <li>আপনার কম্পিউটার ও ব্যাকএন্ড সার্ভার (Port 8000) অথবা লোকাল এলএলএম সচল আছে কি না পরীক্ষা করুন।</li>
-                      <li>ইন্টারনেট সংযোগ চালু আছে কি না দেখুন।</li>
-                    </>
-                  )}
-                </ul>
-                {llmError.details && (
-                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #fecdd3', fontSize: '11px', color: '#64748b', fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                    <strong>Technical Details:</strong> {llmError.details}
-                  </div>
-                )}
-              </div>
-
-              {/* Action buttons */}
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn-primary"
-                  style={{ fontSize: '13px', padding: '7px 16px', backgroundColor: '#e11d48' }}
-                  disabled={isLoading}
-                  onClick={() => handleSendMessage(lastAttemptedMessage || undefined)}
-                >
-                  <RefreshCw className={isLoading ? 'animate-spin' : ''} size={14} /> পুনরায় চেষ্টা করুন (Retry)
-                </button>
-                <button
-                  className="btn btn-outline"
-                  style={{ fontSize: '13px', padding: '7px 14px', borderColor: '#fda4af', color: '#9f1239', backgroundColor: 'white' }}
-                  onClick={() => setLlmError(null)}
-                >
-                  <XCircle size={14} /> বন্ধ করুন (Dismiss)
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -1652,68 +2111,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </div>
       )}
 
-      {/* SCREEN: TOKEN BUDGET CONTINUATION DIALOG */}
-      {step === 'continuation' && (
-        <div className="card" style={{ border: '2px solid #0284c7', backgroundColor: '#f0f9ff' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#0284c7' }}>
-              <ArrowRightCircle size={32} />
-              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>টোকেন ও বিস্তারিত বিশ্লেষণ সম্মতি</h2>
-            </div>
-            {continuationPrompt && (
-              <button
-                className="btn btn-outline"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '13px',
-                  padding: '6px 12px',
-                  borderColor: '#bae6fd',
-                  color: '#0284c7',
-                  backgroundColor: 'white'
-                }}
-                onClick={() => playVoice(continuationPrompt)}
-              >
-                {isLoadingAudio && currentPlayingText === continuationPrompt ? (
-                  <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
-                ) : isPlayingAudio && currentPlayingText === continuationPrompt ? (
-                  <><VolumeX size={16} /> <span>থামান</span></>
-                ) : (
-                  <><Volume2 size={16} /> <span>শুনুন</span></>
-                )}
-              </button>
-            )}
-          </div>
-          <p style={{ fontSize: '15px', lineHeight: '1.7', marginBottom: '20px', color: '#0c4a6e' }}>
-            {continuationPrompt}
-          </p>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button
-              className="btn btn-outline"
-              style={{ flex: 1 }}
-              onClick={() => {
-                stopVoice();
-                setStep('recording');
-                setTextNarrative('');
-              }}
-            >
-              সংক্ষেপ করুন
-            </button>
-            <button
-              className="btn btn-primary"
-              style={{ flex: 1.5, backgroundColor: '#0284c7' }}
-              disabled={isLoading}
-              onClick={() => {
-                stopVoice();
-                handleSendMessage("", true);
-              }}
-            >
-              {isLoading ? <RefreshCw className="animate-spin" size={18} /> : 'হ্যাঁ, পরবর্তী টোকেন সম্পন্ন করুন'}
-            </button>
-          </div>
-        </div>
-      )}
+
 
       {/* SCREEN 1: WELCOME */}
       {step === 'welcome' && (
@@ -1800,6 +2198,48 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               </p>
             </div>
             {renderVoiceTypingButton()}
+          </div>
+
+          {/* ACTION CHECKING SELECTION BLOCK (ALL CATEGORIES) */}
+          <div style={{ marginBottom: '18px', padding: '16px', backgroundColor: '#f0f9ff', borderRadius: '12px', border: '1.5px solid #bae6fd' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: '700', color: '#0369a1', marginBottom: '12px' }}>
+              <Scale size={18} style={{ color: '#0284c7' }} />
+              <span>আপনি কী ধরনের আইনি পদক্ষেপ বা প্রতিকার যাচাই করতে চান?</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ')}
+              >
+                <span>💍 দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ')}
+              >
+                <span>💼 বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ')}
+              >
+                <span>🏡 জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ')}
+              >
+                <span>🛡️ যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ</span>
+              </button>
+            </div>
           </div>
 
           {/* Voice Status Alert Box */}
@@ -1899,7 +2339,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       )}
 
       {/* SCREEN 3: FOLLOW-UP QUESTION & CHAT HISTORY */}
-      {step === 'follow_up' && (
+      {(step === 'follow_up' || step === 'continuation') && (
         <div className="card">
           {/* Ongoing Conversation History Bubble Thread */}
           {chatHistory.length > 0 && (
@@ -1919,10 +2359,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                   >
                     <div 
                       style={{
-                        backgroundColor: msg.role === 'user' ? '#0284c7' : '#ffffff',
-                        color: msg.role === 'user' ? '#ffffff' : '#1e293b',
-                        border: msg.role === 'user' ? 'none' : '1px solid #e2e8f0',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                        backgroundColor: msg.role === 'user' ? (msg.failed ? '#fff1f2' : '#0284c7') : '#ffffff',
+                        color: msg.role === 'user' ? (msg.failed ? '#9f1239' : '#ffffff') : '#1e293b',
+                        border: msg.role === 'user' ? (msg.failed ? '1.5px solid #fda4af' : 'none') : '1px solid #e2e8f0',
+                        boxShadow: msg.failed ? '0 1px 3px rgba(225, 29, 72, 0.1)' : '0 1px 2px rgba(0,0,0,0.04)',
                         padding: '10px 14px',
                         borderRadius: msg.role === 'user' ? '16px 16px 2px 16px' : '16px 16px 16px 2px',
                         fontSize: '14px',
@@ -1968,6 +2408,61 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                         </span>
                       )}
                     </div>
+                    {msg.role === 'user' && msg.failed && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                        <span style={{ fontSize: '12px', color: '#e11d48', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}>
+                          <AlertCircle size={13} /> বার্তাটি পাঠানো যায়নি
+                        </span>
+                        <button
+                          onClick={() => handleRetryMessage(msg.content, idx)}
+                          disabled={isLoading}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: '#fee2e2',
+                            border: '1px solid #fca5a5',
+                            color: '#be123c',
+                            borderRadius: '6px',
+                            padding: '3px 9px',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: isLoading ? 'not-allowed' : 'pointer',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="পুনরায় চেষ্টা করুন (Retry message)"
+                        >
+                          <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                          পুনরায় পাঠান
+                        </button>
+                      </div>
+                    )}
+                    {msg.role === 'assistant' && (msg.content.startsWith('⚠️ ত্রুটি:') || msg.failed) && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                        <button
+                          onClick={() => handleSendMessage(lastAttemptedMessage || undefined)}
+                          disabled={isLoading}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            backgroundColor: '#fee2e2',
+                            border: '1px solid #fca5a5',
+                            color: '#991b1b',
+                            borderRadius: '6px',
+                            padding: '3px 10px',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: isLoading ? 'not-allowed' : 'pointer'
+                          }}
+                          title="পুনরায় চেষ্টা করুন"
+                        >
+                          <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                          পুনরায় চেষ্টা করুন (Retry)
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 <div ref={chatEndRef} />
@@ -2169,44 +2664,152 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                 </p>
               </div>
             )
-          ) : (
+          ) : continuationPrompt ? (
+            <div style={{
+              backgroundColor: '#f0f9ff',
+              border: '2px solid #0284c7',
+              borderRadius: '14px',
+              padding: '18px',
+              marginBottom: '18px',
+              boxShadow: '0 4px 14px rgba(2, 132, 199, 0.08)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7' }}>
+                  <ArrowRightCircle size={22} />
+                  <span style={{ fontSize: '15px', fontWeight: '700' }}>টোকেন ও বিস্তারিত বিশ্লেষণ সম্মতি</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    backgroundColor: 'white',
+                    borderColor: '#bae6fd',
+                    color: '#0284c7'
+                  }}
+                  onClick={() => playVoice(continuationPrompt)}
+                >
+                  {isLoadingAudio && currentPlayingText === continuationPrompt ? (
+                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                  ) : isPlayingAudio && currentPlayingText === continuationPrompt ? (
+                    <><VolumeX size={14} /> <span>থামান</span></>
+                  ) : (
+                    <><Volume2 size={14} /> <span>শুনুন</span></>
+                  )}
+                </button>
+              </div>
+
+              <p style={{ fontSize: '14px', lineHeight: '1.7', marginBottom: '14px', color: '#0c4a6e' }}>
+                {continuationPrompt}
+              </p>
+
+              <div style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #bae6fd',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                marginBottom: '14px',
+                fontSize: '12.5px',
+                color: '#0369a1',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <Sparkles size={16} color="#0284c7" style={{ flexShrink: 0 }} />
+                <span>
+                  <strong>এআই সারসংক্ষেপ সুবিধা:</strong> মূল আইনি তথ্য (দেনমোহর, তারিখ, বকেয়া, বিবাদী) অক্ষুণ্ণ রেখে অতিরিক্ত টোকেন খরচ এড়াতে এআই বক্তব্যটি সংক্ষেপ করে সাথে সাথে বিশ্লেষণ সম্পন্ন করতে পারে।
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{
+                    flex: '1.5 1 220px',
+                    backgroundColor: '#0284c7',
+                    borderColor: '#0284c7',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '11px 16px',
+                    fontWeight: '600'
+                  }}
+                  disabled={isLoading || isSummarizing}
+                  onClick={handleSummarizeAndContinue}
+                >
+                  {isSummarizing ? (
+                    <><RefreshCw className="animate-spin" size={16} /> <span>এআই দিয়ে সংক্ষেপ করা হচ্ছে...</span></>
+                  ) : (
+                    <><Sparkles size={16} /> <span>✨ এআই দিয়ে সংক্ষেপ করে এগিয়ে যান</span></>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{
+                    flex: '1 1 140px',
+                    backgroundColor: 'white',
+                    borderColor: '#cbd5e1',
+                    color: '#475569',
+                    fontSize: '13.5px',
+                    padding: '11px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    fontWeight: '600'
+                  }}
+                  disabled={isLoading || isSummarizing}
+                  onClick={handleEditNarrative}
+                >
+                  <Edit3 size={15} /> <span>নিজে এডিট করুন</span>
+                </button>
+              </div>
+            </div>
+          ) : followUpQuestion && !isStreaming && !isLoading ? (
             <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
                 <span style={{ fontSize: '12px', fontWeight: '700', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   আইনি পরামর্শের জন্য প্রয়োজনীয় প্রশ্ন:
                 </span>
-                {followUpQuestion && (
-                  <button
-                    className="btn btn-outline"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      fontSize: '12px',
-                      padding: '4px 10px',
-                      flexShrink: 0,
-                      backgroundColor: 'white',
-                      borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
-                      color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
-                    }}
-                    onClick={() => playVoice(followUpQuestion)}
-                    title="প্রশ্নটি শুনুন"
-                  >
-                    {isLoadingAudio && currentPlayingText === followUpQuestion ? (
-                      <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
-                    ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
-                      <><VolumeX size={14} /> <span>থামান</span></>
-                    ) : (
-                      <><Volume2 size={14} /> <span>প্রশ্ন শুনুন</span></>
-                    )}
-                  </button>
-                )}
+                <button
+                  className="btn btn-outline"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    flexShrink: 0,
+                    backgroundColor: 'white',
+                    borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
+                    color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
+                  }}
+                  onClick={() => playVoice(followUpQuestion)}
+                  title="প্রশ্নটি শুনুন"
+                >
+                  {isLoadingAudio && currentPlayingText === followUpQuestion ? (
+                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                  ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
+                    <><VolumeX size={14} /> <span>থামান</span></>
+                  ) : (
+                    <><Volume2 size={14} /> <span>প্রশ্ন শুনুন</span></>
+                  )}
+                </button>
               </div>
               <h2 style={{ fontSize: '17px', fontWeight: '700', color: '#0c4a6e', margin: 0, lineHeight: '1.6' }}>
-                {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
+                {followUpQuestion}
               </h2>
             </div>
-          )}
+          ) : null}
 
           {/* VOICE-FIRST PROFILE & AGGRESSOR DETAILS ASSISTANT (Right Before Step 4) */}
           {isIntakeCompleted && !isOutOfScope && (
@@ -2665,6 +3268,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               {/* Quick Answer Shortcut Chips */}
               {(() => {
                 const isGenerating = isLoading || isStreaming;
+                if (isGenerating) return null;
+
                 const activeQuestion = followUpQuestion || 
                   (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
                      ? chatHistory[chatHistory.length - 1].content 
@@ -2674,7 +3279,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
                 return (
                   <div className="quick-chips-wrapper">
-                    <span style={{ fontSize: '11px', color: isGenerating ? '#94a3b8' : '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
                       সহায়ক উত্তর:
                     </span>
                     {chips.map((chip, idx) => {
@@ -2683,25 +3288,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                         <button
                           key={idx}
                           type="button"
-                          disabled={isGenerating}
                           className={`quick-chip ${isSelected ? 'active' : ''}`}
-                          onClick={() => {
-                            if (!isGenerating) {
-                              setTextNarrative(chip.text);
-                            }
-                          }}
-                          title={isGenerating ? 'উত্তর প্রস্তুত হওয়া পর্যন্ত অপেক্ষা করুন' : chip.text}
-                          style={
-                            isGenerating
-                              ? {
-                                  opacity: 0.45,
-                                  cursor: 'not-allowed',
-                                  backgroundColor: '#f1f5f9',
-                                  borderColor: '#e2e8f0',
-                                  color: '#94a3b8'
-                                }
-                              : undefined
-                          }
+                          onClick={() => setTextNarrative(chip.text)}
+                          title={chip.text}
                         >
                           {chip.label}
                         </button>

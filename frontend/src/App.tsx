@@ -81,19 +81,22 @@ export const App: React.FC = () => {
       {/* HEADER / NAVIGATION */}
       <header className="navbar">
         <div className="logo-area">
-          <div style={{ backgroundColor: '#d92d20', color: 'white', padding: '6px 10px', borderRadius: '8px', fontWeight: '800', fontSize: '18px' }}>
+          <div className="brand-logo-badge">
             অ
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span className="brand-title">অধিকার (Odhikar)</span>
+              <span className="brand-title">
+                <span className="brand-name-bn">অধিকার</span>{' '}
+                <span className="brand-name-en">(Odhikar)</span>
+              </span>
               <span className="logo-tag">BRAC Legal Aid</span>
             </div>
             <div className="brand-subtitle">AI Paralegal for Legal Aid Clients</div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <div className="nav-actions">
           {/* LLM Status Badge */}
           {llmStatus && (
             <button
@@ -139,16 +142,20 @@ export const App: React.FC = () => {
             <button
               className={`nav-btn ${activeTab === 'client' ? 'active' : ''}`}
               onClick={() => setActiveTab('client')}
+              title="ক্লায়েন্ট সেবা (Client Intake)"
             >
-              <MessageSquareText size={18} />
-              ক্লায়েন্ট সেবা (Client Intake)
+              <MessageSquareText size={17} />
+              <span className="nav-label-desktop">ক্লায়েন্ট সেবা (Client Intake)</span>
+              <span className="nav-label-mobile">ক্লায়েন্ট</span>
             </button>
             <button
               className={`nav-btn ${activeTab === 'paralegal' ? 'active' : ''}`}
               onClick={() => setActiveTab('paralegal')}
+              title="প্যারালিগ্যাল ড্যাশবোর্ড"
             >
-              <Users size={18} />
-              প্যারালিগ্যাল ড্যাশবোর্ড ({cases.length})
+              <Users size={17} />
+              <span className="nav-label-desktop">প্যারালিগ্যাল ড্যাশবোর্ড ({cases.length})</span>
+              <span className="nav-label-mobile">প্যারালিগ্যাল ({cases.length})</span>
             </button>
           </nav>
         </div>

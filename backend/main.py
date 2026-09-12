@@ -22,7 +22,7 @@ from pydantic import BaseModel
 import models
 import schemas
 from database import engine, get_db
-import ai_pipeline
+import agent as ai_pipeline
 from middleware import AIPipelineMiddleware, audit_safety_event, audit_llm_error_event, validate_narrative_input
 
 # Production static UI (Cloud Run image copies frontend/dist here)
@@ -119,20 +119,29 @@ def update_case(case_id: int, update_data: schemas.CaseUpdate, db: Session = Dep
     db.refresh(case)
     return case
 
+@app.get("/llm/models")
+def get_available_models():
+    """Returns available models (Gemini 2.5 / 2.0 and Local Llama) with real-time Ollama status."""
+    from utils.model_connection import get_available_models as fetch_models
+    return fetch_models()
+
 @app.get("/llm/status")
-def get_llm_status():
-    """Checks LLM connectivity, 401 authentication status, and token health."""
-    return ai_pipeline.check_llm_status()
+def get_llm_status(model: Optional[str] = None):
+    """Checks LLM connectivity, 401 authentication status, and token health for selected model."""
+    return ai_pipeline.check_llm_status(model)
 
 # Interactive Intake Endpoint with Token Continuation & LLM Error Handling
 @app.post("/intake/message", response_model=schemas.IntakeResponse)
 def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get_db)):
     try:
-        # Run through LangGraph pipeline with continuation support
+        # Run through LangGraph pipeline with continuation support, multi-model selection, and thinking level
         result = ai_pipeline.run_intake(
             transcript=req.transcript,
             existing_state=req.existing_state,
-            is_continuation=req.is_continuation
+            is_continuation=req.is_continuation,
+            is_summarized=req.is_summarized,
+            selected_model=req.selected_model,
+            thinking_level=req.thinking_level
         )
     except Exception as exc:
         err_info = ai_pipeline.parse_llm_error(exc)
@@ -210,6 +219,9 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
         extra_question_asked=result.get("extra_question_asked", False),
         is_complete=is_complete,
         action_summary=result.get("action_summary"),
+        taking_action_based_on_docs=result.get("taking_action_based_on_docs"),
+        doc_status=result.get("doc_status"),
+        awaiting_process_confirmation=result.get("awaiting_process_confirmation", False),
         requires_continuation=requires_continuation,
         continuation_prompt=continuation_prompt,
         rights_explanation=result.get("rights_explanation"),
@@ -219,7 +231,9 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
         chat_history=result.get("chat_history", []),
         case_id=case_id,
         llm_error=llm_error,
-        llm_error_details=llm_error_details
+        llm_error_details=llm_error_details,
+        selected_model=result.get("selected_model", req.selected_model),
+        thinking_level=result.get("thinking_level", req.thinking_level)
     )
 
 
@@ -245,7 +259,10 @@ async def process_intake_stream(req: schemas.IntakeRequest):
                     lambda: ai_pipeline.run_intake(
                         transcript=req.transcript,
                         existing_state=req.existing_state,
-                        is_continuation=req.is_continuation
+                        is_continuation=req.is_continuation,
+                        is_summarized=req.is_summarized,
+                        selected_model=req.selected_model,
+                        thinking_level=req.thinking_level
                     )
                 )
             except Exception as exc:
@@ -273,7 +290,9 @@ async def process_intake_stream(req: schemas.IntakeRequest):
                     ],
                     "case_id": None,
                     "llm_error": err_info["message_bn"],
-                    "llm_error_details": err_info
+                    "llm_error_details": err_info,
+                    "selected_model": req.selected_model,
+                    "thinking_level": req.thinking_level
                 }
                 yield f"data: {json.dumps(err_payload)}\n\n"
                 return
@@ -374,6 +393,9 @@ async def process_intake_stream(req: schemas.IntakeRequest):
                 "extra_question_asked": result.get("extra_question_asked", False),
                 "is_complete": is_complete,
                 "action_summary": result.get("action_summary"),
+                "taking_action_based_on_docs": result.get("taking_action_based_on_docs"),
+                "doc_status": result.get("doc_status"),
+                "awaiting_process_confirmation": result.get("awaiting_process_confirmation", False),
                 "requires_continuation": requires_continuation,
                 "continuation_prompt": continuation_prompt,
                 "rights_explanation": result.get("rights_explanation"),
@@ -383,7 +405,9 @@ async def process_intake_stream(req: schemas.IntakeRequest):
                 "chat_history": result.get("chat_history", []),
                 "case_id": case_id,
                 "llm_error": llm_error,
-                "llm_error_details": llm_error_details
+                "llm_error_details": llm_error_details,
+                "selected_model": result.get("selected_model", req.selected_model),
+                "thinking_level": result.get("thinking_level", req.thinking_level)
             }
             yield f"data: {json.dumps(final_payload)}\n\n"
         except Exception as outer_err:
@@ -401,6 +425,28 @@ async def process_intake_stream(req: schemas.IntakeRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+# Extra LLM Narrative Summarization Endpoint
+@app.post("/intake/summarize", response_model=schemas.SummarizeResponse)
+async def summarize_intake_narrative(req: schemas.SummarizeRequest):
+    """
+    Summarizes a long intake narrative using an extra LLM call to fit within token limits
+    while preserving all critical legal facts.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: ai_pipeline.summarize_narrative(req.transcript)
+        )
+        return result
+    except Exception as exc:
+        err_info = ai_pipeline.parse_llm_error(exc)
+        raise HTTPException(
+            status_code=500,
+            detail=err_info.get("message_bn") or "বিবরণ সংক্ষেপণে সমস্যা হয়েছে।"
+        )
 
 
 # Profile & Aggressor Details Finalization Endpoint (Right Before Step 4)
@@ -465,7 +511,7 @@ def finalize_profile(req: schemas.FinalizeProfileRequest, db: Session = Depends(
         "evidence": state_dict.get("evidence") or "[অপ্রতিষ্ঠিত]"
     }
 
-    import templates
+    from agent import templates
     draft = templates.generate_draft_complaint(category, facts)
 
     # 6. Synthesize personalized rights explanation

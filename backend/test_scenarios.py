@@ -2,7 +2,7 @@ import sys
 import os
 sys.stdout.reconfigure(encoding='utf-8')
 
-import ai_pipeline
+from agent import ai_pipeline
 
 def test_n1_baseline():
     print("\n" + "="*50)
@@ -310,10 +310,81 @@ def test_maintenance_cause_flow():
     assert r4.get('rights_explanation') is not None
     print("\n✓ Maintenance Cause Flow test PASSED!")
 
+def test_llm_summarization():
+    print("\n" + "="*60)
+    print("Testing LLM Summarization for Token Guardrails")
+    print("="*60)
+    long_narrative = (
+        "চার বছর আগে আমার বিয়ে হয়েছে। বিয়ের পর থেকে ওরা আমার বাবার কাছে বারবার যৌতুকের জন্য টাকা চাইতে থাকে। "
+        "বাবা জমি বিক্রি করে কিছু টাকা দিয়েছেন, প্রায় আশি হাজার টাকা। তারপরও ওদের চাওয়া শেষ হয় না। "
+        "কাবিনের টাকা আজও এক পয়সাও পাইনি। এখন ওরা আমাকে এবং আমার ছোট মেয়েকে বাড়ি ছেড়ে চলে যেতে বাধ্য করতেছে। "
+        "শাশুড়ি ও ভাশুররা হুমকি দিচ্ছে। কাবিননামার কাগজ বাবার কাছে রাখা আছে। আমি এখন কোথায় যাব, কী করব কিছুই বুঝতে পারছি না।"
+    )
+    summary_result = ai_pipeline.summarize_narrative(long_narrative)
+    summarized_text = summary_result.get("summarized_text", "")
+    print(f"Original Tokens: {summary_result.get('original_tokens')}")
+    print(f"Summarized Tokens: {summary_result.get('summarized_tokens')}")
+    print(f"Summarized Text:\n{summarized_text}")
+
+    assert len(summarized_text) > 0, "Summarized text should not be empty"
+    assert summary_result.get("summarized_tokens") < summary_result.get("original_tokens"), "Summarized tokens should be fewer"
+    
+    # Test running intake with is_summarized=True
+    intake_res = ai_pipeline.run_intake(transcript=summarized_text, is_summarized=True)
+    assert intake_res.get("requires_continuation") is False, "Summarized intake should not be blocked by token budget"
+    assert intake_res.get("category") is not None, "Should classify category from summarized text"
+    print("✓ LLM Summarization and Summarized Intake Flow test PASSED!")
+
+def test_unpaid_wages_flow():
+    print("\n" + "="*60)
+    print("Testing Scenario — Unpaid Wages Multi-Turn Flow (Agricultural Labor)")
+    print("="*60)
+    narrative = (
+        "ধান কাটার কাজ করছিলাম, দশ দিন। দিন হাজিরা সাড়ে পাঁচশ টাকা কথা ছিল। "
+        "কাজ শেষে দিল তিন হাজার, বাকিটা পরে দিবে বলল। দুই মাস হয়ে গেছে। "
+        "লিখিত কিছু নাই, গ্রামের লোক সবাই জানে।"
+    )
+    # Turn 1
+    r1 = ai_pipeline.run_intake(transcript=narrative)
+    print(f"Turn 1 Category: {r1.get('category')} (Confidence: {r1.get('confidence')}%)")
+    print(f"Turn 1 Evidence: {r1.get('evidence')}")
+    print(f"Turn 1 Follow-up Question: {r1.get('follow_up_question')}")
+    assert r1.get('category') == "unpaid_wages", "Category must be unpaid_wages"
+
+    # Turn 2
+    r2 = ai_pipeline.run_intake(transcript="কাজ শেষ করার পরও নানা অজুহাতে ঘোরাচ্ছে ও টালবাহানা করছে", existing_state=r1)
+    print(f"\nTurn 2 Current Stage: {r2.get('current_stage')}")
+    print(f"Turn 2 Follow-up Question: {r2.get('follow_up_question')}")
+
+    # Turn 3
+    r3 = ai_pipeline.run_intake(transcript="গত ১ মাস ধরে আমি এই কাজটি করেছি", existing_state=r2)
+    print(f"\nTurn 3 Current Stage: {r3.get('current_stage')}")
+    print(f"Turn 3 Follow-up Question: {r3.get('follow_up_question')}")
+
+    # Turn 4
+    r4 = ai_pipeline.run_intake(transcript="প্রায় ২ থেকে ৩ মাসের বেতন এখনও বকেয়া আছে", existing_state=r3)
+    print(f"\nTurn 4 Current Stage: {r4.get('current_stage')}")
+    print(f"Turn 4 Follow-up Question: {r4.get('follow_up_question')}")
+
+    # Turn 5: Client specifies desired solution (Court / Legal Aid)
+    r5 = ai_pipeline.run_intake(transcript="শ্রম আদালতে বা লিগ্যাল এইডে মামলা করে পুরো বকেয়া মজুরি আদায় করতে চাই", existing_state=r4)
+    print(f"\nTurn 5 Is Complete: {r5.get('is_complete')}")
+    print(f"Turn 5 Follow-up Question: {r5.get('follow_up_question')}")
+    print(f"Turn 5 Referral Clinic: {r5.get('referral_clinic')}")
+    draft = r5.get('draft_complaint') or ''
+    print(f"Turn 5 Draft Complaint (first 250 chars):\n{draft[:250]}...")
+
+    assert r5.get('is_complete') is True, "Turn 5 must complete intake instead of looping back to history question"
+    assert r5.get('follow_up_question') is None, "Follow up question must be None on completion"
+    assert r5.get('draft_complaint') is not None, "Draft complaint must be generated"
+    print("✓ Scenario Unpaid Wages Multi-Turn test PASSED!")
+
 if __name__ == "__main__":
     test_llm_error_handling()
+    test_llm_summarization()
     test_n6_safety_breakout()
     test_n1_baseline()
     test_maintenance_cause_flow()
     test_disambiguation_then_land_dispute()
     test_land_dispute_multiturn()
+    test_unpaid_wages_flow()
