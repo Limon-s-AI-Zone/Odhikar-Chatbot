@@ -415,6 +415,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [continuationPrompt, setContinuationPrompt] = useState<string | null>(null);
   const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
   const [safetyMessage, setSafetyMessage] = useState<string | null>(null);
+  const [isSafetyCollapsed, setIsSafetyCollapsed] = useState<boolean>(false); // Starts full on first detection
   const [rightsExplanation, setRightsExplanation] = useState<string | null>(null);
   const [draftComplaint, setDraftComplaint] = useState<string | null>(null);
   const [referralInfo, setReferralInfo] = useState<{ clinic: string; slot: string } | null>(null);
@@ -462,6 +463,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     setStep('welcome');
     setTextNarrative('');
     setSafetyMessage(null);
+    setIsSafetyCollapsed(false);
     setSessionState(null);
     setCategory(null);
     setChatHistory([]);
@@ -1168,6 +1170,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     setContinuationPrompt(null);
     if (!sessionState) {
       setSafetyMessage(null);
+      setIsSafetyCollapsed(false);
+    } else if (safetyMessage) {
+      // User is answering follow-up questions after seeing safety banner once -> Auto-collapse on second turn!
+      setIsSafetyCollapsed(true);
     }
     setLastAttemptedMessage(message || "");
     setIsLoading(true);
@@ -1320,10 +1326,14 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
         // 1. Safety Information Handling (Only show helpline on active/immediate danger)
         if (finalData.safety_flag) {
+          if (!safetyMessage) {
+            setIsSafetyCollapsed(false); // First detection -> show full expanded card
+          }
           setSafetyMessage(finalData.safety_message);
           onCaseSubmitted();
         } else {
           setSafetyMessage(null);
+          setIsSafetyCollapsed(false);
         }
 
         // 2. Token Budget Continuation
@@ -1404,10 +1414,14 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
         // 1. Safety Information Handling (Only show helpline on active/immediate danger)
         if (data.safety_flag) {
+          if (!safetyMessage) {
+            setIsSafetyCollapsed(false); // First detection -> show full expanded card
+          }
           setSafetyMessage(data.safety_message);
           onCaseSubmitted();
         } else {
           setSafetyMessage(null);
+          setIsSafetyCollapsed(false);
         } 
         
         if (data.requires_continuation) {
@@ -1545,82 +1559,258 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </div>
       </div>
 
-      {/* URGENT SAFETY & EMERGENCY HELPLINE BANNER (Non-blocking: questionnaires continue) */}
+      {/* URGENT SAFETY & EMERGENCY HELPLINE RIBBON (Collapsible & Non-blocking) */}
       {safetyMessage && (
         <div 
-          className="card" 
           style={{ 
-            border: '2px solid #e11d48', 
+            border: '1.5px solid #fca5a5', 
+            borderLeft: '5px solid #e11d48',
             backgroundColor: '#fff1f2', 
-            marginBottom: '20px',
-            boxShadow: '0 4px 12px rgba(225, 29, 72, 0.12)'
+            borderRadius: '10px',
+            marginBottom: '16px',
+            boxShadow: '0 2px 8px rgba(225, 29, 72, 0.08)',
+            padding: isSafetyCollapsed ? '8px 14px' : '14px 18px',
+            transition: 'all 0.2s ease-in-out'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-            <div style={{ 
-              backgroundColor: '#ffe4e6', 
-              color: '#e11d48', 
-              borderRadius: '10px', 
-              padding: '10px', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              flexShrink: 0
-            }}>
-              <AlertTriangle size={26} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#be123c', margin: 0 }}>
-                  জরুরি নিরাপত্তা সহায়তা (হেল্পলাইন: ১৬৪৩০ / ১০৯ / ৯৯৯)
-                </h3>
+          {isSafetyCollapsed ? (
+            /* COMPACT SLIM RIBBON (Only ~40px high) */
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flexWrap: 'wrap' }}>
+                <AlertTriangle size={18} color="#e11d48" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '13.5px', fontWeight: '700', color: '#be123c', whiteSpace: 'nowrap' }}>
+                  জরুরি হেল্পলাইন:
+                </span>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => window.open('tel:16430')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: '#e11d48',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '5px',
+                      padding: '3px 9px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                    title="১৬৪৩০-এ কল করুন"
+                  >
+                    <PhoneCall size={12} /> ১৬৪৩০
+                  </button>
+                  <button
+                    onClick={() => window.open('tel:109')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: '#ffffff',
+                      color: '#be123c',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      padding: '3px 8px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                    title="১০৯-এ কল করুন"
+                  >
+                    <PhoneCall size={12} /> ১০৯
+                  </button>
+                  <button
+                    onClick={() => window.open('tel:999')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: '#ffffff',
+                      color: '#be123c',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      padding: '3px 8px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      cursor: 'pointer'
+                    }}
+                    title="৯৯৯-এ কল করুন"
+                  >
+                    <PhoneCall size={12} /> ৯৯৯
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
-                  className="btn btn-outline"
+                  onClick={() => playVoice(safetyMessage)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '4px',
                     fontSize: '12px',
-                    padding: '4px 10px',
-                    borderColor: '#fda4af',
+                    padding: '3px 8px',
+                    backgroundColor: 'white',
+                    border: '1px solid #fda4af',
+                    borderRadius: '5px',
                     color: '#be123c',
-                    backgroundColor: 'white'
+                    cursor: 'pointer'
                   }}
-                  onClick={() => playVoice(safetyMessage)}
+                  title="শুনুন"
                 >
                   {isLoadingAudio && currentPlayingText?.includes(safetyMessage) ? (
-                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত...</span></>
+                    <RefreshCw className="animate-spin" size={12} />
                   ) : isPlayingAudio && currentPlayingText?.includes(safetyMessage) ? (
-                    <><VolumeX size={14} /> <span>থামান</span></>
+                    <VolumeX size={12} />
                   ) : (
-                    <><Volume2 size={14} /> <span>শুনুন</span></>
+                    <Volume2 size={12} />
                   )}
+                  <span>শুনুন</span>
+                </button>
+                <button
+                  onClick={() => setIsSafetyCollapsed(false)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: '#be123c',
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '3px 6px'
+                  }}
+                >
+                  <span>বিস্তারিত</span>
+                  <ChevronDown size={14} />
                 </button>
               </div>
-              <p style={{ fontSize: '14px', lineHeight: '1.6', color: '#881337', margin: '0 0 12px 0', whiteSpace: 'pre-line' }}>
+            </div>
+          ) : (
+            /* EXPANDED DETAILED CARD */
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={20} color="#e11d48" />
+                  <h3 style={{ fontSize: '15.5px', fontWeight: '700', color: '#be123c', margin: 0 }}>
+                    জরুরি নিরাপত্তা সহায়তা (হেল্পলাইন: ১৬৪৩০ / ১০৯ / ৯৯৯)
+                  </h3>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <button
+                    onClick={() => playVoice(safetyMessage)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      fontSize: '12px',
+                      padding: '4px 10px',
+                      color: '#be123c',
+                      backgroundColor: 'white',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {isLoadingAudio && currentPlayingText?.includes(safetyMessage) ? (
+                      <><RefreshCw className="animate-spin" size={13} /> <span>প্রস্তুত...</span></>
+                    ) : isPlayingAudio && currentPlayingText?.includes(safetyMessage) ? (
+                      <><VolumeX size={13} /> <span>থামান</span></>
+                    ) : (
+                      <><Volume2 size={13} /> <span>শুনুন</span></>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setIsSafetyCollapsed(true)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '3px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      color: '#9f1239',
+                      backgroundColor: 'white',
+                      border: '1px solid #fda4af',
+                      borderRadius: '5px',
+                      padding: '4px 8px',
+                      cursor: 'pointer'
+                    }}
+                    title="ব্যানার সংক্ষেপ করুন"
+                  >
+                    <span>সংক্ষেপ করুন</span>
+                    <ChevronUp size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <p style={{ fontSize: '13.5px', lineHeight: '1.6', color: '#881337', margin: '0 0 10px 0', whiteSpace: 'pre-line' }}>
                 {safetyMessage}
               </p>
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <button 
-                  className="btn btn-urgent" 
-                  style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
                   onClick={() => window.open('tel:16430')}
+                  style={{
+                    backgroundColor: '#e11d48',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '6px 13px',
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer',
+                    boxShadow: '0 1px 2px rgba(225, 29, 72, 0.2)'
+                  }}
                 >
-                  <PhoneCall size={14} /> ১৬৪৩০-এ কল করুন
+                  <PhoneCall size={13} /> ১৬৪৩০-এ কল করুন
                 </button>
                 <button 
-                  className="btn btn-outline" 
-                  style={{ padding: '8px 14px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', borderColor: '#f43f5e', color: '#e11d48' }}
                   onClick={() => window.open('tel:109')}
+                  style={{
+                    backgroundColor: 'white',
+                    color: '#e11d48',
+                    border: '1px solid #f43f5e',
+                    borderRadius: '6px',
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
                 >
-                  <PhoneCall size={14} /> ১০৯ (নারী ও শিশু)
+                  <PhoneCall size={13} /> ১০৯ (নারী ও শিশু)
                 </button>
-                <span style={{ fontSize: '12.5px', color: '#9f1239', fontWeight: 500 }}>
-                  ✓ আপনার নিরাপত্তা সবার আগে। তবে আপনার আইনি অভিযোগ গ্রহণের প্রশ্নোত্তর নিচে চলমান রয়েছে।
+                <button 
+                  onClick={() => window.open('tel:999')}
+                  style={{
+                    backgroundColor: 'white',
+                    color: '#e11d48',
+                    border: '1px solid #f43f5e',
+                    borderRadius: '6px',
+                    padding: '6px 12px',
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <PhoneCall size={13} /> ৯৯৯ (জরুরি পুলিশ)
+                </button>
+                <span style={{ fontSize: '12px', color: '#9f1239', fontWeight: 500, marginLeft: 'auto' }}>
+                  ✓ আপনার নিরাপত্তা সবার আগে। প্রশ্নোত্তর নিচে চলমান রয়েছে।
                 </span>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
