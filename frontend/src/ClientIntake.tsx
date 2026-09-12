@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { 
-  Send, AlertTriangle, PhoneCall, 
+  Send, AlertTriangle, AlertCircle, PhoneCall, 
   CheckCircle2, ChevronRight, RefreshCw, ArrowRightCircle,
   MessageSquare, User, Bot, WifiOff, KeyRound, AlertOctagon, XCircle,
   Volume2, VolumeX, FileText, Mic, Square, Radio,
@@ -17,6 +17,7 @@ interface IntakeProps {
 interface ChatMessage {
   role: string;
   content: string;
+  failed?: boolean;
 }
 
 export interface LlmErrorInfo {
@@ -397,6 +398,15 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [llmError, setLlmError] = useState<LlmErrorInfo | null>(null);
   const [lastAttemptedMessage, setLastAttemptedMessage] = useState<string>('');
 
+  // Auto-dismiss floating toast notification after 10 seconds
+  useEffect(() => {
+    if (!llmError) return;
+    const timer = setTimeout(() => {
+      setLlmError(null);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [llmError]);
+
   // Session & Chat History State
   const [sessionState, setSessionState] = useState<any>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -528,7 +538,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognitionClass) {
-      alert('আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।');
+      setLlmError({
+        title: 'ভয়েস টাইপিং অনুপলব্ধ',
+        message: 'আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।',
+        errorType: 'compatibility_error'
+      });
       return;
     }
 
@@ -536,7 +550,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
     } catch (err: any) {
-      alert('মাইক্রোফোনের অনুমতি প্রয়োজন। ব্রাউজারে Microphone "Allow" করুন।');
+      setLlmError({
+        title: 'মাইক্রোফোনের অনুমতি প্রয়োজন',
+        message: 'মাইক্রোফোনের অনুমতি দেওয়া হয়নি। ব্রাউজার সেটিংসে Microphone "Allow" করুন।',
+        errorType: 'permission_error'
+      });
       return;
     }
 
@@ -711,7 +729,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       });
     } catch (err: any) {
       console.error('PDF Generation Error:', err);
-      alert('পিডিএফ তৈরিতে সমস্যা হয়েছে: ' + (err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন'));
+      setLlmError({
+        title: 'পিডিএফ তৈরিতে সমস্যা',
+        message: 'পিডিএফ তৈরিতে সমস্যা হয়েছে: ' + (err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন।'),
+        errorType: 'pdf_error'
+      });
     } finally {
       setIsDownloadingPdf(false);
     }
@@ -891,6 +913,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
     if (!SpeechRecognitionClass) {
       setVoiceStatus('আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।');
+      setLlmError({
+        title: 'ভয়েস টাইপিং অনুপলব্ধ',
+        message: 'আপনার ব্রাউজারে ভয়েস টাইপিং সমর্থিত নয়। অনুগ্রহ করে Google Chrome বা Edge ব্রাউজার ব্যবহার করুন।',
+        errorType: 'compatibility_error'
+      });
       return;
     }
 
@@ -902,6 +929,11 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     } catch (err: any) {
       console.warn('Microphone permission denied:', err);
       setVoiceStatus('মাইক্রোফোনের অনুমতি প্রয়োজন। ব্রাউজারে Microphone "Allow" করুন।');
+      setLlmError({
+        title: 'মাইক্রোফোনের অনুমতি প্রয়োজন',
+        message: 'মাইক্রোফোনের অনুমতি দেওয়া হয়নি। ব্রাউজার সেটিংসে Microphone "Allow" করুন।',
+        errorType: 'permission_error'
+      });
       return;
     }
 
@@ -1118,6 +1150,13 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     setStep('follow_up');
   };
 
+  const handleRetryMessage = (content: string, failedIndex?: number) => {
+    if (failedIndex !== undefined) {
+      setChatHistory((prev) => prev.filter((_, idx) => idx !== failedIndex));
+    }
+    handleSendMessage(content);
+  };
+
   const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false, isSummarized: boolean = false) => {
     stopVoiceTyping();
     const message = textToSend !== undefined ? textToSend : textNarrative;
@@ -1256,7 +1295,16 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             details: errDetails.message_en || errDetails.raw_error || '',
             errorType: errDetails.error_type
           });
-          setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+          setChatHistory((prev) => {
+            const cleaned = prev.filter(m => m.content.trim() !== '');
+            const lastUserIdx = cleaned.map(m => m.role).lastIndexOf('user');
+            if (lastUserIdx !== -1) {
+              const updated = [...cleaned];
+              updated[lastUserIdx] = { ...updated[lastUserIdx], failed: true };
+              return updated;
+            }
+            return cleaned;
+          });
           return;
         }
 
@@ -1330,7 +1378,16 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
             details: errDetails.message_en || errDetails.raw_error || '',
             errorType: errDetails.error_type
           });
-          setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+          setChatHistory((prev) => {
+            const cleaned = prev.filter(m => m.content.trim() !== '');
+            const lastUserIdx = cleaned.map(m => m.role).lastIndexOf('user');
+            if (lastUserIdx !== -1) {
+              const updated = [...cleaned];
+              updated[lastUserIdx] = { ...updated[lastUserIdx], failed: true };
+              return updated;
+            }
+            return cleaned;
+          });
           return;
         }
 
@@ -1432,7 +1489,16 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           errorType: errType,
           troubleshooting: troubleshootingList
         });
-        setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+        setChatHistory((prev) => {
+          const cleaned = prev.filter(m => m.content.trim() !== '');
+          const lastUserIdx = cleaned.map(m => m.role).lastIndexOf('user');
+          if (lastUserIdx !== -1) {
+            const updated = [...cleaned];
+            updated[lastUserIdx] = { ...updated[lastUserIdx], failed: true };
+            return updated;
+          }
+          return cleaned;
+        });
       }
     } finally {
       setIsLoading(false);
@@ -1558,117 +1624,68 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </div>
       )}
 
-      {/* GLOBAL LLM ERROR BANNER (401, Disconnection, Token / Rate Limits) */}
+      {/* FLOATING TOAST NOTIFICATION (Connection errors, 502, 401, Rate limits) */}
       {llmError && (
         <div 
-          className="card" 
-          style={{ 
-            border: '2px solid #f43f5e', 
-            backgroundColor: '#fff1f2', 
-            marginBottom: '20px',
-            boxShadow: '0 4px 12px rgba(244, 63, 94, 0.12)'
+          className="toast-container"
+          style={{
+            backgroundColor: '#ffffff',
+            border: '1.5px solid #fecdd3',
+            borderLeft: '5px solid #e11d48',
+            borderRadius: '12px',
+            boxShadow: '0 10px 25px -5px rgba(225, 29, 72, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+            padding: '14px 16px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
             <div style={{ 
               backgroundColor: '#ffe4e6', 
               color: '#e11d48', 
-              borderRadius: '10px', 
-              padding: '10px', 
+              borderRadius: '8px', 
+              padding: '8px', 
               display: 'flex', 
               alignItems: 'center', 
               justifyContent: 'center',
               flexShrink: 0
             }}>
               {llmError.errorType === 'authentication_error' || llmError.code === 401 ? (
-                <KeyRound size={26} />
-              ) : llmError.errorType === 'connection_error' ? (
-                <WifiOff size={26} />
+                <KeyRound size={20} />
+              ) : llmError.errorType === 'connection_error' || llmError.code === 502 ? (
+                <WifiOff size={20} />
+              ) : llmError.errorType === 'permission_error' ? (
+                <Mic size={20} />
+              ) : llmError.errorType === 'pdf_error' ? (
+                <FileText size={20} />
               ) : (
-                <AlertOctagon size={26} />
+                <AlertOctagon size={20} />
               )}
             </div>
 
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
-                <h3 style={{ fontSize: '17px', fontWeight: '700', color: '#9f1239', margin: 0 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                <h4 style={{ fontSize: '15px', fontWeight: '700', color: '#9f1239', margin: 0 }}>
                   {llmError.title}
-                </h3>
-                {llmError.code && (
-                  <span style={{ 
-                    fontSize: '12px', 
-                    fontWeight: '700', 
-                    padding: '2px 8px', 
-                    borderRadius: '6px', 
-                    backgroundColor: '#fecdd3', 
-                    color: '#881337',
-                    border: '1px solid #fda4af'
-                  }}>
-                    {typeof llmError.code === 'number' ? `Error ${llmError.code}` : llmError.code}
-                  </span>
-                )}
+                </h4>
+                <button
+                  onClick={() => setLlmError(null)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#94a3b8',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                  title="বন্ধ করুন (Dismiss)"
+                >
+                  <XCircle size={18} />
+                </button>
               </div>
 
-              <p style={{ fontSize: '14px', lineHeight: '1.6', color: '#881337', margin: '4px 0 10px' }}>
+              <p style={{ fontSize: '13.5px', lineHeight: '1.5', color: '#64748b', margin: '4px 0 0' }}>
                 {llmError.message}
               </p>
-
-              {/* Troubleshooting helper tips */}
-              <div style={{ backgroundColor: 'white', padding: '10px 14px', borderRadius: '8px', border: '1px solid #fecdd3', marginBottom: '12px' }}>
-                <div style={{ fontSize: '12px', fontWeight: '700', color: '#be123c', marginBottom: '4px' }}>
-                  সম্ভাব্য সমাধান (Troubleshooting):
-                </div>
-                <ul style={{ fontSize: '12px', color: '#475569', margin: 0, paddingLeft: '18px', lineHeight: '1.6' }}>
-                  {llmError.troubleshooting && llmError.troubleshooting.length > 0 ? (
-                    llmError.troubleshooting.map((tip, idx) => (
-                      <li key={idx}>{tip}</li>
-                    ))
-                  ) : llmError.code === 401 || llmError.errorType === 'authentication_error' ? (
-                    <>
-                      <li>প্রকল্পের <code>backend/.env</code> ফাইলে API কী বা ক্রেডেনশিয়াল (Vertex AI / OpenRouter) সঠিক আছে কি না তা যাচাই করুন।</li>
-                      <li>কী বা সেটিংস পরিবর্তন করলে ব্যাকএন্ড সার্ভার রিস্টার্ট করুন।</li>
-                    </>
-                  ) : llmError.code === 429 || llmError.errorType === 'rate_limit_error' ? (
-                    <>
-                      <li>মডেলের বর্তমান রিকোয়েস্ট লিমিট বা কোটা শেষ হয়েছে — কিছুক্ষণ অপেক্ষা করে পুনরায় চেষ্টা করুন।</li>
-                      <li>অথবা <code>backend/.env</code> ফাইলে ব্যাকআপ প্রোভাইডার কনফিগার করুন।</li>
-                    </>
-                  ) : llmError.code === 402 || llmError.errorType === 'token_credit_error' ? (
-                    <>
-                      <li>আপনার প্রোভাইডার একাউন্টে টোকেন ব্যালেন্স বা ক্রেডিট যোগ করুন।</li>
-                    </>
-                  ) : (
-                    <>
-                      <li>আপনার কম্পিউটার ও ব্যাকএন্ড সার্ভার (Port 8000) অথবা লোকাল এলএলএম সচল আছে কি না পরীক্ষা করুন।</li>
-                      <li>ইন্টারনেট সংযোগ চালু আছে কি না দেখুন।</li>
-                    </>
-                  )}
-                </ul>
-                {llmError.details && (
-                  <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px dashed #fecdd3', fontSize: '11px', color: '#64748b', fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                    <strong>Technical Details:</strong> {llmError.details}
-                  </div>
-                )}
-              </div>
-
-              {/* Action buttons */}
-              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn-primary"
-                  style={{ fontSize: '13px', padding: '7px 16px', backgroundColor: '#e11d48' }}
-                  disabled={isLoading}
-                  onClick={() => handleSendMessage(lastAttemptedMessage || undefined)}
-                >
-                  <RefreshCw className={isLoading ? 'animate-spin' : ''} size={14} /> পুনরায় চেষ্টা করুন (Retry)
-                </button>
-                <button
-                  className="btn btn-outline"
-                  style={{ fontSize: '13px', padding: '7px 14px', borderColor: '#fda4af', color: '#9f1239', backgroundColor: 'white' }}
-                  onClick={() => setLlmError(null)}
-                >
-                  <XCircle size={14} /> বন্ধ করুন (Dismiss)
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -1933,10 +1950,10 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                   >
                     <div 
                       style={{
-                        backgroundColor: msg.role === 'user' ? '#0284c7' : '#ffffff',
-                        color: msg.role === 'user' ? '#ffffff' : '#1e293b',
-                        border: msg.role === 'user' ? 'none' : '1px solid #e2e8f0',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                        backgroundColor: msg.role === 'user' ? (msg.failed ? '#fff1f2' : '#0284c7') : '#ffffff',
+                        color: msg.role === 'user' ? (msg.failed ? '#9f1239' : '#ffffff') : '#1e293b',
+                        border: msg.role === 'user' ? (msg.failed ? '1.5px solid #fda4af' : 'none') : '1px solid #e2e8f0',
+                        boxShadow: msg.failed ? '0 1px 3px rgba(225, 29, 72, 0.1)' : '0 1px 2px rgba(0,0,0,0.04)',
                         padding: '10px 14px',
                         borderRadius: msg.role === 'user' ? '16px 16px 2px 16px' : '16px 16px 16px 2px',
                         fontSize: '14px',
@@ -1982,6 +1999,61 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                         </span>
                       )}
                     </div>
+                    {msg.role === 'user' && msg.failed && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                        <span style={{ fontSize: '12px', color: '#e11d48', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600' }}>
+                          <AlertCircle size={13} /> বার্তাটি পাঠানো যায়নি
+                        </span>
+                        <button
+                          onClick={() => handleRetryMessage(msg.content, idx)}
+                          disabled={isLoading}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: '#fee2e2',
+                            border: '1px solid #fca5a5',
+                            color: '#be123c',
+                            borderRadius: '6px',
+                            padding: '3px 9px',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: isLoading ? 'not-allowed' : 'pointer',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="পুনরায় চেষ্টা করুন (Retry message)"
+                        >
+                          <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                          পুনরায় পাঠান
+                        </button>
+                      </div>
+                    )}
+                    {msg.role === 'assistant' && (msg.content.startsWith('⚠️ ত্রুটি:') || msg.failed) && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                        <button
+                          onClick={() => handleSendMessage(lastAttemptedMessage || undefined)}
+                          disabled={isLoading}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            backgroundColor: '#fee2e2',
+                            border: '1px solid #fca5a5',
+                            color: '#991b1b',
+                            borderRadius: '6px',
+                            padding: '3px 10px',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: isLoading ? 'not-allowed' : 'pointer'
+                          }}
+                          title="পুনরায় চেষ্টা করুন"
+                        >
+                          <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                          পুনরায় চেষ্টা করুন (Retry)
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 <div ref={chatEndRef} />
