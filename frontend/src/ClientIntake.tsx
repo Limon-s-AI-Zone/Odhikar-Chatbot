@@ -486,7 +486,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     { id: 'gemini-3.1-pro', name: 'Google Gemini 3.1 Pro', badge: 'Gemini 3.1 Pro (Flagship Thinking)', is_local: false },
     { id: 'gemini-2.5-pro', name: 'Google Gemini 2.5 Pro', badge: 'Gemini 2.5 Pro', is_local: false },
     { id: 'gemini-2.0-flash', name: 'Google Gemini 2.0 Flash', badge: 'Gemini 2.0 Flash', is_local: false },
-    { id: 'local-llama', name: 'Meta Llama 3.1 (Local Ollama)', badge: 'Local Llama 3.1', is_local: true }
+    { id: 'local-llama', name: 'Meta Llama (Cloud / Local GGUF)', badge: 'Llama GGUF', is_local: true }
   ]);
   const [ollamaStatus, setOllamaStatus] = useState<{ online: boolean; models: string[]; has_llama: boolean; recommended_command?: string } | null>(null);
 
@@ -1669,9 +1669,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                 <option value="gemini-2.5-pro">🏛️ Google Gemini 2.5 Pro (জটিল আইনি বিশ্লেষণ)</option>
                 <option value="gemini-2.0-flash">💨 Google Gemini 2.0 Flash (লো-লেটেন্সি)</option>
               </optgroup>
-              <optgroup label="🔒 Meta Llama (Local / Offline Deployment)">
+              <optgroup label="🦙 Meta Llama (Cloud Run / Local)">
                 <option value="local-llama">
-                  🦙 Meta Llama 3.1 Local (Ollama — ১০০% অফলাইন ও নিরাপদ)
+                  🦙 Meta Llama GGUF (Cloud Run · বা লোকাল Ollama)
                 </option>
               </optgroup>
             </select>
@@ -1699,15 +1699,15 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           {selectedModel === 'local-llama' ? (
             <span
               className={`model-badge-status ${ollamaStatus?.online ? 'badge-local-online' : 'badge-local-offline'}`}
-              title={ollamaStatus?.online ? "Ollama লোকাল সার্ভার সক্রিয় আছে" : "Ollama সার্ভার চালু নেই। টার্মিনালে চালান: ollama run llama3.1"}
+              title={ollamaStatus?.online ? "Llama সার্ভার সক্রিয় (Cloud Run / Ollama)" : "Llama সার্ভার অফলাইন — LLM_BASE_URL / Ollama যাচাই করুন"}
             >
               <span className={`status-indicator-dot ${ollamaStatus?.online ? 'dot-online' : 'dot-offline'}`} />
-              {ollamaStatus?.online ? 'লোকাল সক্রিয় (অফলাইন)' : 'Ollama অফলাইন'}
+              {ollamaStatus?.online ? 'Llama সক্রিয়' : 'Llama অফলাইন'}
             </span>
           ) : (
-            <span className="model-badge-status badge-cloud" title="গুগল ক্লাউড এআই ইঞ্জিন সক্রিয়">
+            <span className="model-badge-status badge-cloud" title="গুগল Vertex AI ইঞ্জিন সক্রিয়">
               <span className="status-indicator-dot dot-cloud" />
-              Google Cloud AI
+              Google Vertex AI
             </span>
           )}
         </div>

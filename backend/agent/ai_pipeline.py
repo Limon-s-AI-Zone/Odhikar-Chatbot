@@ -32,6 +32,7 @@ from utils import (
     MODEL_REGISTRY,
     check_local_ollama_status,
     OPENROUTER_API_KEY,
+    GOOGLE_API_KEY,
     MODEL_NAME,
     TOKEN_BUDGET_LIMIT,
     check_llm_status,
@@ -39,6 +40,7 @@ from utils import (
     is_model_configured,
     get_error_message,
 )
+from utils.model_connection import get_service_account_path, resolve_vertex_project
 
 # Directory of BRAC Legal Aid Clinics and Helplines across Bangladesh
 LEGAL_AID_CLINIC_DIRECTORY = [
@@ -1961,9 +1963,9 @@ def run_intake(
             err_details = {
                 "status_code": 503,
                 "error_type": "connection_error",
-                "title": "লোকাল এলএলএম সংযোগ বিচ্ছিন্ন (Ollama Offline)",
-                "message_bn": "লোকাল এলএলএম (Ollama) সার্ভার চালু নেই। টার্মিনালে 'ollama run llama3.1' কমান্ডটি চালান অথবা Gemini ক্লাউড মডেল ব্যবহার করুন।",
-                "message_en": "Local Ollama server is offline. Please run 'ollama run llama3.1' or switch to Gemini."
+                "title": "Llama সার্ভার সংযোগ বিচ্ছিন্ন",
+                "message_bn": "Llama সার্ভার (Cloud Run / Ollama) সচল নেই। LLM_BASE_URL ও LLM_API_KEY যাচাই করুন, অথবা Gemini Vertex মডেল ব্যবহার করুন।",
+                "message_en": f"Llama server is offline at {ollama_status.get('base_url', '')}. Check LLM_BASE_URL/LLM_API_KEY or switch to Gemini Vertex."
             }
             history = list(existing_state.get("chat_history", [])) if existing_state else []
             if transcript and transcript.strip():
@@ -1994,37 +1996,51 @@ def run_intake(
                 "selected_model": model_to_use,
                 "thinking_level": thinking_to_use
             }
-    elif not is_model_configured():
-        err_details = get_error_message("authentication_error", "Missing or unconfigured LLM API key in backend/.env")
-        history = list(existing_state.get("chat_history", [])) if existing_state else []
-        if transcript and transcript.strip():
-            history.append({"role": "user", "content": transcript.strip()})
-        history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
-        return {
-            "transcript": transcript,
-            "client_own_words": transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else transcript),
-            "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
-            "safety_flag": False,
-            "safety_message": None,
-            "is_complete": False,
-            "current_stage": None,
-            "stages_covered": [],
-            "requires_continuation": False,
-            "continuation_prompt": None,
-            "follow_up_question": None,
-            "suggested_replies": None,
-            "extra_question_asked": False,
-            "rights_explanation": None,
-            "draft_complaint": None,
-            "referral_clinic": None,
-            "referral_slot": None,
-            "action_summary": None,
-            "chat_history": history,
-            "llm_error": err_details["message_bn"],
-            "llm_error_details": err_details,
-            "selected_model": model_to_use,
-            "thinking_level": thinking_to_use
-        }
+    else:
+        # Gemini / other cloud models — Vertex SA/key or OpenRouter, independent of LLM_PROVIDER=local
+        reg = MODEL_REGISTRY.get(model_to_use) or {}
+        provider = reg.get("provider")
+        vertex_ready = bool(get_service_account_path() or GOOGLE_API_KEY)
+        openrouter_ready = bool(OPENROUTER_API_KEY)
+        cloud_ready = (
+            (provider == "vertex" and (vertex_ready or bool(resolve_vertex_project())))
+            or (provider == "openrouter" and openrouter_ready)
+            or is_model_configured()
+        )
+        if not cloud_ready:
+            err_details = get_error_message(
+                "authentication_error",
+                "Missing Vertex service_account.json / GOOGLE_API_KEY or OpenRouter key in backend/.env"
+            )
+            history = list(existing_state.get("chat_history", [])) if existing_state else []
+            if transcript and transcript.strip():
+                history.append({"role": "user", "content": transcript.strip()})
+            history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
+            return {
+                "transcript": transcript,
+                "client_own_words": transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else transcript),
+                "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
+                "safety_flag": False,
+                "safety_message": None,
+                "is_complete": False,
+                "current_stage": None,
+                "stages_covered": [],
+                "requires_continuation": False,
+                "continuation_prompt": None,
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "rights_explanation": None,
+                "draft_complaint": None,
+                "referral_clinic": None,
+                "referral_slot": None,
+                "action_summary": None,
+                "chat_history": history,
+                "llm_error": err_details["message_bn"],
+                "llm_error_details": err_details,
+                "selected_model": model_to_use,
+                "thinking_level": thinking_to_use
+            }
 
     was_continuation = is_continuation or is_summarized or (existing_state and existing_state.get("is_continuation_confirmed"))
     was_disambiguation = bool(

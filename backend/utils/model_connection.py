@@ -9,7 +9,7 @@ Strictly supports:
 import os
 import urllib.request
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 
 env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
@@ -209,10 +209,8 @@ def get_provider_info(provider_override: Optional[str] = None) -> Dict[str, Any]
 
 def get_ollama_base_url() -> str:
     """
-    Reads the Ollama model server URL from the environment variables (.env).
-    Supports: OLLAMA_BASE_URL, OLLAMA_MODEL_URL, OLLAMA_URL, OLLAMA_HOST, LOCAL_LLM_URL,
-    or LLM_BASE_URL (if contains 11434 or provider is local).
-    Defaults to 'http://localhost:11434'.
+    Llama endpoint for the local-llama selector (Ollama or Cloud Run llama.cpp).
+    Prefers OLLAMA_* overrides, then LLM_BASE_URL (Cloud Run /v1), else localhost Ollama.
     """
     url = (
         os.getenv("OLLAMA_BASE_URL", "").strip()
@@ -220,14 +218,14 @@ def get_ollama_base_url() -> str:
         or os.getenv("OLLAMA_URL", "").strip()
         or os.getenv("OLLAMA_HOST", "").strip()
         or os.getenv("LOCAL_LLM_URL", "").strip()
-        or (LLM_BASE_URL_RAW if (LLM_PROVIDER_RAW in ("local", "ollama") or "11434" in LLM_BASE_URL_RAW) else "")
+        or LLM_BASE_URL_RAW
         or "http://localhost:11434"
     ).rstrip("/")
 
     if not url.startswith("http://") and not url.startswith("https://"):
         url = f"http://{url}"
 
-    # Strip trailing /v1 if provided, so native endpoints (/api/tags) work properly
+    # Strip trailing /v1 so /api/tags and /health work on the service root
     if url.endswith("/v1"):
         url = url[:-3]
 
@@ -235,8 +233,43 @@ def get_ollama_base_url() -> str:
 
 
 def get_ollama_v1_url() -> str:
-    """Returns the OpenAI-compatible /v1 endpoint for Ollama derived from .env."""
+    """OpenAI-compatible /v1 endpoint for Llama (Ollama or llama.cpp)."""
     return f"{get_ollama_base_url()}/v1"
+
+
+def _llama_auth_headers() -> Dict[str, str]:
+    headers = {"User-Agent": "Odhikar-AI", "Accept": "application/json"}
+    if LLM_API_KEY_RAW:
+        headers["Authorization"] = f"Bearer {LLM_API_KEY_RAW}"
+    return headers
+
+
+def _http_get_json(url: str, timeout: float = 8.0) -> Any:
+    req = urllib.request.Request(url, headers=_llama_auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _extract_model_ids(payload: Any) -> List[str]:
+    """Parse Ollama /api/tags or OpenAI /v1/models style responses."""
+    if not isinstance(payload, dict):
+        return []
+    models: List[str] = []
+    for m in payload.get("models") or []:
+        if isinstance(m, dict):
+            name = m.get("name") or m.get("model") or m.get("id")
+            if name:
+                models.append(str(name))
+        elif isinstance(m, str):
+            models.append(m)
+    for m in payload.get("data") or []:
+        if isinstance(m, dict):
+            name = m.get("id") or m.get("name") or m.get("model")
+            if name:
+                models.append(str(name))
+        elif isinstance(m, str):
+            models.append(m)
+    return models
 
 
 # Thinking Level Configurations for Reasoning Models (Gemini 2.5/3.7/3.8/3.1 Pro)
@@ -476,64 +509,102 @@ MODEL_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "local-llama": {
         "id": "local-llama",
-        "name": "Meta Llama 3.1 (Local Ollama)",
-        "badge": "Local Llama 3.1",
-        "tag": "Local · ১০০% অফলাইন",
+        "name": "Meta Llama (Cloud / Local GGUF)",
+        "badge": "Llama GGUF",
+        "tag": "Cloud Run · Ollama",
         "family": "llama",
         "provider": "local",
-        "model": "llama3.1",
+        "model": MODEL_NAME or "llama-3.2-1b-instruct",
         "base_url": get_ollama_v1_url(),
         "supports_thinking": False,
         "is_local": True,
-        "description": "১০০% অফলাইন ও সম্পূর্ণ নিরাপদ — ক্লায়েন্টের ডেটা আপনার পিসিতেই থাকে"
+        "description": "Self-hosted GGUF via OpenAI-compatible /v1 (Cloud Run llama.cpp or local Ollama)"
     }
 }
 
 
 def check_local_ollama_status() -> Dict[str, Any]:
-    """Checks if local Ollama server is running at the configured URL from .env and lists installed models."""
+    """
+    Health-check the configured Llama server.
+    Supports Ollama (/api/tags) and OpenAI-compatible llama.cpp (/v1/models, /health).
+    Sends LLM_API_KEY when present (required for Cloud Run llama-server).
+    """
     base_url = get_ollama_base_url()
+    last_error: Optional[str] = None
+
+    # 1) OpenAI-compatible /v1/models (llama.cpp Cloud Run)
     try:
-        req = urllib.request.Request(f"{base_url}/api/tags", headers={"User-Agent": "Odhikar-AI"})
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
-            if resp.status == 200:
-                data = json.loads(resp.read().decode("utf-8"))
-                models = [m.get("name") for m in data.get("models", [])]
-                has_llama = any("llama" in m.lower() for m in models)
+        data = _http_get_json(f"{base_url}/v1/models", timeout=8.0)
+        models = _extract_model_ids(data)
+        has_llama = any("llama" in m.lower() for m in models) or bool(models)
+        return {
+            "online": True,
+            "base_url": base_url,
+            "models": models,
+            "has_llama": has_llama,
+            "protocol": "openai",
+            "recommended_command": None if has_llama else "Check MODEL_NAME / LLM_BASE_URL for the Llama service.",
+        }
+    except Exception as e:
+        last_error = str(e)
+
+    # 2) Ollama native /api/tags
+    try:
+        data = _http_get_json(f"{base_url}/api/tags", timeout=3.0)
+        models = _extract_model_ids(data)
+        has_llama = any("llama" in m.lower() for m in models)
+        return {
+            "online": True,
+            "base_url": base_url,
+            "models": models,
+            "has_llama": has_llama,
+            "protocol": "ollama",
+            "recommended_command": None if has_llama else "ollama run llama3.1",
+        }
+    except Exception as e:
+        last_error = str(e)
+
+    # 3) Plain /health (llama.cpp often exposes this without listing models)
+    try:
+        req = urllib.request.Request(f"{base_url}/health", headers=_llama_auth_headers())
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            if 200 <= resp.status < 300:
+                fallback = MODEL_NAME or "llama-3.2-1b-instruct"
                 return {
                     "online": True,
                     "base_url": base_url,
-                    "models": models,
-                    "has_llama": has_llama,
-                    "recommended_command": None if has_llama else "ollama run llama3.1"
+                    "models": [fallback],
+                    "has_llama": True,
+                    "protocol": "health",
+                    "recommended_command": None,
                 }
     except Exception as e:
-        return {
-            "online": False,
-            "base_url": base_url,
-            "models": [],
-            "has_llama": False,
-            "error": str(e),
-            "recommended_command": "ollama run llama3.1"
-        }
-    return {"online": False, "base_url": base_url, "models": [], "has_llama": False, "recommended_command": "ollama run llama3.1"}
+        last_error = str(e)
+
+    return {
+        "online": False,
+        "base_url": base_url,
+        "models": [],
+        "has_llama": False,
+        "error": last_error or "unreachable",
+        "recommended_command": "Check LLM_BASE_URL and LLM_API_KEY for the Llama service (or run ollama locally).",
+    }
 
 
 def resolve_local_llama_model_name() -> str:
-    """Finds the best matching installed llama model in Ollama (e.g. llama3.1:8b, llama3.1:latest, etc.)."""
+    """Resolve Llama model id from env or the live server's model list."""
+    if MODEL_NAME and "gemini" not in MODEL_NAME.lower() and not MODEL_NAME.startswith("google/"):
+        return MODEL_NAME
     status = check_local_ollama_status()
     if status.get("online") and status.get("models"):
-        # Look for exact llama3.1 matches first
         for m in status["models"]:
-            if "llama3.1" in m.lower():
+            if "llama3.1" in m.lower() or "llama-3.1" in m.lower():
                 return m
-        # Look for any llama3 or llama match
         for m in status["models"]:
             if "llama" in m.lower():
                 return m
-        # Fallback to the first available model if any
         return status["models"][0]
-    return "llama3.1"
+    return "llama-3.2-1b-instruct"
 
 
 def get_available_models() -> Dict[str, Any]:
@@ -595,6 +666,18 @@ def get_llm_for_model(model_id: Optional[str] = None, thinking_level: Optional[s
     if target_id == "local-llama":
         mdl = resolve_local_llama_model_name()
         url = get_ollama_v1_url()
+        cache_key = f"{target_id}::{resolved_level}::{mdl}::{url}"
+        if cache_key in _client_cache:
+            return _client_cache[cache_key]
+        client = create_llm_client(
+            provider_override="local",
+            api_key=LLM_API_KEY_RAW or "local",
+            model_name=mdl,
+            base_url=url,
+            thinking_level=resolved_level,
+        )
+        _client_cache[cache_key] = client
+        return client
 
     client = create_llm_client(
         provider_override=prov,
@@ -650,14 +733,14 @@ def check_llm_status(model_id: Optional[str] = None) -> Dict[str, Any]:
                 "provider": "local",
                 "provider_name": provider_name,
                 "model": model_name,
-                "title": "লোকাল এলএলএম সংযোগ বিচ্ছিন্ন (Ollama Offline)",
-                "message_bn": "লোকাল এলএলএম (Ollama) সার্ভার চালু নেই। টার্মিনালে 'ollama run llama3.1' কমান্ডটি চালান অথবা Gemini ক্লাউড মডেল ব্যবহার করুন।",
-                "message_en": f"Local Ollama server is offline ({ollama_status.get('base_url', 'http://localhost:11434')}). Please run 'ollama run llama3.1' or switch to Gemini.",
+                "title": "Llama সার্ভার সংযোগ বিচ্ছিন্ন",
+                "message_bn": "Llama সার্ভার (Cloud Run / Ollama) সচল নেই। LLM_BASE_URL ও LLM_API_KEY যাচাই করুন, অথবা Gemini Vertex মডেল ব্যবহার করুন।",
+                "message_en": f"Llama server is offline ({ollama_status.get('base_url', '')}). Check LLM_BASE_URL/LLM_API_KEY or switch to Gemini Vertex.",
                 "troubleshooting_bn": [
-                    "টার্মিনালে 'ollama serve' অথবা 'ollama run llama3.1' চালান।",
-                    f"{ollama_status.get('base_url', 'http://localhost:11434')} এ সার্ভিসটি সচল আছে কি না পরীক্ষা করুন।",
-                    ".env ফাইলে OLLAMA_BASE_URL সঠিক আছে কিনা যাচাই করুন।",
-                    "অথবা ড্রপডাউন থেকে 'Google Gemini 2.5 Flash' ক্লাউড মডেল নির্বাচন করুন।"
+                    "Cloud Run Llama: LLM_BASE_URL ও LLM_API_KEY সঠিক আছে কি না দেখুন।",
+                    f"{ollama_status.get('base_url', '')} এ /v1/models বা /health রেসপন্স আসে কি না পরীক্ষা করুন।",
+                    "লোকাল Ollama: 'ollama serve' / 'ollama run llama3.1' চালান।",
+                    "অথবা ড্রপডাউন থেকে Google Gemini (Vertex AI) নির্বাচন করুন।"
                 ]
             }
 
