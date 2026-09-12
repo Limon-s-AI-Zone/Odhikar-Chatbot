@@ -222,3 +222,8 @@ backend/odhikar.db
 backend/uploads/
 backend/service_account.json
 **/service_account.json
+
+# Large local LLM weights (upload to GCS via deploy/upload-llama-model.sh)
+*.gguf
+deploy/llama-3.2-1b-instruct.Q4_K_M.gguf
+deploy/llama/model.gguf
