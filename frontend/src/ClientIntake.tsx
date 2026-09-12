@@ -48,6 +48,17 @@ export function getContextualChips(
         else if (reply.includes('স্বামীর কাছে')) label = 'স্বামীর কাছে আছে';
         else if (reply.includes('কাজী অফিস')) label = 'কাজী অফিসের তথ্য আছে';
         else if (reply.includes('কাগজ নেই') || reply.includes('দলিল নেই')) label = 'কোনো কাগজ নেই';
+        else if (reply.includes('সমস্ত প্রয়োজনীয়') || reply.includes('সমস্ত প্রয়োজনীয়') || reply.includes('প্রয়োজনীয় সকল কাগজপত্র')) label = 'সব কাগজপত্র প্রস্তুত আছে';
+        else if (reply.includes('কিছু কাগজপত্র আছে') || reply.includes('কিছু কাগজ আছে')) label = 'কিছু কাগজ আছে, সব নেই';
+        else if (reply.includes('কোনো লিখিত কাগজপত্র') || reply.includes('কোনো লিখিত প্রমাণ নেই')) label = 'কোনো কাগজপত্র নেই';
+        else if (reply.includes('প্রক্রিয়াটি সম্পন্ন করতে চাই') || reply.includes('প্রক্রিয়াটি সম্পন্ন করতে চাই')) label = 'হ্যাঁ, সম্পন্ন করতে চাই';
+        else if (reply.includes('না, এখন নয়') || reply.includes('পরে বিবেচনা')) label = 'না, এখন নয়';
+        else if (reply.includes('বিদ্যমান কাগজের') || reply.includes('বিদ্যমান কাগজেই')) label = 'বিদ্যমান কাগজেই অগ্রসর';
+        else if (reply.includes('বিকল্প কোনো উপায়') || reply.includes('বিকল্প কোনো উপায়')) label = 'বিকল্প উপায় চাই';
+        else if (reply.includes('দেনমোহর ও ভরণপোষণ আদায়ের')) label = 'দেনমোহর ও ভরণপোষণ';
+        else if (reply.includes('বকেয়া মজুরি ও ক্ষতিপূরণ')) label = 'বকেয়া মজুরি আদায়';
+        else if (reply.includes('জমিজমা দখল উদ্ধার')) label = 'জমিজমা দখল/স্বত্ব';
+        else if (reply.includes('যৌতুক ও পারিবারিক নির্যাতন')) label = 'যৌতুক ও নির্যাতন';
         else if (reply.includes('১ লাখ')) label = '১ লাখ টাকা';
         else if (reply.includes('২ লাখ')) label = '২ লাখ টাকা';
         else if (reply.includes('৫ লাখ')) label = '৫ লাখ টাকা';
@@ -87,6 +98,10 @@ export function getContextualChips(
         else if (reply.includes('জাল দলিল')) label = 'জাল দলিল তৈরি';
         else if (reply.includes('সীমানা কেটে')) label = 'সীমানা কেটে দখল';
         else if (reply.includes('ছাঁটাই')) label = 'কাজ থেকে ছাঁটাই';
+        else if (reply.includes('টালবাহানা') || reply.includes('ঘোরাচ্ছে')) label = 'অজুহাতে টালবাহানা';
+        else if (reply.includes('বিল পায়নি') || reply.includes('বিল পায়নি')) label = 'বিল পায়নি অজুহাত';
+        else if (reply.includes('কোনো কারণ ছাড়াই') || reply.includes('কোনো বিরোধ হয়নি') || reply.includes('কোনো বিরোধ হয়নি')) label = 'কোনো বিরোধ হয়নি';
+        else if (reply.includes('অংশ দিতে অস্বীকার')) label = 'ন্যায্য অংশ দিচ্ছে না';
         else if (reply.includes('নির্দিষ্ট মনে নেই') || reply.includes('মনে করা যাচ্ছে না')) label = 'নির্দিষ্ট মনে নেই';
         else if (reply.includes('কারও কাছেই তথ্য নেই')) label = 'কারও তথ্য নেই';
         else label = reply.slice(0, 18) + '...';
@@ -98,7 +113,33 @@ export function getContextualChips(
   const q = (question || '').toLowerCase();
   const cat = (category || '').toLowerCase();
 
-  // 0. Cause of dispute / why maintenance problem occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
+  // 0a. Cause of unpaid wages / why wages withheld ("মালিক বা ঠিকাদার কী কারণে আপনার মজুরি বকেয়া রেখেছেন বা কোনো বিরোধ হয়েছিল কি না?")
+  if (
+    (q.includes('কারণ') || q.includes('কেন') || q.includes('বিরোধ') || q.includes('ঝামেলা') || q.includes('সূত্রপাত') || q.includes('অজুহাত')) &&
+    (cat === 'unpaid_wages' || q.includes('মজুরি') || q.includes('বেতন') || q.includes('ঠিকাদার') || q.includes('মালিক'))
+  ) {
+    return [
+      { label: 'অজুহাতে টালবাহানা করছে', text: 'কাজ শেষ করার পরও নানা অজুহাতে ঘোরাচ্ছে ও টালবাহানা করছে' },
+      { label: 'বিল পায়নি বলে দিচ্ছে না', text: 'মালিকের কাছ থেকে বিল পায়নি বলে ঠিকাদার টাকা দিচ্ছে না' },
+      { label: 'মজুরি চাওয়ায় ছাঁটাই', text: 'বকেয়া মজুরি চাওয়ায় উল্টো কাজ থেকে ছাঁটাই/বের করে দিয়েছে' },
+      { label: 'কোনো বিরোধ হয়নি', text: 'কোনো বিরোধ হয়নি, কাজ শেষে কোনো কারণ ছাড়াই বেতন আটকে রেখেছে' }
+    ];
+  }
+
+  // 0b. Cause of land dispute / why land grabbed
+  if (
+    (q.includes('কারণ') || q.includes('সূত্রপাত') || q.includes('কীভাবে') || q.includes('বিরোধ') || q.includes('ঝামেলা')) &&
+    (cat === 'land_dispute' || q.includes('জমি'))
+  ) {
+    return [
+      { label: 'প্রতিপক্ষ দখল করেছে', text: 'প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে' },
+      { label: 'পৈতৃক ওয়ারিশ বিরোধ', text: 'পৈতৃক সম্পত্তির ওয়ারিশ ও ন্যায্য অংশ দিতে অস্বীকার করছে' },
+      { label: 'সীমানা কেটে দখল', text: 'জমির সীমানা কেটে জোর করে দখলের চেষ্টা করছে' },
+      { label: 'জাল দলিল তৈরি', text: 'জাল দলিল তৈরি করে জমির মালিকানা দাবি করছে' }
+    ];
+  }
+
+  // 0c. Cause of family dispute / why maintenance problem occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
   if (
     (q.includes('ঝামেলা') || q.includes('কারণ') || q.includes('কেন') || q.includes('সূত্রপাত')) && 
     (q.includes('ভরণপোষণ') || cat.includes('family') || cat.includes('dower'))
@@ -128,10 +169,11 @@ export function getContextualChips(
 
   // 2. Dower / Dowry / Claim amount
   if (
-    q.includes('দেনমোহর') || 
-    (q.includes('টাকা') && (q.includes('ধার্য') || q.includes('পরিমাণ') || q.includes('দাবি'))) ||
-    q.includes('কত টাকা') ||
-    q.includes('টাকার পরিমাণ')
+    cat !== 'unpaid_wages' && cat !== 'land_dispute' && (
+      q.includes('দেনমোহর') || 
+      (q.includes('টাকা') && (q.includes('ধার্য') || q.includes('দাবি'))) ||
+      ((cat === 'family_dower_maintenance' || cat === 'dowry') && (q.includes('কত টাকা') || q.includes('টাকার পরিমাণ')))
+    )
   ) {
     return [
       { label: '১ লাখ টাকা', text: 'দেনমোহর ধার্য করা হয়েছিল ১ লাখ টাকা' },
@@ -154,10 +196,11 @@ export function getContextualChips(
     ];
   }
 
-  // 4. Wages / Unpaid Salary Amount
+  // 4. Wages / Unpaid Salary Amount (Only when asking for amount / money)
   if (
-    (q.includes('মজুরি') || q.includes('বেতন') || q.includes('পাওনা')) && 
-    (q.includes('টাকা') || q.includes('কত') || q.includes('বকেয়া') || q.includes('বকেয়া'))
+    (cat === 'unpaid_wages' && (q.includes('টাকা') || q.includes('কত টাকা') || q.includes('পরিমাণ') || q.includes('বকেয়া') || q.includes('বকেয়া') || q.includes('পাওনা'))) ||
+    ((q.includes('মজুরি') || q.includes('বেতন') || q.includes('পাওনা')) && 
+     (q.includes('টাকা') || q.includes('কত টাকা') || q.includes('পরিমাণ') || q.includes('কত মাসের')))
   ) {
     return [
       { label: '১ মাসের বেতন', text: '১ মাসের পুরো মজুরি বা বেতন বকেয়া রয়েছে' },
@@ -426,6 +469,69 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [category, setCategory] = useState<string | null>(null);
   const isOutOfScope = category === 'out_of_scope' || sessionState?.category === 'out_of_scope';
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Multi-Model Selection State (Gemini 2.5 to latest, and Local Llama)
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    return localStorage.getItem('odhikar_selected_model') || 'gemini-2.5-flash';
+  });
+  // Thinking Level Selection State (Reasoning budget for Gemini models: off, low, medium, high)
+  const [thinkingLevel, setThinkingLevel] = useState<string>(() => {
+    return localStorage.getItem('odhikar_thinking_level') || 'medium';
+  });
+  const [availableModels, setAvailableModels] = useState<any[]>([
+    { id: 'gemini-2.5-flash', name: 'Google Gemini 2.5 Flash', badge: 'Gemini 2.5 Flash (Latest)', is_local: false },
+    { id: 'gemini-2.5-flash-lite', name: 'Google Gemini 2.5 Flash-Lite', badge: 'Gemini 2.5 Flash-Lite', is_local: false },
+    { id: 'gemini-3.7-flash', name: 'Google Gemini 3.7 Flash', badge: 'Gemini 3.7 Flash (Hybrid Thinking)', is_local: false },
+    { id: 'gemini-3.8-flash', name: 'Google Gemini 3.8 Flash', badge: 'Gemini 3.8 Flash (Next-Gen)', is_local: false },
+    { id: 'gemini-3.1-pro', name: 'Google Gemini 3.1 Pro', badge: 'Gemini 3.1 Pro (Flagship Thinking)', is_local: false },
+    { id: 'gemini-2.5-pro', name: 'Google Gemini 2.5 Pro', badge: 'Gemini 2.5 Pro', is_local: false },
+    { id: 'gemini-2.0-flash', name: 'Google Gemini 2.0 Flash', badge: 'Gemini 2.0 Flash', is_local: false },
+    { id: 'local-llama', name: 'Meta Llama 3.1 (Local Ollama)', badge: 'Local Llama 3.1', is_local: true }
+  ]);
+  const [ollamaStatus, setOllamaStatus] = useState<{ online: boolean; models: string[]; has_llama: boolean; recommended_command?: string } | null>(null);
+
+  const fetchAvailableModels = async () => {
+    try {
+      const res = await axios.get('/api/llm/models');
+      if (res.data?.models) {
+        setAvailableModels(res.data.models);
+      }
+      if (res.data?.ollama_status) {
+        setOllamaStatus(res.data.ollama_status);
+      }
+      if (res.data?.default_thinking_level && !localStorage.getItem('odhikar_thinking_level')) {
+        setThinkingLevel(res.data.default_thinking_level);
+      }
+    } catch (e) {
+      console.warn('Could not fetch model list:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchAvailableModels();
+  }, []);
+
+  const handleModelChange = (newModelId: string) => {
+    setSelectedModel(newModelId);
+    localStorage.setItem('odhikar_selected_model', newModelId);
+    if (newModelId === 'local-llama' && ollamaStatus && !ollamaStatus.online) {
+      setLlmError({
+        title: 'লোকাল Llama অফলাইন (Ollama Not Running)',
+        message: 'লোকাল Llama ব্যবহারের জন্য আপনার কম্পিউটারে Ollama চালু থাকতে হবে। টার্মিনালে চালান: ollama run llama3.1',
+        errorType: 'connection_error',
+        troubleshooting: [
+          "টার্মিনালে 'ollama serve' অথবা 'ollama run llama3.1' চালান।",
+          "http://localhost:11434 এ সার্ভিসটি সচল আছে কি না পরীক্ষা করুন।",
+          "অথবা ড্রপডাউন থেকে 'Google Gemini 2.5 Flash' ক্লাউড মডেল নির্বাচন করুন।"
+        ]
+      });
+    }
+  };
+
+  const handleThinkingChange = (newLevel: string) => {
+    setThinkingLevel(newLevel);
+    localStorage.setItem('odhikar_thinking_level', newLevel);
+  };
 
   // Personal & Aggressor Info State (Collected right before Step 4 to match nearby BRAC clinic)
   const [applicantName, setApplicantName] = useState('');
@@ -1206,7 +1312,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           transcript: message || "",
           existing_state: sessionState,
           is_continuation: isContinuation,
-          is_summarized: isSummarized
+          is_summarized: isSummarized,
+          selected_model: selectedModel,
+          thinking_level: thinkingLevel
         })
       });
 
@@ -1375,7 +1483,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
           transcript: message || "",
           existing_state: sessionState,
           is_continuation: isContinuation,
-          is_summarized: isSummarized
+          is_summarized: isSummarized,
+          selected_model: selectedModel,
+          thinking_level: thinkingLevel
         });
 
         const data = fallbackRes.data;
@@ -1536,6 +1646,73 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
   return (
     <div style={{ maxWidth: '680px', margin: '0 auto' }}>
+      {/* AI ENGINE SELECTOR BAR */}
+      <div className="model-selector-bar">
+        <div className="model-selector-left">
+          <div className="model-tag-icon">
+            <Sparkles size={14} color="#0284c7" />
+          </div>
+          <span className="model-bar-title">এআই ইঞ্জিন:</span>
+          <div className="model-select-wrapper">
+            <select
+              value={selectedModel}
+              onChange={(e) => handleModelChange(e.target.value)}
+              className="model-select-dropdown"
+              title="এআই মডেল নির্বাচন করুন"
+            >
+              <optgroup label="🌐 Google Gemini (Cloud AI)">
+                <option value="gemini-2.5-flash">✨ Google Gemini 2.5 Flash (Latest · দ্রুততম)</option>
+                <option value="gemini-2.5-flash-lite">⚡ Google Gemini 2.5 Flash-Lite (অতি দ্রুত ও সাশ্রয়ী)</option>
+                <option value="gemini-3.7-flash">🧠 Google Gemini 3.7 Flash (Hybrid Thinking · চিন্তাশীল)</option>
+                <option value="gemini-3.8-flash">🔮 Google Gemini 3.8 Flash (Next-Gen · উন্নত চিন্তা)</option>
+                <option value="gemini-3.1-pro">🚀 Google Gemini 3.1 Pro (Flagship Thinking · গভীরতম যুক্তি)</option>
+                <option value="gemini-2.5-pro">🏛️ Google Gemini 2.5 Pro (জটিল আইনি বিশ্লেষণ)</option>
+                <option value="gemini-2.0-flash">💨 Google Gemini 2.0 Flash (লো-লেটেন্সি)</option>
+              </optgroup>
+              <optgroup label="🔒 Meta Llama (Local / Offline Deployment)">
+                <option value="local-llama">
+                  🦙 Meta Llama 3.1 Local (Ollama — ১০০% অফলাইন ও নিরাপদ)
+                </option>
+              </optgroup>
+            </select>
+          </div>
+
+          {selectedModel !== 'local-llama' && selectedModel !== 'gemini-2.0-flash' && (
+            <div className="thinking-selector-wrapper" title="থিংকিং লেভেল (Thinking Effort / Reasoning Budget)">
+              <span className="thinking-icon" title="চিন্তার বাজেট">🧠</span>
+              <select
+                value={thinkingLevel}
+                onChange={(e) => handleThinkingChange(e.target.value)}
+                className="thinking-select-dropdown"
+                title="মডেলের চিন্তার স্তর নির্বাচন করুন (Thinking Level)"
+              >
+                <option value="off">Off (তাৎক্ষণিক · ০ টোকেন)</option>
+                <option value="low">Low (সংক্ষিপ্ত · ১K)</option>
+                <option value="medium">Medium (ভারসাম্য · ২K)</option>
+                <option value="high">Deep (গভীর চিন্তা · ৪K)</option>
+              </select>
+            </div>
+          )}
+        </div>
+
+        <div className="model-selector-right">
+          {selectedModel === 'local-llama' ? (
+            <span
+              className={`model-badge-status ${ollamaStatus?.online ? 'badge-local-online' : 'badge-local-offline'}`}
+              title={ollamaStatus?.online ? "Ollama লোকাল সার্ভার সক্রিয় আছে" : "Ollama সার্ভার চালু নেই। টার্মিনালে চালান: ollama run llama3.1"}
+            >
+              <span className={`status-indicator-dot ${ollamaStatus?.online ? 'dot-online' : 'dot-offline'}`} />
+              {ollamaStatus?.online ? 'লোকাল সক্রিয় (অফলাইন)' : 'Ollama অফলাইন'}
+            </span>
+          ) : (
+            <span className="model-badge-status badge-cloud" title="গুগল ক্লাউড এআই ইঞ্জিন সক্রিয়">
+              <span className="status-indicator-dot dot-cloud" />
+              Google Cloud AI
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* STEP PROGRESS WIZARD */}
       <div className="stepper-container">
         <div className={`step-item ${step === 'welcome' ? 'active' : 'completed'}`}>
@@ -2021,6 +2198,48 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               </p>
             </div>
             {renderVoiceTypingButton()}
+          </div>
+
+          {/* ACTION CHECKING SELECTION BLOCK (ALL CATEGORIES) */}
+          <div style={{ marginBottom: '18px', padding: '16px', backgroundColor: '#f0f9ff', borderRadius: '12px', border: '1.5px solid #bae6fd' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: '700', color: '#0369a1', marginBottom: '12px' }}>
+              <Scale size={18} style={{ color: '#0284c7' }} />
+              <span>আপনি কী ধরনের আইনি পদক্ষেপ বা প্রতিকার যাচাই করতে চান?</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ')}
+              >
+                <span>💍 দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ')}
+              >
+                <span>💼 বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ')}
+              >
+                <span>🏡 জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ')}
+              >
+                <span>🛡️ যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ</span>
+              </button>
+            </div>
           </div>
 
           {/* Voice Status Alert Box */}

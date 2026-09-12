@@ -28,6 +28,9 @@ _pb = get_prompt_builder()
 
 from utils import (
     llm,
+    get_llm_for_model,
+    MODEL_REGISTRY,
+    check_local_ollama_status,
     OPENROUTER_API_KEY,
     MODEL_NAME,
     TOKEN_BUDGET_LIMIT,
@@ -285,10 +288,39 @@ class IntakeDialogueOutput(BaseModel):
         description="Any newly extracted case facts (e.g. respondent, marriage_date, dower_amount, current_status, evidence, children, unpaid_wages_claim, address)"
     )
 
-dialogue_llm = llm.with_structured_output(IntakeDialogueOutput)
+# LLM Bundle Cache for dynamic model switching (Gemini 2.5 to latest, and Local Llama)
+_bundle_cache: Dict[str, Dict[str, Any]] = {}
+
+def get_model_bundle(model_id: Optional[str] = None, thinking_level: Optional[str] = None) -> Dict[str, Any]:
+    """Dynamically returns a cached bundle containing base LLM, structured outputs, and tool-bound LLMs."""
+    target_id = model_id or "gemini-2.5-flash"
+    lvl = (thinking_level or "medium").lower()
+    cache_key = f"{target_id}::{lvl}"
+    if cache_key in _bundle_cache:
+        return _bundle_cache[cache_key]
+
+    target_llm = get_llm_for_model(target_id, thinking_level=lvl)
+    bundle = {
+        "llm": target_llm,
+        "classification_llm": target_llm.with_structured_output(ClassificationOutput),
+        "extraction_llm": target_llm.with_structured_output(ExtractedFactsOutput),
+        "dialogue_llm": target_llm.with_structured_output(IntakeDialogueOutput),
+        "clinic_tool_llm": target_llm.bind_tools([find_nearby_legal_aid_center])
+    }
+    _bundle_cache[cache_key] = bundle
+    return bundle
+
+# Default legacy singleton aliases for backward compatibility with external imports
+_default_bundle = get_model_bundle("gemini-2.5-flash")
+clinic_tool_llm = _default_bundle["clinic_tool_llm"]
+classification_llm = _default_bundle["classification_llm"]
+extraction_llm = _default_bundle["extraction_llm"]
+dialogue_llm = _default_bundle["dialogue_llm"]
 
 # LangGraph State Schema
 class IntakeState(TypedDict):
+    selected_model: Optional[str]
+    thinking_level: Optional[str]
     audio_path: Optional[str]
     transcript: str
     client_own_words: str
@@ -342,6 +374,13 @@ class IntakeState(TypedDict):
     referral_slot: Optional[str]
     chat_history: List[Dict[str, Any]]
     action_summary: Optional[str]
+    awaiting_solution_confirmation: Optional[bool]
+    solution_confirmed: Optional[bool]
+    documents_asked: Optional[bool]
+    awaiting_process_confirmation: Optional[bool]
+    awaiting_partial_action_confirmation: Optional[bool]
+    doc_status: Optional[str]
+    taking_action_based_on_docs: Optional[str]
     llm_error: Optional[str]
     llm_error_details: Optional[Dict[str, Any]]
 
@@ -506,7 +545,8 @@ def safety_check_node(state: IntakeState) -> Dict[str, Any]:
         ("user", "{text}")
     ])
     try:
-        res = llm.invoke(prompt.format_messages(text=text_to_eval))
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["llm"].invoke(prompt.format_messages(text=text_to_eval))
         is_danger = ("DANGER" in res.content.upper()) or prev_safety_flag
         return {
             "safety_flag": is_danger,
@@ -557,13 +597,39 @@ def classification_node(state: IntakeState) -> Dict[str, Any]:
     """Classifies category and checks confidence."""
     if state.get("llm_error"):
         return {}
+
+    # If category is already established in a previous turn with high confidence, retain it
+    existing_cat = state.get("category")
+    existing_conf = state.get("confidence") or 0
+    if existing_cat and existing_cat != "unclassifiable" and existing_conf >= 65 and state.get("turn_count", 1) > 1:
+        return {
+            "category": existing_cat,
+            "confidence": existing_conf,
+            "classification_reason": state.get("classification_reason") or "পূর্ববর্তী ধাপে নির্ধারিত বিষয় অপরিবর্তিত রাখা হলো",
+            "disambiguation_needed": False
+        }
+
     text_to_eval = state.get("client_own_words") or state.get("transcript", "")
     latest_transcript = (state.get("transcript") or "").strip().lower()
     lower_eval = text_to_eval.strip().lower()
 
-    # Fast-path keyword shortcut for land dispute selection (e.g. from disambiguation chips or direct submission)
+    # Fast-path keyword shortcut for category selection (e.g. from disambiguation chips, action selection chips, or direct submission)
+    if any(k in latest_transcript for k in ["দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ", "পারিবারিক দেনমোহর বা ভরণপোষণ", "দেনমোহর বা ভরণপোষণ", "ভরণপোষণ", "পারিবারিক দেনমোহর", "দেনমোহর"]):
+        return {
+            "category": "family_dower_maintenance",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর দেনমোহর/ভরণপোষণ বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
+    if any(k in latest_transcript for k in ["বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ", "বকেয়া মজুরি বা শ্রমিকের পাওনা", "বকেয়া মজুরি", "শ্রমিকের পাওনা", "মজুরি পাওনা"]):
+        return {
+            "category": "unpaid_wages",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর বকেয়া মজুরি বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
     land_keywords = [
-        "জমিজমা সংক্রান্ত", "জমিজমা", "জমির বিরোধ", "জমি নিয়ে বিরোধ", "জমি নিয়ে বিরোধ",
+        "জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ", "জমিজমা সংক্রান্ত", "জমিজমা", "জমির বিরোধ", "জমি নিয়ে বিরোধ", "জমি নিয়ে বিরোধ",
         "সীমানা বেদখল", "জমি দখল", "পৈতৃক জমি", "জমিজমা সংক্রান্ত বিরোধে", "জমিজমা সংক্রান্ত বিরোধ"
     ]
     if any(k in latest_transcript for k in land_keywords) or any(k in lower_eval for k in ["জমিজমা সংক্রান্ত বিরোধ", "জমিজমা সংক্রান্ত"]):
@@ -573,13 +639,28 @@ def classification_node(state: IntakeState) -> Dict[str, Any]:
             "classification_reason": "ব্যবহারকারীর জমিজমা সংক্রান্ত বিষয় নির্বাচন",
             "disambiguation_needed": False
         }
+    if any(k in latest_transcript for k in ["যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ", "যৌতুক ও নির্যাতন", "যৌতুক"]):
+        return {
+            "category": "dowry",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর যৌতুক ও নির্যাতন সংক্রান্ত বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
+    if any(k in latest_transcript for k in ["অন্যান্য সাধারণ আইনি প্রতিকার", "অন্যান্য সাধারণ"]):
+        return {
+            "category": "general",
+            "confidence": 90,
+            "classification_reason": "ব্যবহারকারীর সাধারণ আইনি প্রতিকার নির্বাচন",
+            "disambiguation_needed": False
+        }
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", prompts.CLASSIFICATION_SYSTEM_PROMPT),
         ("user", "{text}")
     ])
     try:
-        res = classification_llm.invoke(prompt.format_messages(text=text_to_eval))
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["classification_llm"].invoke(prompt.format_messages(text=text_to_eval))
         if res is None:
             cat = "unclassifiable"
             conf = 0
@@ -625,7 +706,8 @@ def extraction_node(state: IntakeState) -> Dict[str, Any]:
         ("user", "Category: {category}\nNarrative: {text}")
     ])
     try:
-        res = extraction_llm.invoke(
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["extraction_llm"].invoke(
             prompt.format_messages(category=cat, text=text_to_eval)
         )
         if res is None:
@@ -733,6 +815,115 @@ def get_stage_fallback_question(category: Optional[str], stage: str, missing_ite
     Now delegates to PromptBuilder which loads from prompt_config.yaml."""
     return _pb.get_stage_fallback_question(category, stage, missing_item)
 
+def classify_document_status(text: str, evidence: str = "", category: str = "general") -> str:
+    """
+    Classifies client's document/evidence readiness as:
+    - 'all_docs': has necessary formal documents ready in hand (also matches 'sufficient')
+    - 'partial_docs': has some documents/witnesses, but lacks key documents
+    - 'no_docs': lacks formal documents / oral only
+    - 'unknown': not yet mentioned
+    """
+    combined = (text + " " + evidence).lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
+    
+    partial_docs_patterns = [
+        "কিছু কাগজপত্র আছে, তবে সব নেই", "কিছু কাগজপত্র আছে তবে সব নেই",
+        "কিছু কাগজপত্র আছে", "কিছু কাগজ আছে", "সব কাগজ নেই", "সব কাগজপত্র নেই",
+        "সব কাগজ নাই", "সব কাগজপত্র নাই", "সব নেই", "সব নাই",
+        "কাবিন স্বামীর কাছে", "কাবিননামা স্বামীর কাছে", "স্বামীর কাছে রেখে", "স্বামীর কাছে",
+        "দলিল প্রতিপক্ষের", "দলিল প্রতিপক্ষের কাছে", "দলিল পাচ্ছি না", "দলিল অন্যের কাছে",
+        "চাচাদের কাছে", "ভাইদের কাছে", "দখলদারদের কাছে", "অন্যের কাছে",
+        "হারিয়ে গেছে", "হারিয়ে গেছে", "খুঁজে পাচ্ছি না", "খুঁজে পাই না", "পুড়ে গেছে",
+        "নষ্ট হয়ে গেছে", "নষ্ট হয়ে গেছে", "কাবিন হারিয়ে", "কাবিন হারিয়েছে",
+        "কাবিননামা হারিয়ে", "কাবিননামা হারিয়েছে", "দলিল হারিয়ে", "দলিল হারিয়ে",
+        "কাজী অফিস থেকে নকল", "কাজী অফিসের নকল", "কাজী অফিসে যেতে হবে", "নকল তুলতে হবে",
+        "খতিয়ান আছে কিন্তু দলিল নেই", "খতিয়ান আছে কিন্তু দলিল নেই", "পরচা আছে কিন্তু দলিল নেই",
+        "দাখিলা আছে কিন্তু দলিল নেই", "হাজিরা খাতা আছে কিন্তু চুক্তিপত্র নেই", "হাজিরা খাতা আছে কিন্তু চুক্তি নেই",
+        "আইডি কার্ড আছে কিন্তু চুক্তি নেই", "মেডিকেল আছে কিন্তু কাবিন নেই", "মেডিকেল সনদ আছে কিন্তু কাবিন নেই",
+        "জিডি করেছি কিন্তু অন্য কাগজ নেই"
+    ]
+
+    no_docs_patterns = [
+        "কোনো লিখিত কাগজপত্র বা প্রমাণ নেই", "কোনো লিখিত কাগজপত্র নেই",
+        "কোনো লিখিত কাগজ নেই", "লিখিত কোনো কাগজ নেই", "লিখিত কোনো প্রমাণ নেই",
+        "কোনো কাগজ নেই", "কোনো কাগজ নাই", "কোনো কাগজপত্র নেই", "কোনো কাগজপত্র নাই",
+        "কাগজ নেই", "কাগজ নাই", "কোন কাগজ নেই", "কোন কাগজ নাই",
+        "কোনো ডকুমেন্ট নেই", "কোনো ডকুমেন্ট নাই", "ডকুমেন্ট নেই", "ডকুমেন্ট নাই",
+        "ডকুমেন্টস নেই", "ডকুমেন্টস নাই",
+        "লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই",
+        "কোনো লিখিত চুক্তি নেই", "লিখিত কোনো চুক্তি নেই", "লিখিত চুক্তি নেই", "লিখিত চুক্তি নাই",
+        "চুক্তি নাই", "চুক্তি নেই", "চুক্তিপত্র নাই", "চুক্তিপত্র নেই",
+        "কোনো প্রমাণ নেই", "কোনো প্রমাণ নাই", "প্রমাণ নাই", "প্রমাণ নেই",
+        "কিছুই নাই", "কিছুই নেই",
+        "মৌখিক চুক্তি", "মৌখিক কথা", "মৌখিক", "মৌখিকভাবে", "শুধু মৌখিক", "শুধুমাত্র মৌখিক",
+        "গ্রামের লোক জানে", "গ্রামের লোক সবাই জানে", "গ্রামের মানুষ জানে", "এলাকার লোক জানে",
+        "কোনো কাজী বা সাক্ষী নেই", "কারও কাছেই তথ্য নেই", "সরাসরি কোনো সাক্ষী নেই",
+        "মেডিকেল নাই", "প্রেসক্রিপশন নাই", "ডাক্তারি কাগজ নেই", "হাসপাতালের কাগজ নেই",
+        "কাবিন নাই", "কাবিন নেই", "কাবিননামা নাই", "কাবিননামা নেই", "কোনো কাবিন নেই",
+        "দলিল নাই", "দলিল নেই"
+    ]
+
+    all_docs_patterns = [
+        "সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে",
+        "সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে",
+        "সমস্ত প্রয়োজনীয় কাগজপত্র", "সমস্ত প্রয়োজনীয় কাগজপত্র",
+        "প্রয়োজনীয় সব কাগজ প্রস্তুত", "প্রয়োজনীয় সব কাগজ প্রস্তুত",
+        "সব কাগজপত্র প্রস্তুত আছে", "সব কাগজপত্র প্রস্তুত",
+        "সব কাগজ প্রস্তুত", "সব কাগজ প্রস্তুত আছে",
+        "সব কাগজপত্র আছে", "সব কাগজ আছে", "সব দলিল আছে",
+        "সব ডকুমেন্ট আছে", "সব ডকুমেন্টস আছে", "সব প্রমাণ আছে", "সব প্রমাণাদি আছে", "প্রমাণপত্র আছে",
+        "কাগজপত্র প্রস্তুত আছে", "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত",
+        "মূল দলিল আছে", "দলিল আছে", "দলিল ও পরচা প্রস্তুত", "দলিল ও খতিয়ান আছে", "দলিল ও খতিয়ান আছে",
+        "দলিল আমার কাছে", "মূল দলিল আমার কাছে", "দলিল সাথে আছে", "দলিল সংরক্ষিত আছে",
+        "কাবিননামা বাবার বাড়িতে আছে", "কাবিননামা বাবার বাড়িতে আছে",
+        "কাবিন বাবার বাড়িতে আছে", "কাবিন বাবার বাড়িতে আছে",
+        "কাবিননামা আছে", "কাবিন আছে", "কাবিননামা সাথে আছে", "কাবিন সাথে আছে",
+        "কাবিননামা আমার সাথে", "কাবিননামা আমার কাছে", "এনআইডি ও কাবিননামা", "জাতীয় পরিচয়পত্র আছে",
+        "জাতীয় পরিচয়পত্র আছে", "এনআইডি আছে",
+        "হাজিরা খাতা ও আইডি কার্ড আছে", "হাজিরা খাতা ও স্লিপ আছে", "হাজিরা খাতা আছে",
+        "স্লিপ আছে", "কাজের চুক্তিপত্র আছে", "নিয়োগপত্র আছে", "নিয়োগপত্র ও আইডি কার্ড আছে",
+        "হ্যাঁ, কাবিননামা", "হ্যাঁ, প্রস্তুত আছে", "হ্যাঁ, সব কাগজ", "হ্যাঁ, দলিল আছে",
+        "প্রস্তুত আছে"
+    ]
+    
+    # Check partial docs first (handles 'কিছু কাগজ আছে, তবে সব নেই' and specific missing/withheld pieces)
+    if any(p.replace('ড়', 'ড়').replace('য়', 'য়') in combined for p in partial_docs_patterns):
+        return "partial_docs"
+    # Check no docs (explicitly oral / zero documents)
+    if any(p.replace('ড়', 'ড়').replace('য়', 'য়') in combined for p in no_docs_patterns):
+        return "no_docs"
+    # Check all docs ready
+    if any(p.replace('ড়', 'ড়').replace('য়', 'য়') in combined for p in all_docs_patterns):
+        return "all_docs"
+        
+    return "unknown"
+
+def check_user_confirmation(text: str) -> bool:
+    """Detects if client confirmed moving forward with the proposed solution or processing."""
+    if not text:
+        return False
+    t = text.strip().lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
+    confirm_patterns = [
+        "হ্যাঁ", "হ্যা", "সম্মতি", "সম্মত", "সম্মত আছি", "আমি সম্মত", "সম্মতি দিচ্ছি",
+        "ঠিক আছে", "এভাবে", "এভাবেই", "এভাবেই করতে চাই", "এভাবেই সমাধান চাই", "এভাবেই প্রস্তুত",
+        "অগ্রসর হতে চাই", "করুন", "প্রস্তুত করুন", "চাই", "অবশ্যই",
+        "সম্পন্ন করতে চাই", "প্রক্রিয়াটি সম্পন্ন করতে চাই", "প্রক্রিয়াটি সম্পন্ন করতে চাই",
+        "বিদ্যমান কাগজেই অগ্রসর", "বিদ্যমান কাগজের ভিত্তিতেই", "বিদ্যমান তথ্যের ভিত্তিতে",
+        "yes", "agree", "proceed", "confirmed", "ok", "sure"
+    ]
+    return any(p in t for p in confirm_patterns)
+
+def check_user_decline_or_alternative(text: str) -> bool:
+    """Detects if client declined processing or requested alternatives."""
+    if not text:
+        return False
+    t = text.strip().lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
+    decline_patterns = [
+        "না", "না, এখন নয়", "না এখন নয়", "পরে বিবেচনা", "পরে বিবেচনা করব",
+        "এখন নয়", "এখন নয়", "বিকল্প", "বিকল্প কোনো উপায়", "বিকল্প কোনো উপায়",
+        "বিকল্প চাই", "সালিশ চাই", "no", "later", "alternative"
+    ]
+    return any(p in t for p in decline_patterns)
+
 def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     """Identifies missing facts and formulates a dynamic, context-aware follow-up question."""
     if state.get("llm_error"):
@@ -759,16 +950,18 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
 
     prev_stage = state.get("current_stage")
     if prev_stage and prev_stage in stages_order and prev_stage not in existing_covered:
-        existing_covered.append(prev_stage)
+        if prev_stage != "history":
+            existing_covered.append(prev_stage)
 
     # Fact-based detection of stages from accumulated text
-    lower_all = (text_to_eval + " " + latest_user_text).lower()
+    lower_all = (text_to_eval + " " + latest_user_text).lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
     
     # 1. Cause: specific trigger/reason for conflict or separation
     if any(w in lower_all for w in [
         "যৌতুক", "দ্বিতীয় বিয়ে", "দ্বিতীয় বিয়ে", "জোরপূর্বক দখল", "বেদখল", "দখল করে",
         "ঝগড়া করে আলাদা", "ঝগড়া করে আলাদা", "মেরে বের করে", "তাড়িয়ে দিয়েছে", "তাড়িয়ে দিছে",
-        "বের করে দিয়েছে", "বের করে দিছে", "বাড়ি থেকে বের", "বাড়ি থেকে বের", "বাড়ি ছাড়তে বাধ্য", "বাড়ি ছাড়তে বাধ্য"
+        "বের করে দিয়েছে", "বের করে দিছে", "বাড়ি থেকে বের", "বাড়ি থেকে বের", "বাড়ি ছাড়তে বাধ্য", "বাড়ি ছাড়তে বাধ্য",
+        "টাকা চেয়েছিলাম", "টাকা চেয়েছিলাম", "টাকা চেয়েছি", "টাকা চেয়েছি"
     ]):
         if "cause" not in existing_covered:
             existing_covered.append("cause")
@@ -777,46 +970,344 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     # (NOT merely saying "বাবার বাড়িতে আছি" in one sentence and "কাবিনে লেখা ছিল" in another!)
     extracted_ev = state.get("evidence") or ""
     has_evidence_in_state = bool(extracted_ev and str(extracted_ev).strip().lower() not in ("[অপ্রতিষ্ঠিত]", "null", "", "none"))
+
+    # Auto-infer evidence from client's narrative if missing in state
+    if not has_evidence_in_state:
+        if any(w in lower_all for w in ["লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই", "কোনো লিখিত চুক্তি নেই", "লিখিত কোনো চুক্তি নেই", "লিখিত কাগজ নেই"]):
+            if any(w in lower_all for w in ["গ্রামের লোক", "গ্রামবাসী", "সাক্ষী", "সবাই জানে", "মানুষজন"]):
+                extracted_ev = "লিখিত কোনো চুক্তি নেই; মৌখিক চুক্তি এবং স্থানীয় গ্রামবাসী/সাক্ষী রয়েছে"
+            else:
+                extracted_ev = "লিখিত কোনো চুক্তি নেই, মৌখিক চুক্তি"
+            has_evidence_in_state = True
+        elif any(w in lower_all for w in ["গ্রামের লোক জানে", "গ্রামের লোক সবাই জানে", "গ্রামের মানুষ জানে", "এলাকার লোক জানে"]):
+            extracted_ev = "স্থানীয় গ্রামবাসী ও প্রত্যক্ষদর্শী সাক্ষী রয়েছেন"
+            has_evidence_in_state = True
+
     doc_possession_patterns = [
         "কাবিননামা আছে", "কাবিননামা নাই", "কাবিননামা নেই", "কাবিন আছে", "কাবিন নাই", "কাবিন নেই",
         "কাবিননামা আমার", "কাবিন আমার", "কাবিননামা সাথে", "কাবিন সাথে", "কাবিননামা কাছে", "কাবিন কাছে",
         "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "বাবার বাড়িতে আছে", "বাবার বাড়ি আছে", "বাবার বাড়িতে আছে", "বাবার বাড়ি আছে",
         "কাবিন স্বামীর কাছে", "কাবিননামা স্বামীর কাছে", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে",
+        "কাবিন হারিয়েছে", "কাবিন হারিয়েছে", "কাবিননামা হারিয়েছে", "কাবিননামা হারিয়েছে",
         "কাজী অফিস থেকে নকল", "কাজী অফিসের নকল", "কাজী অফিসে যেতে", "নকল তুলতে হবে", "কাজী অফিসের এলাকা",
         "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত", "সব কাগজ আমার কাছে", "সব কাগজপত্র আমার কাছে",
         "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই",
         "দলিল আছে", "দলিল নেই", "দলিল নাই", "দলিল সংরক্ষিত", "দলিল আমার", "দলিল সাথে", "দলিল প্রতিপক্ষের",
-        "খতিয়ান আছে", "খতিয়ান আছে", "খাজনার দাখিলা", "হাজিরা খাতা", "সর্দার সাক্ষী", "সহকর্মী সাক্ষী", "সাক্ষী আছে"
+        "খতিয়ান আছে", "খতিয়ান আছে", "খাজনার দাখিলা",
+        # Wage / Labor / Informal evidence & Oral contract patterns
+        "লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই",
+        "লিখিত কোনো চুক্তি নেই", "লিখিত চুক্তি নেই", "লিখিত চুক্তি নাই", "লিখিত কোনো কাগজ নেই", "লিখিত কাগজ নেই",
+        "কোনো লিখিত কাগজ নেই", "লিখিত কোনো প্রমাণ নেই", "লিখিত প্রমাণ নেই", "লিখিত প্রমাণ নাই",
+        "মৌখিক চুক্তি", "মৌখিক কথা", "মৌখিক চুক্তি ছিল", "মৌখিকভাবে",
+        "গ্রামের লোক জানে", "গ্রামের লোক সবাই জানে", "গ্রামের মানুষ জানে", "গ্রামের লোকজন জানে",
+        "গ্রামের লোক", "গ্রামের মানুষ", "এলাকার লোক জানে", "সবাই জানে", "মানুষজন জানে",
+        "সাক্ষী আছে", "সাক্ষী আছেন", "সাক্ষী", "সহকর্মী সাক্ষী", "সর্দার সাক্ষী", "মানুষ সাক্ষী", "লোক সাক্ষী",
+        "হাজিরা খাতা", "হাজিরা", "স্লিপ আছে", "স্লিপ নেই", "স্লিপ নাই", "খাতা নেই", "খাতা নাই"
     ]
-    has_evidence_info = has_evidence_in_state or any(p in lower_all for p in doc_possession_patterns)
+    has_evidence_info = has_evidence_in_state or any(p.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for p in doc_possession_patterns)
     if has_evidence_info:
         if "history" not in existing_covered:
             existing_covered.append("history")
 
-    # 3. Impact: current hardship, living condition, or residence
-    if any(w in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "জমিতে যেতে বাধা", "আলাদা"]):
+    # 3. Impact: current hardship, living condition, residence, or unpaid wage claim
+    wage_impact_patterns = [
+        "টাকা বকেয়া", "টাকা বকেয়া", "হাজার টাকা", "মাসিক বেতন", "মজুরি বকেয়া", "মজুরি বকেয়া",
+        "পাওনা আছে", "পাওনা টাকা", "টাকা দিচ্ছে না", "বেতন দিচ্ছে না", "ছাঁটাই", "কাজ থেকে বের"
+    ]
+    has_wage_impact = bool(state.get("unpaid_wages_claim")) or any(w in lower_all for w in wage_impact_patterns)
+    if (
+        any(w.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "আশ্রয়হীন", "জমিতে যেতে বাধা", "আলাদা"])
+        or (cat == "unpaid_wages" and has_wage_impact)
+    ):
         if "impact" not in existing_covered:
             existing_covered.append("impact")
 
     # 4. Desired Solution: specific remedy, action, or seeking advice
-    if any(w in lower_all for w in [
+    if any(w.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for w in [
         "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
+        "আদালতে মামলা", "আদালতে মামলা করে",
         "সালিশের মাধ্যমে", "শান্তিপূর্ণ মীমাংসা", "সালিশ চাই", "মীমাংসা চাই",
         "আইনি নোটিশ", "আদালতে যাব", "আদালতে যেতে",
         "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়",
+        "ভরণপোষণ চাই", "খরচ চাই", "দেনমোহর চাই", "পাওনা চাই", "টাকা চাই", "নিয়মিত খরচ", "নিয়মিত খরচ", "খরচ ও ভরণপোষণ",
         "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ",
         "তালাক", "উকিল", "আইনজীবী", "কি করব", "কী করব", "পরামর্শ চাই", "সমাধান কি", "সমাধান কী", "আইনি ব্যবস্থা", "কী করণীয়", "কি করণীয়"
     ]):
         if "desired_solution" not in existing_covered:
             existing_covered.append("desired_solution")
 
+    # 0A. Awaiting user confirmation to process (When client provided all docs)
+    was_awaiting_process = bool(state.get("awaiting_process_confirmation") or prev_stage == "confirm_process")
+    if was_awaiting_process:
+        if check_user_confirmation(latest_user_text) and not any(w in latest_user_text.lower() for w in ["না, এখন নয়", "না এখন নয়", "পরে বিবেচনা"]):
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": list(set(existing_covered + ["desired_solution", "confirm_process"])),
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "awaiting_process_confirmation": False,
+                "doc_status": "all_docs"
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+        elif check_user_decline_or_alternative(latest_user_text):
+            hold_msg = (
+                "ঠিক আছে। আপনার প্রয়োজনীয় সকল কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে। আপনি প্রস্তুত হলেই এই আইনি পদক্ষেপ গ্রহণের জন্য "
+                "আমাদের সাথে পুনরায় যোগাযোগ করতে পারেন। আপনার সহায়তায় ব্র্যাক লিগ্যাল এইড সর্বদা প্রস্তুত রয়েছে।"
+            )
+            return {
+                "is_complete": False,
+                "current_stage": "process_on_hold",
+                "stages_covered": existing_covered,
+                "follow_up_question": hold_msg,
+                "suggested_replies": [
+                    "হ্যাঁ, এখন প্রক্রিয়াটি সম্পন্ন করতে চাই",
+                    "অন্য কোনো আইনি প্রতিকার যাচাই করতে চাই"
+                ],
+                "extra_question_asked": False,
+                "awaiting_process_confirmation": True,
+                "doc_status": "all_docs"
+            }
+
+    # 0B. Awaiting partial docs action confirmation
+    was_awaiting_partial = bool(state.get("awaiting_partial_action_confirmation") or prev_stage == "partial_docs_action")
+    if was_awaiting_partial:
+        if check_user_confirmation(latest_user_text):
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": list(set(existing_covered + ["desired_solution", "confirm_partial_action"])),
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "awaiting_partial_action_confirmation": False,
+                "doc_status": "partial_docs",
+                "taking_action_based_on_docs": state.get("taking_action_based_on_docs")
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+        elif check_user_decline_or_alternative(latest_user_text) or "বিকল্প" in latest_user_text:
+            alt_q = (
+                "বিকল্প হিসেবে ইউনিয়ন পরিষদ চেয়ারম্যান বা স্থানীয় সালিশি বোর্ডের মাধ্যমে আপস-মীমাংসার চেষ্টা করা যেতে পারে। "
+                "আপনি কি এই বিকল্প সালিশে সমাধান করতে চান?"
+            )
+            return {
+                "is_complete": False,
+                "current_stage": "confirm_solution",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": alt_q,
+                "suggested_replies": [
+                    "হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই",
+                    "না, বিদ্যমান কাগজ দিয়েই আইনি পদক্ষেপ চাই"
+                ],
+                "extra_question_asked": False,
+                "awaiting_solution_confirmation": True,
+                "doc_status": "partial_docs"
+            }
+
+    # 0C. Legacy / ADR confirmation (when documents were missing/insufficient)
+    was_awaiting_confirmation = bool(state.get("awaiting_solution_confirmation") or prev_stage == "confirm_solution")
+    if was_awaiting_confirmation:
+        if check_user_confirmation(latest_user_text):
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": list(set(existing_covered + ["desired_solution", "confirm_solution"])),
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "awaiting_solution_confirmation": False
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+        else:
+            # Client asked for alternative (e.g. mediation / ADR)
+            if cat == "unpaid_wages":
+                alt_q = "বিকল্প হিসেবে ইউনিয়ন পরিষদ চেয়ারম্যান/মেম্বারের মাধ্যমে স্থানীয় সালিশে মালিকপক্ষকে ডাকা যেতে পারে, অথবা শ্রম অধিদপ্তরে আপস-মীমাংসার আবেদন করা যায়। আপনি কি সালিশি প্রক্রিয়ায় মীমাংসা করতে চান?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আইনি পদক্ষেপেই অগ্রসর হতে চাই"]
+            elif cat in ("family_dower_maintenance", "dowry"):
+                alt_q = "বিকল্প হিসেবে ইউনিয়ন পরিষদের চেয়ারম্যানের সালিশি বোর্ডের মাধ্যমে আপনার স্বামী ও শ্বশুরবাড়ির লোকজনকে ডেকে আপস-মীমাংসার চেষ্টা করা যেতে পারে। আপনি কি এই বিকল্প সালিশে সম্মত আছেন?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আদালতে মামলাই করতে চাই"]
+            elif cat == "land_dispute":
+                alt_q = "বিকল্প হিসেবে এলাকার গণ্যমান্য ব্যক্তি বা ইউনিয়ন পরিষদের মাধ্যমে স্থানীয় সালিশ বৈঠকের মাধ্যমে আপস-মীমাংসার চেষ্টা করা যায়। আপনি কি এই বিকল্পে সম্মত আছেন?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আদালতে মামলাই করতে চাই"]
+            else:
+                alt_q = "বিকল্প হিসেবে স্থানীয় সালিশি বৈঠকের মাধ্যমে সমাধানের চেষ্টা করা যেতে পারে। আপনি কি এই বিকল্পে সম্মত আছেন?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আদালতে মামলাই করতে চাই"]
+            return {
+                "is_complete": False,
+                "current_stage": "confirm_solution",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": alt_q,
+                "suggested_replies": alt_chips,
+                "extra_question_asked": False,
+                "missing_fields": ["solution_confirmation"],
+                "awaiting_solution_confirmation": True
+            }
+
+    # 1. Action checking chips inquiry: If client explicitly asks for action verification
+    action_chips = [
+        "দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ",
+        "বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ",
+        "জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ",
+        "যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ"
+    ]
+    is_action_chip = any(chip in latest_user_text for chip in action_chips)
+    if is_action_chip and not state.get("documents_asked"):
+        docs_q = _pb.get_required_docs_question(cat)
+        docs_chips = _pb.get_required_docs_chips(cat)
+        return {
+            "is_complete": False,
+            "current_stage": "history",
+            "stages_covered": ["problem"],
+            "follow_up_question": docs_q,
+            "suggested_replies": docs_chips,
+            "extra_question_asked": False,
+            "documents_asked": True,
+            "doc_status": "unknown"
+        }
+
+    # 2. Check document readiness response
+    current_doc_status = classify_document_status(latest_user_text, state.get("evidence") or extracted_ev, cat)
+    doc_status = current_doc_status if current_doc_status != "unknown" else (state.get("doc_status") or classify_document_status(text_to_eval, state.get("evidence") or extracted_ev, cat))
+
+    is_answering_docs = (
+        state.get("documents_asked")
+        or (state.get("turn_count", 1) > 1 and any(w in latest_user_text for w in [
+            "প্রয়োজনীয় কাগজপত্র", "প্রয়োজনীয় কাগজপত্র", "সব কাগজ", "সব কাগজপত্র",
+            "কিছু কাগজপত্র আছে", "কিছু কাগজ আছে", "কোনো লিখিত কাগজপত্র", "কোনো কাগজ নেই",
+            "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়িতে", "কাবিননামা আছে", "দলিল আছে",
+            "কাজী অফিসে", "স্বামীর কাছে", "প্রতিপক্ষের কাছে"
+        ]))
+    )
+
+    if is_answering_docs and current_doc_status != "unknown":
+        if current_doc_status in ("all_docs", "sufficient"):
+            confirm_q = _pb.get_confirm_process_question(cat)
+            confirm_chips = _pb.get_confirm_process_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "confirm_process",
+                "stages_covered": list(set(existing_covered + ["problem", "history", "desired_solution"])),
+                "follow_up_question": confirm_q,
+                "suggested_replies": confirm_chips,
+                "extra_question_asked": False,
+                "awaiting_process_confirmation": True,
+                "doc_status": "all_docs",
+                "documents_asked": True
+            }
+        elif current_doc_status in ("partial_docs", "insufficient"):
+            partial_action_text = _pb.get_partial_docs_action_text(cat, evidence=state.get("evidence") or extracted_ev)
+            partial_chips = _pb.get_partial_docs_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "partial_docs_action",
+                "stages_covered": list(set(existing_covered + ["problem", "history"])),
+                "follow_up_question": partial_action_text,
+                "suggested_replies": partial_chips,
+                "extra_question_asked": False,
+                "taking_action_based_on_docs": partial_action_text,
+                "awaiting_partial_action_confirmation": True,
+                "doc_status": "partial_docs",
+                "documents_asked": True
+            }
+        elif current_doc_status == "no_docs":
+            # If not providing any docs then process will continue across all categories
+            if not state.get("extra_question_asked"):
+                continuation_q = _pb.get_no_docs_continuation_question(cat)
+                continuation_chips = _pb.get_no_docs_chips(cat)
+                return {
+                    "is_complete": False,
+                    "current_stage": "history",
+                    "stages_covered": list(set(existing_covered + ["problem", "history"])),
+                    "follow_up_question": continuation_q,
+                    "suggested_replies": continuation_chips,
+                    "extra_question_asked": True,
+                    "doc_status": "no_docs",
+                    "documents_asked": True
+                }
+
+    # 3. Check if user provided their desired solution (or chose court/salish/remedy)
+    solution_provided = ("desired_solution" in existing_covered) or any(w.replace('ড়', 'ড়').replace('য়', 'য়') in latest_user_text.lower() for w in [
+        "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
+        "আদালতে মামলা", "সালিশ চাই", "মীমাংসা চাই", "আইনি ব্যবস্থা", "টাকা চাই", "পাওনা চাই",
+        "ভরণপোষণ চাই", "খরচ চাই", "দেনমোহর চাই", "পরামর্শ চাই", "সমাধান চাই"
+    ])
+    if solution_provided and "desired_solution" not in existing_covered:
+        existing_covered.append("desired_solution")
+
+    # -------------------------------------------------------------
+    # SOLUTION -> REQUIRED DOCUMENTS -> ALTERNATIVE CONFIRMATION FLOW:
+    # -------------------------------------------------------------
+    if solution_provided:
+        # Step A: Documents/proof not yet discussed or unknown -> ASK FOR DOCUMENTS/PROOF
+        if (not has_evidence_info or doc_status == "unknown") and turn_count < 6:
+            target_stage = "history"
+            missing_fields = ["documents_for_court"]
+            court_q = _pb.get_stage_fallback_question(cat, "history", missing_item="documents_for_court")
+            court_chips = _pb.get_suggested_replies(court_q, missing_fields, cat)
+            return {
+                "is_complete": False,
+                "current_stage": "history",
+                "stages_covered": existing_covered,
+                "follow_up_question": court_q,
+                "suggested_replies": court_chips,
+                "extra_question_asked": False,
+                "missing_fields": missing_fields,
+                "documents_asked": True
+            }
+
+        # Step B: User lacks enough documents (partial / insufficient) -> PROVIDE REQUIRED SOLUTION & CONFIRM
+        if doc_status in ("partial_docs", "insufficient") and not state.get("solution_confirmed") and turn_count < 6:
+            confirm_q = _pb.get_partial_docs_action_text(cat, evidence=state.get("evidence") or extracted_ev)
+            confirm_chips = _pb.get_partial_docs_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "partial_docs_action",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": confirm_q,
+                "suggested_replies": confirm_chips,
+                "extra_question_asked": False,
+                "missing_fields": ["solution_confirmation"],
+                "taking_action_based_on_docs": confirm_q,
+                "awaiting_partial_action_confirmation": True,
+                "doc_status": "partial_docs"
+            }
+
+        # Step C: User has sufficient documents, or no_docs flow continued, or already confirmed -> COMPLETE WITH TAILORED SOLUTION
+        if doc_status in ("all_docs", "sufficient", "no_docs") or state.get("solution_confirmed") or turn_count >= 6:
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": existing_covered,
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "doc_status": doc_status
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+
     # 2. If an extra fallback question was ALREADY asked and client just responded to it:
     if extra_question_asked:
         if "history" not in existing_covered:
             existing_covered.append("history")
-        # Do not return a hardcoded static question.
-        # Let execution flow to dialogue_llm so it dynamically generates the next question
-        # acknowledging the client's specific answer (e.g. Kazi office details, witnesses) from chat history.
 
     # 3. Check if client's response expresses "mone nei" or "document nei"
     is_uncertain, match_type = check_uncertainty_or_missing_doc(latest_user_text)
@@ -897,23 +1388,38 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     remaining_stages = [s for s in stages_order if s not in existing_covered]
     target_stage = remaining_stages[0] if remaining_stages else "complete"
 
-    # Enforce thorough intake depth:
-    # If the user selected desired_solution (e.g. court lawsuit) or reaches completion
-    # without clarifying essential documents/evidence, route to 'history' to ask about required filing documents!
-    if (target_stage == "complete" or "desired_solution" in existing_covered) and not has_evidence_info and turn_count < 6:
-        target_stage = "history"
-
-    # If all stages are covered (or target_stage is complete) AND essential documentation is covered, complete immediately!
-    if (target_stage == "complete" and has_evidence_info) or (len(existing_covered) >= 5 and has_evidence_info) or ("desired_solution" in existing_covered and has_evidence_info and len(existing_covered) >= 4) or (turn_count >= 6):
-        return {
-            "is_complete": True,
-            "current_stage": "complete",
-            "stages_covered": existing_covered,
-            "missing_fields": [],
-            "follow_up_question": None,
-            "suggested_replies": None,
-            "extra_question_asked": False
-        }
+    # If all stages are covered (or target_stage is complete):
+    if target_stage == "complete" or len(existing_covered) >= 5:
+        if doc_status in ("partial_docs", "insufficient") and not state.get("solution_confirmed") and turn_count < 6:
+            confirm_q = _pb.get_partial_docs_action_text(cat, evidence=state.get("evidence") or extracted_ev)
+            confirm_chips = _pb.get_partial_docs_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "partial_docs_action",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": confirm_q,
+                "suggested_replies": confirm_chips,
+                "extra_question_asked": False,
+                "missing_fields": ["solution_confirmation"],
+                "taking_action_based_on_docs": confirm_q,
+                "awaiting_partial_action_confirmation": True,
+                "doc_status": "partial_docs"
+            }
+        else:
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": existing_covered,
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "doc_status": doc_status
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
 
     # Assemble known facts extracted so far
     known = []
@@ -969,7 +1475,7 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             "   - কঠোর সতর্কতা: ক্লায়েন্ট যদি ইতিমধ্যে বলে থাকেন যে কাবিননামা/দলিল তাঁর কাছে বা সাথে আছে (যেমন 'আমার কাবিননামা আমার সাথেই আছে'), তবে কাবিননামা আছে কি না বা কার কাছে আছে তা কোনোভাবেই পুনরায় জিজ্ঞাসা করবেন না! সরাসরি তাদের আইনি সমাধান (আদালতে মামলা নাকি সালিশ) সম্পর্কে প্রশ্ন করুন।\n"
             "   - যদি target_stage='history' হয়: পূর্ববর্তী উত্তরে কোনো সালিশ বা আদালতের উল্লেখ থাকলে সেই অনুসারে প্রয়োজনীয় কাগজপত্র (কাবিননামা/দলিল/এনআইডি) প্রস্তুত আছে কি না তা প্রাসঙ্গিকভাবে জানতে চান।\n"
             "   - যদি target_stage='desired_solution' হয়: পূর্বের নথিপত্র ও পরিস্থিতি উল্লেখ করে ক্লায়েন্ট সালিশ চান নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করতে চান তা জানতে চান।\n"
-            "   - যদি target_stage='impact' হয়: ক্লায়েন্টের পারিবারিক সংকট বা বর্তমান বসবাসের কষ্টের বিষয়ে আন্তরিকভাবে জানতে চান।\n"
+            "   - যদি target_stage='impact' হয়: পারিবারিক/যৌতুক বিরোধে বর্তমান বসবাস ও আর্থিক কষ্টের কথা জানতে চান; জমিজমার বিরোধে জমিতে প্রবেশে বাধার কথা জানতে চান; আর বকেয়া মজুরির ক্ষেত্রে মোট বকেয়া টাকার পরিমাণ বা কাজ থেকে ছাঁটাই/হুমকি দেওয়া হয়েছে কি না তা জানতে চান (বকেয়া মজুরির ক্ষেত্রে পরিবারে সংসার চালানোর কষ্টের মতো অপ্রাসঙ্গিক আবেগীয় প্রশ্ন করবেন না)।\n"
             "   - যদি target_stage='cause' হয়: বিরোধ বা আলাদা থাকার মূল কারণ কী ছিল তা পূর্ববর্তী বক্তব্যের সূত্রে জানতে চান।\n"
             "4. ক্লায়েন্টের সর্বশেষ জবাব ও আপনার করা প্রশ্নের সাথে সরাসরি প্রাসঙ্গিক ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) দিন।\n"
             "5. ক্লায়েন্ট যদি একটিমাত্র বক্তব্যে সমস্যা, কারণ, কাবিননামা/প্রমাণ এবং করণীয় প্রশ্ন বলে থাকেন এবং প্রয়োজনীয় মৌলিক তথ্য সম্পন্ন হয়ে থাকে, তবে is_complete=True দিন। অন্যথায় is_complete=False দিন।"
@@ -977,7 +1483,8 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
     ])
 
     try:
-        res = dialogue_llm.invoke(dialogue_prompt.format_messages(
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["dialogue_llm"].invoke(dialogue_prompt.format_messages(
             category=cat or "সাধারণ বিরোধ",
             client_narrative=text_to_eval,
             chat_history=formatted_history or "কথোপকথন সবে শুরু হয়েছে।",
@@ -1008,8 +1515,8 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             missing_item = getattr(res, "missing_aspect", None)
             new_facts = getattr(res, "newly_identified_facts", None) or {}
 
-        if is_comp and (has_evidence_info or target_stage == "complete" or "desired_solution" in existing_covered):
-            return {
+        if is_comp and ("desired_solution" in existing_covered or target_stage == "complete" or len(existing_covered) >= 5):
+            ret_comp = {
                 "is_complete": True,
                 "current_stage": "complete",
                 "stages_covered": existing_covered,
@@ -1018,6 +1525,9 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
                 "suggested_replies": None,
                 "extra_question_asked": False
             }
+            if extracted_ev and not state.get("evidence"):
+                ret_comp["evidence"] = extracted_ev
+            return ret_comp
 
         # Repetition and fallback detection:
         is_repetitive = False
@@ -1034,7 +1544,30 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
 
         if is_repetitive:
             fallback_missing = "documents_for_court" if "desired_solution" in existing_covered else (missing_item or "marriage_documents")
-            q = get_stage_fallback_question(cat, target_stage, fallback_missing)
+            fallback_candidate = get_stage_fallback_question(cat, target_stage, fallback_missing)
+
+            # If the fallback candidate was already asked before AND desired_solution is already covered, or turn_count >= 5:
+            # Complete the intake!
+            if any(fallback_candidate.strip() == prev_q for prev_q in prev_assistant_questions if prev_q):
+                if "desired_solution" in existing_covered or len(existing_covered) >= 5 or turn_count >= 5:
+                    ret_complete = {
+                        "is_complete": True,
+                        "current_stage": "complete",
+                        "stages_covered": existing_covered,
+                        "missing_fields": [],
+                        "follow_up_question": None,
+                        "suggested_replies": None,
+                        "extra_question_asked": False
+                    }
+                    if extracted_ev and not state.get("evidence"):
+                        ret_complete["evidence"] = extracted_ev
+                    return ret_complete
+                else:
+                    # If desired_solution is not yet covered, ask the desired_solution question!
+                    q = get_stage_fallback_question(cat, "desired_solution")
+                    target_stage = "desired_solution"
+            else:
+                q = fallback_candidate
 
         # Preserve the LLM's dynamic suggested replies; only fall back to static generator if empty
         if not replies or len(replies) == 0:
@@ -1059,6 +1592,8 @@ def dialogue_node(state: IntakeState) -> Dict[str, Any]:
             for k, v in new_facts.items():
                 if v and str(v).strip() and str(v).lower() != "null" and not state.get(k):
                     ret[k] = v
+        if extracted_ev and not ret.get("evidence") and not state.get("evidence"):
+            ret["evidence"] = extracted_ev
 
         return ret
 
@@ -1126,7 +1661,8 @@ def template_output_node(state: IntakeState) -> Dict[str, Any]:
             f"Extracted Location/Address: {user_location or 'Not explicitly provided'}\n\n"
             "Task: You MUST call the tool find_nearby_legal_aid_center with the detected or inferred location and legal issue category to locate the nearest BRAC Legal Aid Clinic and available appointment slot."
         )
-        tool_res = clinic_tool_llm.invoke(tool_prompt)
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        tool_res = bundle["clinic_tool_llm"].invoke(tool_prompt)
         if tool_res.tool_calls:
             tool_args = tool_res.tool_calls[0].get("args", {})
             clinic_info = find_nearby_legal_aid_center.invoke(tool_args)
@@ -1164,7 +1700,8 @@ def template_output_node(state: IntakeState) -> Dict[str, Any]:
                 ("system", prompts.DYNAMIC_SOLUTION_SYSTEM_PROMPT),
                 ("user", "Client Full Narrative & Follow-up Answers:\n{client_narrative}\n\nExtracted Facts:\n{known_facts}\n\nStandard Legal Guidelines:\n{legal_framework}\n\nPlease generate the personalized Bengali legal explanation and actionable roadmap ('আপনার আইনি অধিকার ও পথ') for this client.")
             ])
-            res = llm.invoke(prompt.format_messages(
+            bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+            res = bundle["llm"].invoke(prompt.format_messages(
                 client_narrative=text_to_eval,
                 category=cat,
                 known_facts=str({k: v for k, v in facts.items() if "[অপ্রতিষ্ঠিত]" not in str(v) and "[নাম সংরক্ষিত]" not in str(v)}),
@@ -1296,7 +1833,9 @@ Structure:
 📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:
 
 ১. **আইনি প্রতিকার ও মামলার ভিত্তি:** (Specify the exact statutory rights and court, e.g. পারিবারিক আদালত অধ্যাদেশ ১৯৮৫ for dower/maintenance suit, or বাংলাদেশ শ্রম আইন ২০০৬ for unpaid wages, or দেওয়ানি আদালত/সুনির্দিষ্ট প্রতিকার আইন for land dispute. Accurately reflect whether the client chose court lawsuit or ADR/arbitration if stated).
-২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** (List the exact documents they confirmed they have ready, e.g. Kabinnama, NID, salary slips, land khatians/deeds).
+২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** (List the exact documents or realistic evidence to prepare:
+   - If they confirmed having formal documents (Kabinnama, deed, pay slips), list them.
+   - If they lack formal documents or have informal/oral proof: list realistic practical preparation, such as: "কাজের স্থান ও বকেয়া মজুরির সুনির্দিষ্ট বিবরণ এবং স্থানীয় গ্রামবাসী ও প্রত্যক্ষদর্শী সাক্ষীদের নাম-ঠিকানার তালিকা প্রস্তুত রাখা" (NEVER tell an informal laborer to prepare non-existent appointment letters/ID cards, and NEVER say 'আপনার মৌখিক চুক্তি প্রস্তুত রাখুন' because an oral contract cannot be physically held). For family cases without kabinnama: "সংশ্লিষ্ট কাজী অফিস থেকে কাবিননামার সার্টিফাইড নকল সংগ্রহ ও এনআইডি প্রস্তুত রাখা").
 ৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** (Actionable next step with legal aid clinic, e.g. ব্র্যাক লিগ্যাল এইড ক্লিনিকের প্যানেল আইনজীবীর মাধ্যমে আনুষ্ঠানিক অভিযোগপত্র ও আরজি চূড়ান্তকরণ এবং আদালতে মামলা দাখিল বা নোটিশ প্রেরণ).
 
 আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।
@@ -1338,7 +1877,8 @@ def generate_action_summary(state: Dict[str, Any]) -> str:
             ("system", ACTION_SUMMARY_SYSTEM_PROMPT),
             ("user", f"Client Facts:\n{facts_summary}\n\nRecent Dialogue:\n{chat_context}\n\nPlease generate the '📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ':")
         ])
-        res = llm.invoke(prompt.format_messages())
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["llm"].invoke(prompt.format_messages())
         if res.content and len(res.content.strip()) > 50:
             return res.content.strip()
     except Exception as exc:
@@ -1347,19 +1887,31 @@ def generate_action_summary(state: Dict[str, Any]) -> str:
     # 2. Deterministic high-quality fallback templates by category
     if cat == "family_dower_maintenance":
         dower_str = f"আপনার {dower} টাকার দেনমোহর" if dower and dower != "[অপ্রতিষ্ঠিত]" else "আপনার দেনমোহর"
+        has_missing_kabinnama = any(w in (evidence or "") for w in ["স্বামীর কাছে", "কাজী অফিস", "নেই", "নাই", "হারিয়ে", "কোনো কাবিন"])
+        prep_text = (
+            "সংশ্লিষ্ট কাজী অফিস থেকে কাবিননামার সার্টিফাইড নকল (কপি) সংগ্রহ, দেনমোহরের দাবিপত্র এবং জাতীয় পরিচয়পত্র (NID) প্রস্তুত রাখুন।"
+            if has_missing_kabinnama else
+            "আপনার নিকাহনামা/কাবিননামা, দেনমোহরের দাবিপত্র, জাতীয় পরিচয়পত্র (NID) এবং অন্যান্য প্রাসঙ্গিক সকল প্রমাণাদি প্রস্তুত রাখুন।"
+        )
         return (
             "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
             f"১. **আইনি প্রতিকার ও মামলার ভিত্তি:** পারিবারিক আদালত অধ্যাদেশ, ১৯৮৫ এর অধীনে {dower_str} ও বিগত দিনগুলোর বকেয়া খোরপোষ/ভরণপোষণ আদায়ের জন্য পারিবারিক আদালতে নিয়মিত মামলা দায়ের করা।\n"
-            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** আপনার নিকাহনামা/কাবিননামা, দেনমোহরের দাবিপত্র, জাতীয় পরিচয়পত্র (NID) এবং অন্যান্য প্রাসঙ্গিক সকল প্রমাণাদি প্রস্তুত রাখুন।\n"
+            f"২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** {prep_text}\n"
             f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর বিজ্ঞ আইনজীবীর সহায়তায় আনুষ্ঠানিকভাবে নালিশ ও আরজি চূড়ান্ত করে পারিবারিক আদালতে মামলা দাখিল সম্পন্ন করা।\n\n"
             "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
         )
     elif cat == "unpaid_wages":
         wage_str = f"আপনার {wages} টাকার বকেয়া মজুরি" if wages and wages != "[অপ্রতিষ্ঠিত]" else "আপনার বকেয়া মজুরি"
+        has_informal_proof = any(w in (evidence or "") for w in ["মৌখিক", "লিখিত কোনো", "কোনো লিখিত", "সাক্ষী", "গ্রামের লোক", "লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই"])
+        prep_text = (
+            "কাজের স্থান ও বকেয়া মজুরির সুনির্দিষ্ট বিবরণ এবং স্থানীয় গ্রামবাসী ও প্রত্যক্ষদর্শী সাক্ষীদের নাম-ঠিকানার তালিকা প্রস্তুত রাখুন।"
+            if has_informal_proof else
+            "আপনার কাজের পরিচয়পত্র (ID Card), দৈনিক হাজিরা খাতা বা স্লিপ, কাজের চুক্তিনামা এবং বকেয়া বেতনের হিসাব প্রস্তুত রাখুন।"
+        )
         return (
             "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
             f"১. **আইনি প্রতিকার ও মামলার ভিত্তি:** বাংলাদেশ শ্রম আইন, ২০০৬ এর ৩৩ ধারা অনুযায়ী {wage_str} ও ক্ষতিপূরণ আদায়ের জন্য মালিকপক্ষ বরাবর আনুষ্ঠানিক আইনি নোটিশ প্রেরণ ও শ্রম আদালতে নালিশ দায়ের।\n"
-            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** আপনার কাজের পরিচয়পত্র (ID Card), দৈনিক হাজিরা খাতা বা স্লিপ, কাজের চুক্তিনামা এবং বকেয়া বেতনের হিসাব প্রস্তুত রাখুন।\n"
+            f"২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** {prep_text}\n"
             f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর মাধ্যমে মালিকপক্ষকে লিখিত দাবি নোটিশ প্রেরণ এবং শ্রম আদালতের জন্য অভিযোগপত্র প্রস্তুত করা।\n\n"
             "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
         )
@@ -1369,6 +1921,14 @@ def generate_action_summary(state: Dict[str, Any]) -> str:
             "১. **আইনি প্রতিকার ও মামলার ভিত্তি:** সুনির্দিষ্ট প্রতিকার আইন, ১৮৭৭ অনুযায়ী স্বত্ব সাব্যস্তপূর্বক খাস দখল বা চিরস্থায়ী নিষেধাজ্ঞার দেওয়ানি মোকদ্দমা এবং শান্তিভঙ্গ রোধে ফৌজদারি কার্যবিধির ১৪৫ ধারায় প্রতিকার চাওয়া।\n"
             "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** আপনার জমির মূল রেজিস্ট্রি দলিল, হালনাগাদ পরচা/খতিয়ান (CS/SA/RS), দাখিলা ও দখলের প্রমাণপত্র প্রস্তুত রাখুন।\n"
             f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর লিগ্যাল এইড প্যানেল আইনজীবীর মাধ্যমে নালিশি জমির স্বত্ব যাচাইপূর্বক দেওয়ানি আদালতে মামলা বা সালিশি মীমাংসার উদ্যোগ গ্রহণ।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    elif cat == "dowry":
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            "১. **আইনি প্রতিকার ও মামলার ভিত্তি:** যৌতুক নিরোধ আইন, ২০১৮ এবং পারিবারিক সহিংসতা প্রতিরোধ ও সুরক্ষা আইন, ২০১০ এর অধীনে বিজ্ঞ আদালতে নিয়মিত মামলা দায়ের ও ক্ষতিপূরণ দাবি।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** যৌতুক দাবির প্রত্যক্ষদর্শী সাক্ষীদের তালিকা, চিকিৎসা সনদের অনুলিপি (যদি থাকে) এবং বিয়ের প্রমাণপত্র প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর বিজ্ঞ আইনজীবীর সহায়তায় আদালতে আনুষ্ঠানিক নালিশি পিটিশন দাখিল বা সুরক্ষা আদেশের আবেদন সম্পন্ন করা।\n\n"
             "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
         )
     else:
@@ -1386,11 +1946,55 @@ def run_intake(
     audio_path: Optional[str] = None, 
     existing_state: Optional[Dict[str, Any]] = None,
     is_continuation: bool = False,
-    is_summarized: bool = False
+    is_summarized: bool = False,
+    selected_model: Optional[str] = None,
+    thinking_level: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Processes a single conversational turn in Bangla with token continuation, summarization, and LLM error support."""
-    # Check if API Key is configured before running LangGraph
-    if not is_model_configured():
+    """Processes a single conversational turn in Bangla with multi-model selection (Gemini 2.5 to latest, and Local Llama) and thinking level control."""
+    model_to_use = selected_model or (existing_state.get("selected_model") if existing_state else None) or "gemini-2.5-flash"
+    thinking_to_use = thinking_level or (existing_state.get("thinking_level") if existing_state else None) or "medium"
+
+    # Check model availability
+    if model_to_use == "local-llama":
+        ollama_status = check_local_ollama_status()
+        if not ollama_status["online"]:
+            err_details = {
+                "status_code": 503,
+                "error_type": "connection_error",
+                "title": "লোকাল এলএলএম সংযোগ বিচ্ছিন্ন (Ollama Offline)",
+                "message_bn": "লোকাল এলএলএম (Ollama) সার্ভার চালু নেই। টার্মিনালে 'ollama run llama3.1' কমান্ডটি চালান অথবা Gemini ক্লাউড মডেল ব্যবহার করুন।",
+                "message_en": "Local Ollama server is offline. Please run 'ollama run llama3.1' or switch to Gemini."
+            }
+            history = list(existing_state.get("chat_history", [])) if existing_state else []
+            if transcript and transcript.strip():
+                history.append({"role": "user", "content": transcript.strip()})
+            history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
+            return {
+                "transcript": transcript,
+                "client_own_words": transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else transcript),
+                "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
+                "safety_flag": False,
+                "safety_message": None,
+                "is_complete": False,
+                "current_stage": None,
+                "stages_covered": [],
+                "requires_continuation": False,
+                "continuation_prompt": None,
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "rights_explanation": None,
+                "draft_complaint": None,
+                "referral_clinic": None,
+                "referral_slot": None,
+                "action_summary": None,
+                "chat_history": history,
+                "llm_error": err_details["message_bn"],
+                "llm_error_details": err_details,
+                "selected_model": model_to_use,
+                "thinking_level": thinking_to_use
+            }
+    elif not is_model_configured():
         err_details = get_error_message("authentication_error", "Missing or unconfigured LLM API key in backend/.env")
         history = list(existing_state.get("chat_history", [])) if existing_state else []
         if transcript and transcript.strip():
@@ -1417,7 +2021,9 @@ def run_intake(
             "action_summary": None,
             "chat_history": history,
             "llm_error": err_details["message_bn"],
-            "llm_error_details": err_details
+            "llm_error_details": err_details,
+            "selected_model": model_to_use,
+            "thinking_level": thinking_to_use
         }
 
     was_continuation = is_continuation or is_summarized or (existing_state and existing_state.get("is_continuation_confirmed"))
@@ -1444,6 +2050,8 @@ def run_intake(
     )
 
     state: IntakeState = {
+        "selected_model": model_to_use,
+        "thinking_level": thinking_to_use,
         "audio_path": audio_path,
         "transcript": transcript,
         "client_own_words": client_words,
@@ -1486,6 +2094,13 @@ def run_intake(
         "referral_clinic": None,
         "referral_slot": None,
         "action_summary": existing_state.get("action_summary") if existing_state else None,
+        "taking_action_based_on_docs": existing_state.get("taking_action_based_on_docs") if existing_state else None,
+        "doc_status": existing_state.get("doc_status") if existing_state else None,
+        "awaiting_process_confirmation": existing_state.get("awaiting_process_confirmation", False) if existing_state else False,
+        "awaiting_partial_action_confirmation": existing_state.get("awaiting_partial_action_confirmation", False) if existing_state else False,
+        "awaiting_solution_confirmation": existing_state.get("awaiting_solution_confirmation", False) if existing_state else False,
+        "solution_confirmed": existing_state.get("solution_confirmed", False) if existing_state else False,
+        "documents_asked": existing_state.get("documents_asked", False) if existing_state else False,
         "chat_history": list(existing_state.get("chat_history", [])) if existing_state else [],
         "llm_error": None,
         "llm_error_details": None
@@ -1538,6 +2153,13 @@ def run_intake(
         })
     
     result["chat_history"] = history
+    result["selected_model"] = model_to_use
+    result["thinking_level"] = thinking_to_use
+    result["taking_action_based_on_docs"] = result.get("taking_action_based_on_docs")
+    result["doc_status"] = result.get("doc_status")
+    result["awaiting_process_confirmation"] = result.get("awaiting_process_confirmation", False)
+    result["awaiting_partial_action_confirmation"] = result.get("awaiting_partial_action_confirmation", False)
+    result["documents_asked"] = result.get("documents_asked", False)
     return result
 
 

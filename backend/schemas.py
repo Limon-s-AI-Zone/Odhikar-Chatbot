@@ -59,6 +59,8 @@ class IntakeRequest(BaseModel):
     existing_state: Optional[Dict[str, Any]] = None
     is_continuation: bool = False
     is_summarized: bool = False
+    selected_model: Optional[str] = None
+    thinking_level: Optional[str] = "medium"
 
 class SummarizeRequest(BaseModel):
     transcript: str
@@ -81,6 +83,9 @@ class IntakeResponse(BaseModel):
     extra_question_asked: Optional[bool] = False
     is_complete: bool
     action_summary: Optional[str] = None
+    taking_action_based_on_docs: Optional[str] = None
+    doc_status: Optional[str] = None
+    awaiting_process_confirmation: Optional[bool] = False
     requires_continuation: bool = False
     continuation_prompt: Optional[str] = None
     rights_explanation: Optional[str] = None
@@ -91,6 +96,8 @@ class IntakeResponse(BaseModel):
     case_id: Optional[int] = None
     llm_error: Optional[str] = None
     llm_error_details: Optional[Dict[str, Any]] = None
+    selected_model: Optional[str] = None
+    thinking_level: Optional[str] = None
 
 # Profile & Aggressor Details Finalization Request
 class FinalizeProfileRequest(BaseModel):
