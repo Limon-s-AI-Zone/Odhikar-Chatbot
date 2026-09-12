@@ -108,7 +108,8 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
         result = ai_pipeline.run_intake(
             transcript=req.transcript,
             existing_state=req.existing_state,
-            is_continuation=req.is_continuation
+            is_continuation=req.is_continuation,
+            is_summarized=req.is_summarized
         )
     except Exception as exc:
         err_info = ai_pipeline.parse_llm_error(exc)
@@ -221,7 +222,8 @@ async def process_intake_stream(req: schemas.IntakeRequest):
                     lambda: ai_pipeline.run_intake(
                         transcript=req.transcript,
                         existing_state=req.existing_state,
-                        is_continuation=req.is_continuation
+                        is_continuation=req.is_continuation,
+                        is_summarized=req.is_summarized
                     )
                 )
             except Exception as exc:
@@ -377,6 +379,28 @@ async def process_intake_stream(req: schemas.IntakeRequest):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+# Extra LLM Narrative Summarization Endpoint
+@app.post("/intake/summarize", response_model=schemas.SummarizeResponse)
+async def summarize_intake_narrative(req: schemas.SummarizeRequest):
+    """
+    Summarizes a long intake narrative using an extra LLM call to fit within token limits
+    while preserving all critical legal facts.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: ai_pipeline.summarize_narrative(req.transcript)
+        )
+        return result
+    except Exception as exc:
+        err_info = ai_pipeline.parse_llm_error(exc)
+        raise HTTPException(
+            status_code=500,
+            detail=err_info.get("message_bn") or "বিবরণ সংক্ষেপণে সমস্যা হয়েছে।"
+        )
 
 
 # Profile & Aggressor Details Finalization Endpoint (Right Before Step 4)

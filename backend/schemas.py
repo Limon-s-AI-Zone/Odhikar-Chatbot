@@ -58,6 +58,17 @@ class IntakeRequest(BaseModel):
     transcript: str
     existing_state: Optional[Dict[str, Any]] = None
     is_continuation: bool = False
+    is_summarized: bool = False
+
+class SummarizeRequest(BaseModel):
+    transcript: str
+    existing_state: Optional[Dict[str, Any]] = None
+
+class SummarizeResponse(BaseModel):
+    summarized_text: str
+    original_tokens: int
+    summarized_tokens: int
+
 
 class IntakeResponse(BaseModel):
     session_state: Dict[str, Any]

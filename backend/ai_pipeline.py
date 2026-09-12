@@ -294,6 +294,8 @@ class IntakeState(TypedDict):
     requires_continuation: bool
     continuation_prompt: Optional[str]
     is_continuation_confirmed: bool
+    is_summarized: Optional[bool]
+    client_raw_narrative: Optional[str]
     
     # Safety
     safety_flag: bool
@@ -345,6 +347,46 @@ def estimate_tokens(text: str) -> int:
         return 0
     words = len(text.split())
     return int(words * 2.5)
+
+def summarize_narrative(text: str) -> Dict[str, Any]:
+    """
+    Uses an extra LLM call to condense a lengthy narrative into a concise,
+    legally focused Bengali summary (under 60 words / ~120 tokens).
+    Retains all material facts: parties, dates/duration, financial amounts, incidents, and requested relief.
+    """
+    if not text or not text.strip():
+        return {"summarized_text": "", "original_tokens": 0, "summarized_tokens": 0}
+    
+    orig_tokens = estimate_tokens(text)
+    prompt = (
+        "You are an expert Bengali legal assistant for paralegal aid intake.\n"
+        "The client provided an overly long narrative that exceeds the token budget.\n"
+        "Summarize this narrative into 2-3 concise sentences in clear, dignified, natural Bengali (strictly under 60 words).\n"
+        "STRICT REQUIREMENTS:\n"
+        "1. Retain ALL core legal facts: parties involved, marriage length/dates, money/amounts (dower, dowry, wages), specific actions/threats, and relief needed.\n"
+        "2. Remove repetitive fillers, emotional commentary, and redundant phrases.\n"
+        "3. Write from the client's perspective (e.g., 'আমার বিয়ে হয়েছে...' or neutral legal summary).\n"
+        "4. Respond ONLY with the summarized Bengali text, without any introductory or concluding remarks, bullet points, or English words.\n\n"
+        f"Original Narrative:\n{text.strip()}"
+    )
+    try:
+        res = llm.invoke(prompt)
+        summarized = res.content.strip().strip('"\'')
+        new_tokens = estimate_tokens(summarized)
+        return {
+            "summarized_text": summarized,
+            "original_tokens": orig_tokens,
+            "summarized_tokens": new_tokens
+        }
+    except Exception as e:
+        print(f"[Summarize Error] {e}")
+        sentences = [s.strip() for s in text.replace("।", ".").split(".") if s.strip()]
+        fallback = "। ".join(sentences[:2]) + "।" if sentences else text[:200]
+        return {
+            "summarized_text": fallback,
+            "original_tokens": orig_tokens,
+            "summarized_tokens": estimate_tokens(fallback)
+        }
 
 # Lazy-loaded faster-whisper instance
 whisper_model = None
@@ -421,6 +463,14 @@ def transcribe_node(state: IntakeState) -> Dict[str, Any]:
                 }
             except Exception as ex:
                 print(f"[Whisper Error] Transcription failed: {ex}")
+    
+    if state.get("is_summarized"):
+        current_text = state.get("transcript", "")
+        return {
+            "transcript": current_text,
+            "client_own_words": current_text,
+            "estimated_tokens": estimate_tokens(current_text)
+        }
     
     current_text = state.get("transcript", "")
     prev_text = state.get("client_own_words", "")
@@ -1330,9 +1380,10 @@ def run_intake(
     transcript: str, 
     audio_path: Optional[str] = None, 
     existing_state: Optional[Dict[str, Any]] = None,
-    is_continuation: bool = False
+    is_continuation: bool = False,
+    is_summarized: bool = False
 ) -> Dict[str, Any]:
-    """Processes a single conversational turn in Bangla with token continuation and LLM error support."""
+    """Processes a single conversational turn in Bangla with token continuation, summarization, and LLM error support."""
     # Check if API Key is configured before running LangGraph
     if not is_model_configured():
         err_details = get_error_message("authentication_error", "Missing or unconfigured LLM API key in backend/.env")
@@ -1342,7 +1393,7 @@ def run_intake(
         history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
         return {
             "transcript": transcript,
-            "client_own_words": existing_state.get("client_own_words", "") if existing_state else transcript,
+            "client_own_words": transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else transcript),
             "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
             "safety_flag": False,
             "safety_message": None,
@@ -1364,8 +1415,9 @@ def run_intake(
             "llm_error_details": err_details
         }
 
+    was_continuation = is_continuation or is_summarized or (existing_state and existing_state.get("is_continuation_confirmed"))
     was_disambiguation = bool(
-        existing_state and (
+        existing_state and not was_continuation and (
             existing_state.get("disambiguation_needed") or 
             existing_state.get("category") == "unclassifiable" or
             existing_state.get("missing_fields") == ["category_clarification"] or
@@ -1379,15 +1431,24 @@ def run_intake(
     else:
         current_turn = 1
 
+    client_words = transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else "")
+    raw_prev = (
+        existing_state.get("client_raw_narrative") or existing_state.get("client_own_words", "")
+        if (is_summarized and existing_state)
+        else (existing_state.get("client_raw_narrative") if existing_state else None)
+    )
+
     state: IntakeState = {
         "audio_path": audio_path,
         "transcript": transcript,
-        "client_own_words": existing_state.get("client_own_words", "") if existing_state else "",
+        "client_own_words": client_words,
+        "client_raw_narrative": raw_prev,
+        "is_summarized": is_summarized,
         "turn_count": current_turn,
-        "estimated_tokens": existing_state.get("estimated_tokens", 0) if existing_state else 0,
+        "estimated_tokens": estimate_tokens(transcript) if is_summarized else (existing_state.get("estimated_tokens", 0) if existing_state else 0),
         "requires_continuation": False,
         "continuation_prompt": None,
-        "is_continuation_confirmed": is_continuation or (existing_state.get("is_continuation_confirmed", False) if existing_state else False),
+        "is_continuation_confirmed": is_continuation or is_summarized or (existing_state.get("is_continuation_confirmed", False) if existing_state else False),
         "safety_flag": existing_state.get("safety_flag", False) if existing_state else False,
         "safety_message": existing_state.get("safety_message", None) if existing_state else None,
         "category": existing_state.get("category") if existing_state else None,

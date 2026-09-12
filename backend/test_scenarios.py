@@ -310,8 +310,34 @@ def test_maintenance_cause_flow():
     assert r4.get('rights_explanation') is not None
     print("\n✓ Maintenance Cause Flow test PASSED!")
 
+def test_llm_summarization():
+    print("\n" + "="*60)
+    print("Testing LLM Summarization for Token Guardrails")
+    print("="*60)
+    long_narrative = (
+        "চার বছর আগে আমার বিয়ে হয়েছে। বিয়ের পর থেকে ওরা আমার বাবার কাছে বারবার যৌতুকের জন্য টাকা চাইতে থাকে। "
+        "বাবা জমি বিক্রি করে কিছু টাকা দিয়েছেন, প্রায় আশি হাজার টাকা। তারপরও ওদের চাওয়া শেষ হয় না। "
+        "কাবিনের টাকা আজও এক পয়সাও পাইনি। এখন ওরা আমাকে এবং আমার ছোট মেয়েকে বাড়ি ছেড়ে চলে যেতে বাধ্য করতেছে। "
+        "শাশুড়ি ও ভাশুররা হুমকি দিচ্ছে। কাবিননামার কাগজ বাবার কাছে রাখা আছে। আমি এখন কোথায় যাব, কী করব কিছুই বুঝতে পারছি না।"
+    )
+    summary_result = ai_pipeline.summarize_narrative(long_narrative)
+    summarized_text = summary_result.get("summarized_text", "")
+    print(f"Original Tokens: {summary_result.get('original_tokens')}")
+    print(f"Summarized Tokens: {summary_result.get('summarized_tokens')}")
+    print(f"Summarized Text:\n{summarized_text}")
+
+    assert len(summarized_text) > 0, "Summarized text should not be empty"
+    assert summary_result.get("summarized_tokens") < summary_result.get("original_tokens"), "Summarized tokens should be fewer"
+    
+    # Test running intake with is_summarized=True
+    intake_res = ai_pipeline.run_intake(transcript=summarized_text, is_summarized=True)
+    assert intake_res.get("requires_continuation") is False, "Summarized intake should not be blocked by token budget"
+    assert intake_res.get("category") is not None, "Should classify category from summarized text"
+    print("✓ LLM Summarization and Summarized Intake Flow test PASSED!")
+
 if __name__ == "__main__":
     test_llm_error_handling()
+    test_llm_summarization()
     test_n6_safety_breakout()
     test_n1_baseline()
     test_maintenance_cause_flow()

@@ -403,6 +403,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   const [followUpQuestion, setFollowUpQuestion] = useState<string | null>(null);
   const [suggestedReplies, setSuggestedReplies] = useState<string[]>([]);
   const [continuationPrompt, setContinuationPrompt] = useState<string | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
   const [safetyMessage, setSafetyMessage] = useState<string | null>(null);
   const [rightsExplanation, setRightsExplanation] = useState<string | null>(null);
   const [draftComplaint, setDraftComplaint] = useState<string | null>(null);
@@ -1046,7 +1047,78 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
   };
 
 
-  const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false) => {
+  const handleSummarizeAndContinue = async () => {
+    let textToSummarize = lastAttemptedMessage.trim() || textNarrative.trim();
+    if (!textToSummarize) {
+      for (let i = chatHistory.length - 1; i >= 0; i--) {
+        if (chatHistory[i].role === 'user' && chatHistory[i].content.trim()) {
+          textToSummarize = chatHistory[i].content.trim();
+          break;
+        }
+      }
+    }
+    if (!textToSummarize) {
+      handleSendMessage("", true, false);
+      return;
+    }
+
+    try {
+      setIsSummarizing(true);
+      const res = await axios.post('/api/intake/summarize', {
+        transcript: textToSummarize,
+        existing_state: sessionState
+      });
+      const summarizedText = res.data.summarized_text;
+      setIsSummarizing(false);
+      setContinuationPrompt(null);
+
+      if (summarizedText) {
+        // Update user message in chatHistory to indicate it was summarized
+        setChatHistory((prev) => {
+          const next = [...prev];
+          for (let i = next.length - 1; i >= 0; i--) {
+            if (next[i].role === 'user') {
+              next[i] = {
+                ...next[i],
+                content: `${summarizedText}\n\n[✨ অতিরিক্ত টোকেন এড়াতে এআই দ্বারা সংক্ষেপিত]`
+              };
+              break;
+            }
+          }
+          return next;
+        });
+
+        // Run intake with summarized text
+        await handleSendMessage(summarizedText, false, true);
+      } else {
+        await handleSendMessage("", true, false);
+      }
+    } catch (err) {
+      console.error('Summarization failed, proceeding with standard continuation:', err);
+      setIsSummarizing(false);
+      setContinuationPrompt(null);
+      await handleSendMessage("", true, false);
+    }
+  };
+
+  const handleEditNarrative = () => {
+    let textToEdit = lastAttemptedMessage.trim() || textNarrative.trim();
+    if (!textToEdit) {
+      for (let i = chatHistory.length - 1; i >= 0; i--) {
+        if (chatHistory[i].role === 'user' && chatHistory[i].content.trim()) {
+          textToEdit = chatHistory[i].content.trim();
+          break;
+        }
+      }
+    }
+    stopVoice();
+    setTextNarrative(textToEdit);
+    setContinuationPrompt(null);
+    setChatHistory((prev) => prev.filter(m => m.content.trim() !== ''));
+    setStep('follow_up');
+  };
+
+  const handleSendMessage = async (textToSend?: string, isContinuation: boolean = false, isSummarized: boolean = false) => {
     stopVoiceTyping();
     const message = textToSend !== undefined ? textToSend : textNarrative;
     if (!message.trim() && !isContinuation) return;
@@ -1054,6 +1126,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     stopVoice();
     setVoiceStatus(null);
     setLlmError(null);
+    setContinuationPrompt(null);
     if (!sessionState) {
       setSafetyMessage(null);
     }
@@ -1075,7 +1148,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
     setFollowUpQuestion(null);
 
     // Switch to conversational view immediately so the user sees live activity
-    if (step === 'recording') {
+    if (step === 'recording' || step === 'continuation') {
       setStep('follow_up');
     }
 
@@ -1087,7 +1160,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         body: JSON.stringify({
           transcript: message || "",
           existing_state: sessionState,
-          is_continuation: isContinuation
+          is_continuation: isContinuation,
+          is_summarized: isSummarized
         })
       });
 
@@ -1207,7 +1281,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         // 2. Token Budget Continuation
         if (finalData.requires_continuation) {
           setContinuationPrompt(finalData.continuation_prompt);
-          setStep('continuation');
+          setStep('follow_up');
           return;
         }
 
@@ -1242,7 +1316,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         const fallbackRes = await axios.post('/api/intake/message', {
           transcript: message || "",
           existing_state: sessionState,
-          is_continuation: isContinuation
+          is_continuation: isContinuation,
+          is_summarized: isSummarized
         });
 
         const data = fallbackRes.data;
@@ -1280,7 +1355,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         
         if (data.requires_continuation) {
           setContinuationPrompt(data.continuation_prompt);
-          setStep('continuation');
+          setStep('follow_up');
         } else if (data.follow_up_question) {
           if (data.suggested_replies && data.suggested_replies.length > 0) {
             setSuggestedReplies(data.suggested_replies);
@@ -1652,68 +1727,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
         </div>
       )}
 
-      {/* SCREEN: TOKEN BUDGET CONTINUATION DIALOG */}
-      {step === 'continuation' && (
-        <div className="card" style={{ border: '2px solid #0284c7', backgroundColor: '#f0f9ff' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#0284c7' }}>
-              <ArrowRightCircle size={32} />
-              <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>টোকেন ও বিস্তারিত বিশ্লেষণ সম্মতি</h2>
-            </div>
-            {continuationPrompt && (
-              <button
-                className="btn btn-outline"
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '13px',
-                  padding: '6px 12px',
-                  borderColor: '#bae6fd',
-                  color: '#0284c7',
-                  backgroundColor: 'white'
-                }}
-                onClick={() => playVoice(continuationPrompt)}
-              >
-                {isLoadingAudio && currentPlayingText === continuationPrompt ? (
-                  <><RefreshCw className="animate-spin" size={16} /> <span>প্রস্তুত হচ্ছে...</span></>
-                ) : isPlayingAudio && currentPlayingText === continuationPrompt ? (
-                  <><VolumeX size={16} /> <span>থামান</span></>
-                ) : (
-                  <><Volume2 size={16} /> <span>শুনুন</span></>
-                )}
-              </button>
-            )}
-          </div>
-          <p style={{ fontSize: '15px', lineHeight: '1.7', marginBottom: '20px', color: '#0c4a6e' }}>
-            {continuationPrompt}
-          </p>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button
-              className="btn btn-outline"
-              style={{ flex: 1 }}
-              onClick={() => {
-                stopVoice();
-                setStep('recording');
-                setTextNarrative('');
-              }}
-            >
-              সংক্ষেপ করুন
-            </button>
-            <button
-              className="btn btn-primary"
-              style={{ flex: 1.5, backgroundColor: '#0284c7' }}
-              disabled={isLoading}
-              onClick={() => {
-                stopVoice();
-                handleSendMessage("", true);
-              }}
-            >
-              {isLoading ? <RefreshCw className="animate-spin" size={18} /> : 'হ্যাঁ, পরবর্তী টোকেন সম্পন্ন করুন'}
-            </button>
-          </div>
-        </div>
-      )}
+
 
       {/* SCREEN 1: WELCOME */}
       {step === 'welcome' && (
@@ -1899,7 +1913,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
       )}
 
       {/* SCREEN 3: FOLLOW-UP QUESTION & CHAT HISTORY */}
-      {step === 'follow_up' && (
+      {(step === 'follow_up' || step === 'continuation') && (
         <div className="card">
           {/* Ongoing Conversation History Bubble Thread */}
           {chatHistory.length > 0 && (
@@ -2169,6 +2183,116 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                 </p>
               </div>
             )
+          ) : continuationPrompt ? (
+            <div style={{
+              backgroundColor: '#f0f9ff',
+              border: '2px solid #0284c7',
+              borderRadius: '14px',
+              padding: '18px',
+              marginBottom: '18px',
+              boxShadow: '0 4px 14px rgba(2, 132, 199, 0.08)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0284c7' }}>
+                  <ArrowRightCircle size={22} />
+                  <span style={{ fontSize: '15px', fontWeight: '700' }}>টোকেন ও বিস্তারিত বিশ্লেষণ সম্মতি</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    backgroundColor: 'white',
+                    borderColor: '#bae6fd',
+                    color: '#0284c7'
+                  }}
+                  onClick={() => playVoice(continuationPrompt)}
+                >
+                  {isLoadingAudio && currentPlayingText === continuationPrompt ? (
+                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                  ) : isPlayingAudio && currentPlayingText === continuationPrompt ? (
+                    <><VolumeX size={14} /> <span>থামান</span></>
+                  ) : (
+                    <><Volume2 size={14} /> <span>শুনুন</span></>
+                  )}
+                </button>
+              </div>
+
+              <p style={{ fontSize: '14px', lineHeight: '1.7', marginBottom: '14px', color: '#0c4a6e' }}>
+                {continuationPrompt}
+              </p>
+
+              <div style={{
+                backgroundColor: '#ffffff',
+                border: '1px solid #bae6fd',
+                borderRadius: '8px',
+                padding: '10px 12px',
+                marginBottom: '14px',
+                fontSize: '12.5px',
+                color: '#0369a1',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <Sparkles size={16} color="#0284c7" style={{ flexShrink: 0 }} />
+                <span>
+                  <strong>এআই সারসংক্ষেপ সুবিধা:</strong> মূল আইনি তথ্য (দেনমোহর, তারিখ, বকেয়া, বিবাদী) অক্ষুণ্ণ রেখে অতিরিক্ত টোকেন খরচ এড়াতে এআই বক্তব্যটি সংক্ষেপ করে সাথে সাথে বিশ্লেষণ সম্পন্ন করতে পারে।
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{
+                    flex: '1.5 1 220px',
+                    backgroundColor: '#0284c7',
+                    borderColor: '#0284c7',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    fontSize: '14px',
+                    padding: '11px 16px',
+                    fontWeight: '600'
+                  }}
+                  disabled={isLoading || isSummarizing}
+                  onClick={handleSummarizeAndContinue}
+                >
+                  {isSummarizing ? (
+                    <><RefreshCw className="animate-spin" size={16} /> <span>এআই দিয়ে সংক্ষেপ করা হচ্ছে...</span></>
+                  ) : (
+                    <><Sparkles size={16} /> <span>✨ এআই দিয়ে সংক্ষেপ করে এগিয়ে যান</span></>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{
+                    flex: '1 1 140px',
+                    backgroundColor: 'white',
+                    borderColor: '#cbd5e1',
+                    color: '#475569',
+                    fontSize: '13.5px',
+                    padding: '11px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    fontWeight: '600'
+                  }}
+                  disabled={isLoading || isSummarizing}
+                  onClick={handleEditNarrative}
+                >
+                  <Edit3 size={15} /> <span>নিজে এডিট করুন</span>
+                </button>
+              </div>
+            </div>
           ) : (
             <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
