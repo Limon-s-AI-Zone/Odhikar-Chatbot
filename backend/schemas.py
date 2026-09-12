@@ -83,6 +83,9 @@ class IntakeResponse(BaseModel):
     extra_question_asked: Optional[bool] = False
     is_complete: bool
     action_summary: Optional[str] = None
+    taking_action_based_on_docs: Optional[str] = None
+    doc_status: Optional[str] = None
+    awaiting_process_confirmation: Optional[bool] = False
     requires_continuation: bool = False
     continuation_prompt: Optional[str] = None
     rights_explanation: Optional[str] = None

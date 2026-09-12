@@ -48,6 +48,17 @@ export function getContextualChips(
         else if (reply.includes('স্বামীর কাছে')) label = 'স্বামীর কাছে আছে';
         else if (reply.includes('কাজী অফিস')) label = 'কাজী অফিসের তথ্য আছে';
         else if (reply.includes('কাগজ নেই') || reply.includes('দলিল নেই')) label = 'কোনো কাগজ নেই';
+        else if (reply.includes('সমস্ত প্রয়োজনীয়') || reply.includes('সমস্ত প্রয়োজনীয়') || reply.includes('প্রয়োজনীয় সকল কাগজপত্র')) label = 'সব কাগজপত্র প্রস্তুত আছে';
+        else if (reply.includes('কিছু কাগজপত্র আছে') || reply.includes('কিছু কাগজ আছে')) label = 'কিছু কাগজ আছে, সব নেই';
+        else if (reply.includes('কোনো লিখিত কাগজপত্র') || reply.includes('কোনো লিখিত প্রমাণ নেই')) label = 'কোনো কাগজপত্র নেই';
+        else if (reply.includes('প্রক্রিয়াটি সম্পন্ন করতে চাই') || reply.includes('প্রক্রিয়াটি সম্পন্ন করতে চাই')) label = 'হ্যাঁ, সম্পন্ন করতে চাই';
+        else if (reply.includes('না, এখন নয়') || reply.includes('পরে বিবেচনা')) label = 'না, এখন নয়';
+        else if (reply.includes('বিদ্যমান কাগজের') || reply.includes('বিদ্যমান কাগজেই')) label = 'বিদ্যমান কাগজেই অগ্রসর';
+        else if (reply.includes('বিকল্প কোনো উপায়') || reply.includes('বিকল্প কোনো উপায়')) label = 'বিকল্প উপায় চাই';
+        else if (reply.includes('দেনমোহর ও ভরণপোষণ আদায়ের')) label = 'দেনমোহর ও ভরণপোষণ';
+        else if (reply.includes('বকেয়া মজুরি ও ক্ষতিপূরণ')) label = 'বকেয়া মজুরি আদায়';
+        else if (reply.includes('জমিজমা দখল উদ্ধার')) label = 'জমিজমা দখল/স্বত্ব';
+        else if (reply.includes('যৌতুক ও পারিবারিক নির্যাতন')) label = 'যৌতুক ও নির্যাতন';
         else if (reply.includes('১ লাখ')) label = '১ লাখ টাকা';
         else if (reply.includes('২ লাখ')) label = '২ লাখ টাকা';
         else if (reply.includes('৫ লাখ')) label = '৫ লাখ টাকা';
@@ -87,6 +98,10 @@ export function getContextualChips(
         else if (reply.includes('জাল দলিল')) label = 'জাল দলিল তৈরি';
         else if (reply.includes('সীমানা কেটে')) label = 'সীমানা কেটে দখল';
         else if (reply.includes('ছাঁটাই')) label = 'কাজ থেকে ছাঁটাই';
+        else if (reply.includes('টালবাহানা') || reply.includes('ঘোরাচ্ছে')) label = 'অজুহাতে টালবাহানা';
+        else if (reply.includes('বিল পায়নি') || reply.includes('বিল পায়নি')) label = 'বিল পায়নি অজুহাত';
+        else if (reply.includes('কোনো কারণ ছাড়াই') || reply.includes('কোনো বিরোধ হয়নি') || reply.includes('কোনো বিরোধ হয়নি')) label = 'কোনো বিরোধ হয়নি';
+        else if (reply.includes('অংশ দিতে অস্বীকার')) label = 'ন্যায্য অংশ দিচ্ছে না';
         else if (reply.includes('নির্দিষ্ট মনে নেই') || reply.includes('মনে করা যাচ্ছে না')) label = 'নির্দিষ্ট মনে নেই';
         else if (reply.includes('কারও কাছেই তথ্য নেই')) label = 'কারও তথ্য নেই';
         else label = reply.slice(0, 18) + '...';
@@ -98,7 +113,33 @@ export function getContextualChips(
   const q = (question || '').toLowerCase();
   const cat = (category || '').toLowerCase();
 
-  // 0. Cause of dispute / why maintenance problem occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
+  // 0a. Cause of unpaid wages / why wages withheld ("মালিক বা ঠিকাদার কী কারণে আপনার মজুরি বকেয়া রেখেছেন বা কোনো বিরোধ হয়েছিল কি না?")
+  if (
+    (q.includes('কারণ') || q.includes('কেন') || q.includes('বিরোধ') || q.includes('ঝামেলা') || q.includes('সূত্রপাত') || q.includes('অজুহাত')) &&
+    (cat === 'unpaid_wages' || q.includes('মজুরি') || q.includes('বেতন') || q.includes('ঠিকাদার') || q.includes('মালিক'))
+  ) {
+    return [
+      { label: 'অজুহাতে টালবাহানা করছে', text: 'কাজ শেষ করার পরও নানা অজুহাতে ঘোরাচ্ছে ও টালবাহানা করছে' },
+      { label: 'বিল পায়নি বলে দিচ্ছে না', text: 'মালিকের কাছ থেকে বিল পায়নি বলে ঠিকাদার টাকা দিচ্ছে না' },
+      { label: 'মজুরি চাওয়ায় ছাঁটাই', text: 'বকেয়া মজুরি চাওয়ায় উল্টো কাজ থেকে ছাঁটাই/বের করে দিয়েছে' },
+      { label: 'কোনো বিরোধ হয়নি', text: 'কোনো বিরোধ হয়নি, কাজ শেষে কোনো কারণ ছাড়াই বেতন আটকে রেখেছে' }
+    ];
+  }
+
+  // 0b. Cause of land dispute / why land grabbed
+  if (
+    (q.includes('কারণ') || q.includes('সূত্রপাত') || q.includes('কীভাবে') || q.includes('বিরোধ') || q.includes('ঝামেলা')) &&
+    (cat === 'land_dispute' || q.includes('জমি'))
+  ) {
+    return [
+      { label: 'প্রতিপক্ষ দখল করেছে', text: 'প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে' },
+      { label: 'পৈতৃক ওয়ারিশ বিরোধ', text: 'পৈতৃক সম্পত্তির ওয়ারিশ ও ন্যায্য অংশ দিতে অস্বীকার করছে' },
+      { label: 'সীমানা কেটে দখল', text: 'জমির সীমানা কেটে জোর করে দখলের চেষ্টা করছে' },
+      { label: 'জাল দলিল তৈরি', text: 'জাল দলিল তৈরি করে জমির মালিকানা দাবি করছে' }
+    ];
+  }
+
+  // 0c. Cause of family dispute / why maintenance problem occurred ("ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন?")
   if (
     (q.includes('ঝামেলা') || q.includes('কারণ') || q.includes('কেন') || q.includes('সূত্রপাত')) && 
     (q.includes('ভরণপোষণ') || cat.includes('family') || cat.includes('dower'))
@@ -128,10 +169,11 @@ export function getContextualChips(
 
   // 2. Dower / Dowry / Claim amount
   if (
-    q.includes('দেনমোহর') || 
-    (q.includes('টাকা') && (q.includes('ধার্য') || q.includes('পরিমাণ') || q.includes('দাবি'))) ||
-    q.includes('কত টাকা') ||
-    q.includes('টাকার পরিমাণ')
+    cat !== 'unpaid_wages' && cat !== 'land_dispute' && (
+      q.includes('দেনমোহর') || 
+      (q.includes('টাকা') && (q.includes('ধার্য') || q.includes('দাবি'))) ||
+      ((cat === 'family_dower_maintenance' || cat === 'dowry') && (q.includes('কত টাকা') || q.includes('টাকার পরিমাণ')))
+    )
   ) {
     return [
       { label: '১ লাখ টাকা', text: 'দেনমোহর ধার্য করা হয়েছিল ১ লাখ টাকা' },
@@ -154,10 +196,11 @@ export function getContextualChips(
     ];
   }
 
-  // 4. Wages / Unpaid Salary Amount
+  // 4. Wages / Unpaid Salary Amount (Only when asking for amount / money)
   if (
-    (q.includes('মজুরি') || q.includes('বেতন') || q.includes('পাওনা')) && 
-    (q.includes('টাকা') || q.includes('কত') || q.includes('বকেয়া') || q.includes('বকেয়া'))
+    (cat === 'unpaid_wages' && (q.includes('টাকা') || q.includes('কত টাকা') || q.includes('পরিমাণ') || q.includes('বকেয়া') || q.includes('বকেয়া') || q.includes('পাওনা'))) ||
+    ((q.includes('মজুরি') || q.includes('বেতন') || q.includes('পাওনা')) && 
+     (q.includes('টাকা') || q.includes('কত টাকা') || q.includes('পরিমাণ') || q.includes('কত মাসের')))
   ) {
     return [
       { label: '১ মাসের বেতন', text: '১ মাসের পুরো মজুরি বা বেতন বকেয়া রয়েছে' },
@@ -2155,6 +2198,48 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               </p>
             </div>
             {renderVoiceTypingButton()}
+          </div>
+
+          {/* ACTION CHECKING SELECTION BLOCK (ALL CATEGORIES) */}
+          <div style={{ marginBottom: '18px', padding: '16px', backgroundColor: '#f0f9ff', borderRadius: '12px', border: '1.5px solid #bae6fd' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', fontWeight: '700', color: '#0369a1', marginBottom: '12px' }}>
+              <Scale size={18} style={{ color: '#0284c7' }} />
+              <span>আপনি কী ধরনের আইনি পদক্ষেপ বা প্রতিকার যাচাই করতে চান?</span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ')}
+              >
+                <span>💍 দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ')}
+              >
+                <span>💼 বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ')}
+              >
+                <span>🏡 জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ</span>
+              </button>
+              <button
+                type="button"
+                className="chip-btn"
+                style={{ backgroundColor: '#ffffff', border: '1.5px solid #0284c7', color: '#0369a1', fontWeight: '600', padding: '8px 14px', borderRadius: '20px', fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => handleSendMessage('যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ')}
+              >
+                <span>🛡️ যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ</span>
+              </button>
+            </div>
           </div>
 
           {/* Voice Status Alert Box */}

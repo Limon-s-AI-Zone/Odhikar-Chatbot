@@ -335,6 +335,50 @@ def test_llm_summarization():
     assert intake_res.get("category") is not None, "Should classify category from summarized text"
     print("✓ LLM Summarization and Summarized Intake Flow test PASSED!")
 
+def test_unpaid_wages_flow():
+    print("\n" + "="*60)
+    print("Testing Scenario — Unpaid Wages Multi-Turn Flow (Agricultural Labor)")
+    print("="*60)
+    narrative = (
+        "ধান কাটার কাজ করছিলাম, দশ দিন। দিন হাজিরা সাড়ে পাঁচশ টাকা কথা ছিল। "
+        "কাজ শেষে দিল তিন হাজার, বাকিটা পরে দিবে বলল। দুই মাস হয়ে গেছে। "
+        "লিখিত কিছু নাই, গ্রামের লোক সবাই জানে।"
+    )
+    # Turn 1
+    r1 = ai_pipeline.run_intake(transcript=narrative)
+    print(f"Turn 1 Category: {r1.get('category')} (Confidence: {r1.get('confidence')}%)")
+    print(f"Turn 1 Evidence: {r1.get('evidence')}")
+    print(f"Turn 1 Follow-up Question: {r1.get('follow_up_question')}")
+    assert r1.get('category') == "unpaid_wages", "Category must be unpaid_wages"
+
+    # Turn 2
+    r2 = ai_pipeline.run_intake(transcript="কাজ শেষ করার পরও নানা অজুহাতে ঘোরাচ্ছে ও টালবাহানা করছে", existing_state=r1)
+    print(f"\nTurn 2 Current Stage: {r2.get('current_stage')}")
+    print(f"Turn 2 Follow-up Question: {r2.get('follow_up_question')}")
+
+    # Turn 3
+    r3 = ai_pipeline.run_intake(transcript="গত ১ মাস ধরে আমি এই কাজটি করেছি", existing_state=r2)
+    print(f"\nTurn 3 Current Stage: {r3.get('current_stage')}")
+    print(f"Turn 3 Follow-up Question: {r3.get('follow_up_question')}")
+
+    # Turn 4
+    r4 = ai_pipeline.run_intake(transcript="প্রায় ২ থেকে ৩ মাসের বেতন এখনও বকেয়া আছে", existing_state=r3)
+    print(f"\nTurn 4 Current Stage: {r4.get('current_stage')}")
+    print(f"Turn 4 Follow-up Question: {r4.get('follow_up_question')}")
+
+    # Turn 5: Client specifies desired solution (Court / Legal Aid)
+    r5 = ai_pipeline.run_intake(transcript="শ্রম আদালতে বা লিগ্যাল এইডে মামলা করে পুরো বকেয়া মজুরি আদায় করতে চাই", existing_state=r4)
+    print(f"\nTurn 5 Is Complete: {r5.get('is_complete')}")
+    print(f"Turn 5 Follow-up Question: {r5.get('follow_up_question')}")
+    print(f"Turn 5 Referral Clinic: {r5.get('referral_clinic')}")
+    draft = r5.get('draft_complaint') or ''
+    print(f"Turn 5 Draft Complaint (first 250 chars):\n{draft[:250]}...")
+
+    assert r5.get('is_complete') is True, "Turn 5 must complete intake instead of looping back to history question"
+    assert r5.get('follow_up_question') is None, "Follow up question must be None on completion"
+    assert r5.get('draft_complaint') is not None, "Draft complaint must be generated"
+    print("✓ Scenario Unpaid Wages Multi-Turn test PASSED!")
+
 if __name__ == "__main__":
     test_llm_error_handling()
     test_llm_summarization()
@@ -343,3 +387,4 @@ if __name__ == "__main__":
     test_maintenance_cause_flow()
     test_disambiguation_then_land_dispute()
     test_land_dispute_multiturn()
+    test_unpaid_wages_flow()

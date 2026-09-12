@@ -332,11 +332,16 @@ def create_llm_client(
         region = info.get("region") or GOOGLE_CLOUD_REGION or "us-central1"
         project = info.get("project") or resolve_vertex_project() or "routemap-235819"
 
+        # For Vertex AI Gemini models with thinking, max_output_tokens includes thinking tokens
+        actual_max_tokens = tokens
+        if resolved_budget is not None and resolved_budget > 0:
+            actual_max_tokens = max(tokens + resolved_budget, 4096)
+
         vertex_kwargs: Dict[str, Any] = {
             "model": clean_model,
             "location": region,
             "temperature": temp,
-            "max_output_tokens": tokens,
+            "max_output_tokens": actual_max_tokens,
         }
         if project:
             vertex_kwargs["project"] = project
