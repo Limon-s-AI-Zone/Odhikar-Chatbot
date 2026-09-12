@@ -172,3 +172,11 @@ In the web interface (`http://localhost:5173`), click **ক্লায়েন
    * Demonstrates the safety check interrupting the flow mid-conversation, displaying emergency telephone lines (**16430**, **109**, **999**), and flagging the case as **URGENT** in the Paralegal Dashboard.
 
 Switch to **প্যারালিগ্যাল ড্যাশবোর্ড (Paralegal Dashboard)** to view the live case queue, review inferred facts, and edit/approve the complaint drafts.
+
+---
+
+## Cloud Run + self-hosted Llama 3.2 GGUF
+
+To serve the bundled GGUF on GCP and point Odhikar at it (app URL stays the same):
+
+See **[deploy/LLAMA.md](deploy/LLAMA.md)** for upload, deploy, and verification steps (`setup-gcp.sh` → `upload-llama-model.sh` → `deploy-llama.sh` → `deploy-cloudrun.sh`).

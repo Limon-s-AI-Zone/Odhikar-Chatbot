@@ -1,0 +1,45 @@
+# Cloud Build: pull GGUF from GCS, bake into llama-server image, push to Artifact Registry.
+substitutions:
+  _IMAGE_SHA: ""
+  _IMAGE_LATEST: ""
+  _MODEL_BUCKET: ""
+  _GGUF_NAME: "llama-3.2-1b-instruct.Q4_K_M.gguf"
+
+steps:
+  - name: gcr.io/cloud-builders/gcloud
+    id: download-gguf
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        BUCKET="${_MODEL_BUCKET}"
+        if [[ -z "$BUCKET" ]]; then
+          BUCKET="${PROJECT_ID}-odhikar-models"
+        fi
+        SRC="gs://${BUCKET}/${_GGUF_NAME}"
+        echo "Downloading ${SRC} -> deploy/llama/model.gguf"
+        gcloud storage cp "$SRC" deploy/llama/model.gguf
+        ls -lh deploy/llama/model.gguf
+
+  - name: gcr.io/cloud-builders/docker
+    id: build-image
+    waitFor: ["download-gguf"]
+    args:
+      - build
+      - -t
+      - ${_IMAGE_SHA}
+      - -t
+      - ${_IMAGE_LATEST}
+      - -f
+      - deploy/llama/Dockerfile
+      - deploy/llama
+
+images:
+  - ${_IMAGE_SHA}
+  - ${_IMAGE_LATEST}
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+timeout: 3600s

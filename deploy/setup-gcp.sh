@@ -10,6 +10,7 @@ PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null)}"
 REGION="${GCP_REGION:-us-central1}"
 REPO_NAME="${ARTIFACT_REPO:-odhikar}"
 SERVICE_NAME="${CLOUD_RUN_SERVICE:-odhikar}"
+MODEL_BUCKET="${MODEL_BUCKET:-${PROJECT_ID}-odhikar-models}"
 
 if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "(unset)" ]]; then
   echo "ERROR: No GCP project set. Run: gcloud config set project YOUR_PROJECT_ID"
@@ -19,6 +20,7 @@ fi
 echo "==> Project: $PROJECT_ID"
 echo "==> Region:  $REGION"
 echo "==> Service: $SERVICE_NAME"
+echo "==> Models:  gs://${MODEL_BUCKET}"
 echo
 
 echo "==> Enabling required APIs..."
@@ -28,6 +30,7 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   secretmanager.googleapis.com \
   aiplatform.googleapis.com \
+  storage.googleapis.com \
   --project="$PROJECT_ID"
 
 echo "==> Ensuring Artifact Registry Docker repo '$REPO_NAME'..."
@@ -78,8 +81,35 @@ if [[ -f "$ENV_FILE" ]]; then
   ensure_secret "GOOGLE_API_KEY" "${GOOGLE_API_KEY:-}"
   ensure_secret "OPENROUTER_API_KEY" "${OPENROUTER_API_KEY:-}"
   ensure_secret "LLM_API_KEY" "${LLM_API_KEY:-}"
+  # Prefer explicit LLAMA_API_KEY from .env; fall back to LLM_API_KEY for local-compat.
+  if [[ -n "${LLAMA_API_KEY:-}" ]]; then
+    ensure_secret "LLAMA_API_KEY" "$LLAMA_API_KEY"
+  elif [[ -n "${LLM_API_KEY:-}" ]]; then
+    ensure_secret "LLAMA_API_KEY" "$LLM_API_KEY"
+  fi
 else
   echo "WARNING: backend/.env not found — create secrets manually before deploy."
+fi
+
+# Always ensure a LLAMA_API_KEY exists (generated if missing from .env).
+if ! gcloud secrets describe LLAMA_API_KEY --project="$PROJECT_ID" &>/dev/null; then
+  echo "==> Creating generated LLAMA_API_KEY secret..."
+  GENERATED_LLAMA_KEY="$(openssl rand -hex 32)"
+  echo -n "$GENERATED_LLAMA_KEY" | gcloud secrets create LLAMA_API_KEY \
+    --data-file=- --replication-policy=automatic --project="$PROJECT_ID" >/dev/null
+  echo "    Created secret: LLAMA_API_KEY (random)"
+else
+  echo "==> Secret LLAMA_API_KEY already exists."
+fi
+
+echo "==> Ensuring model bucket gs://${MODEL_BUCKET} (upload weights via ./deploy/upload-llama-model.sh)..."
+if ! gcloud storage buckets describe "gs://${MODEL_BUCKET}" --project="$PROJECT_ID" &>/dev/null; then
+  gcloud storage buckets create "gs://${MODEL_BUCKET}" \
+    --project="$PROJECT_ID" \
+    --location="$REGION" \
+    --uniform-bucket-level-access
+else
+  echo "    Bucket already exists."
 fi
 
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
@@ -87,7 +117,7 @@ RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
 echo "==> Granting runtime SA access to secrets + Vertex AI..."
 echo "    SA: $RUNTIME_SA"
-for secret in GOOGLE_API_KEY OPENROUTER_API_KEY LLM_API_KEY; do
+for secret in GOOGLE_API_KEY OPENROUTER_API_KEY LLM_API_KEY LLAMA_API_KEY; do
   if gcloud secrets describe "$secret" --project="$PROJECT_ID" &>/dev/null; then
     gcloud secrets add-iam-policy-binding "$secret" \
       --member="serviceAccount:${RUNTIME_SA}" \
@@ -117,6 +147,15 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --role="roles/iam.serviceAccountUser" \
   --condition=None >/dev/null || true
 
+echo "==> Granting Cloud Build SA objectViewer on model bucket..."
+gcloud storage buckets add-iam-policy-binding "gs://${MODEL_BUCKET}" \
+  --member="serviceAccount:${CLOUDBUILD_SA}" \
+  --role="roles/storage.objectViewer" \
+  --project="$PROJECT_ID" >/dev/null || true
+
 echo
 echo "Setup complete."
-echo "Next: ./deploy/deploy-cloudrun.sh"
+echo "Llama model upload (if not done): ./deploy/upload-llama-model.sh"
+echo "Llama service deploy:              ./deploy/deploy-llama.sh"
+echo "App deploy (wires to llama if up): ./deploy/deploy-cloudrun.sh"
+echo "Docs: deploy/LLAMA.md"

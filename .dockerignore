@@ -23,3 +23,5 @@ frontend/dist
 **/.DS_Store
 infra
 deploy/*.local
+*.gguf
+deploy/**/*.gguf

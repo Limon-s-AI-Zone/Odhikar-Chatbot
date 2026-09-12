@@ -1,0 +1,22 @@
+# Keep Cloud Build source uploads small (GGUF is fetched from GCS in llama builds).
+.git
+.gitignore
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+backend/uploads
+backend/service_account.json
+**/service_account.json
+*.pdf
+.cursor
+agent-transcripts
+**/.DS_Store
+*.gguf
+deploy/**/*.gguf
+deploy/llama/model.gguf

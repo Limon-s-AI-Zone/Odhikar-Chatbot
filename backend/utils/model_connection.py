@@ -373,8 +373,9 @@ def create_llm_client(
         "temperature": temp
     }
     if provider == "local":
-        kwargs["request_timeout"] = 90.0
-        kwargs["timeout"] = 90.0
+        # Cloud Run llama cold start + generation can exceed 90s.
+        kwargs["request_timeout"] = 300.0
+        kwargs["timeout"] = 300.0
     if eb:
         kwargs["extra_body"] = eb
 
