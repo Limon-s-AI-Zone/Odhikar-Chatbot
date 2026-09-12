@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse, Response, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
