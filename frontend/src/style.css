@@ -53,6 +53,16 @@ body {
   gap: 12px;
 }
 
+.brand-logo-badge {
+  background-color: #d92d20;
+  color: white;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .logo-tag {
   background: #ec4899;
   color: white;
@@ -68,14 +78,36 @@ body {
   color: #1e293b;
 }
 
+.brand-name-bn {
+  display: inline;
+}
+
+.brand-name-en {
+  display: inline;
+}
+
 .brand-subtitle {
   font-size: 13px;
   color: var(--text-muted);
 }
 
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .nav-links {
   display: flex;
   gap: 16px;
+}
+
+.nav-label-desktop {
+  display: inline;
+}
+
+.nav-label-mobile {
+  display: none;
 }
 
 .nav-btn {
@@ -452,26 +484,74 @@ body {
 
 @media (max-width: 640px) {
   .navbar {
-    padding: 10px 16px;
-    flex-direction: column;
-    gap: 12px;
-    align-items: flex-start;
+    padding: 8px 12px;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+  }
+  .logo-area {
+    gap: 8px;
+  }
+  .brand-logo-badge {
+    padding: 4px 8px;
+    font-size: 15px;
+    border-radius: 6px;
   }
   .brand-title {
-    font-size: 17px;
+    font-size: 15px;
+  }
+  .logo-tag {
+    display: none;
+  }
+  .brand-subtitle {
+    display: none;
+  }
+  .nav-actions {
+    gap: 6px;
+  }
+  .nav-links {
+    gap: 4px;
+  }
+  .nav-btn {
+    padding: 6px 9px;
+    font-size: 13px;
+    gap: 5px;
+    border-radius: 6px;
+  }
+  .nav-label-desktop {
+    display: none;
+  }
+  .nav-label-mobile {
+    display: inline;
   }
   .main-content {
-    padding: 16px 12px;
+    padding: 12px 10px;
   }
   .card {
-    padding: 18px 16px;
+    padding: 16px 12px;
     border-radius: 12px;
   }
   .step-label {
     display: none;
   }
   .stepper-container {
-    padding: 10px 14px;
+    padding: 8px 10px;
+    margin-bottom: 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .brand-name-en {
+    display: none;
+  }
+  .navbar {
+    padding: 6px 8px;
+  }
+  .nav-btn {
+    padding: 5px 7px;
+    font-size: 12px;
   }
 }
 
