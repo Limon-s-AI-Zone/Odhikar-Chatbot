@@ -2365,44 +2365,42 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                 </button>
               </div>
             </div>
-          ) : (
+          ) : followUpQuestion && !isStreaming && !isLoading ? (
             <div style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', borderRadius: '12px', padding: '16px', marginBottom: '18px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
                 <span style={{ fontSize: '12px', fontWeight: '700', color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   আইনি পরামর্শের জন্য প্রয়োজনীয় প্রশ্ন:
                 </span>
-                {followUpQuestion && (
-                  <button
-                    className="btn btn-outline"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      fontSize: '12px',
-                      padding: '4px 10px',
-                      flexShrink: 0,
-                      backgroundColor: 'white',
-                      borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
-                      color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
-                    }}
-                    onClick={() => playVoice(followUpQuestion)}
-                    title="প্রশ্নটি শুনুন"
-                  >
-                    {isLoadingAudio && currentPlayingText === followUpQuestion ? (
-                      <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
-                    ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
-                      <><VolumeX size={14} /> <span>থামান</span></>
-                    ) : (
-                      <><Volume2 size={14} /> <span>প্রশ্ন শুনুন</span></>
-                    )}
-                  </button>
-                )}
+                <button
+                  className="btn btn-outline"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    flexShrink: 0,
+                    backgroundColor: 'white',
+                    borderColor: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7',
+                    color: (isPlayingAudio || isLoadingAudio) && currentPlayingText === followUpQuestion ? '#e11d48' : '#0284c7'
+                  }}
+                  onClick={() => playVoice(followUpQuestion)}
+                  title="প্রশ্নটি শুনুন"
+                >
+                  {isLoadingAudio && currentPlayingText === followUpQuestion ? (
+                    <><RefreshCw className="animate-spin" size={14} /> <span>প্রস্তুত হচ্ছে...</span></>
+                  ) : isPlayingAudio && currentPlayingText === followUpQuestion ? (
+                    <><VolumeX size={14} /> <span>থামান</span></>
+                  ) : (
+                    <><Volume2 size={14} /> <span>প্রশ্ন শুনুন</span></>
+                  )}
+                </button>
               </div>
               <h2 style={{ fontSize: '17px', fontWeight: '700', color: '#0c4a6e', margin: 0, lineHeight: '1.6' }}>
-                {followUpQuestion || (isStreaming ? 'প্রশ্ন প্রস্তুত হচ্ছে...' : '')}
+                {followUpQuestion}
               </h2>
             </div>
-          )}
+          ) : null}
 
           {/* VOICE-FIRST PROFILE & AGGRESSOR DETAILS ASSISTANT (Right Before Step 4) */}
           {isIntakeCompleted && !isOutOfScope && (
@@ -2861,6 +2859,8 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
               {/* Quick Answer Shortcut Chips */}
               {(() => {
                 const isGenerating = isLoading || isStreaming;
+                if (isGenerating) return null;
+
                 const activeQuestion = followUpQuestion || 
                   (chatHistory.length > 0 && chatHistory[chatHistory.length - 1].role === 'assistant' 
                      ? chatHistory[chatHistory.length - 1].content 
@@ -2870,7 +2870,7 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
 
                 return (
                   <div className="quick-chips-wrapper">
-                    <span style={{ fontSize: '11px', color: isGenerating ? '#94a3b8' : '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
+                    <span style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', marginRight: '4px' }}>
                       সহায়ক উত্তর:
                     </span>
                     {chips.map((chip, idx) => {
@@ -2879,25 +2879,9 @@ export const ClientIntake: React.FC<IntakeProps> = ({ onCaseSubmitted }) => {
                         <button
                           key={idx}
                           type="button"
-                          disabled={isGenerating}
                           className={`quick-chip ${isSelected ? 'active' : ''}`}
-                          onClick={() => {
-                            if (!isGenerating) {
-                              setTextNarrative(chip.text);
-                            }
-                          }}
-                          title={isGenerating ? 'উত্তর প্রস্তুত হওয়া পর্যন্ত অপেক্ষা করুন' : chip.text}
-                          style={
-                            isGenerating
-                              ? {
-                                  opacity: 0.45,
-                                  cursor: 'not-allowed',
-                                  backgroundColor: '#f1f5f9',
-                                  borderColor: '#e2e8f0',
-                                  color: '#94a3b8'
-                                }
-                              : undefined
-                          }
+                          onClick={() => setTextNarrative(chip.text)}
+                          title={chip.text}
                         >
                           {chip.label}
                         </button>
