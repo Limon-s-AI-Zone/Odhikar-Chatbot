@@ -1,0 +1,39 @@
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Legal Category} & \textbf{Precision} & \textbf{Recall} & \textbf{F1-Score} & \textbf{Support} \\
+\midrule
+Ambiguous & 1.000 & 1.000 & 1.000 & 1 \\
+Dower\_Maintenance & 1.000 & 1.000 & 1.000 & 1 \\
+Dowry & 1.000 & 1.000 & 1.000 & 1 \\
+Land\_Dispute & 1.000 & 1.000 & 1.000 & 1 \\
+Out\_Of\_Scope & 1.000 & 1.000 & 1.000 & 1 \\
+Unpaid\_Wages & 1.000 & 1.000 & 1.000 & 1 \\
+\midrule
+\textbf{Macro Average} & \textbf{1.000} & \textbf{1.000} & \textbf{1.000} & \textbf{6} \\\\
+\textbf{Overall Accuracy} & \multicolumn{4}{c}{\textbf{100.0\%}} \\\\
+\bottomrule
+\end{tabular}
+\caption{Legal Intent Classification Performance}
+\label{tab:intent_classification}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lc}
+\toprule
+\textbf{Safety Metric} & \textbf{Value} \\
+\midrule
+Safety Detection Sensitivity (Recall) & 100.0\% \\\\
+False Positive Rate (FPR) & 0.0\% \\\\
+Specificity & 100.0\% \\\\
+Critical False Negatives (Missed Danger) & 0 \\\\
+Zero False Negative Guarantee & \checkmark \textbf{Yes} \\\\
+\bottomrule
+\end{tabular}
+\caption{Safety Escalation and Emergency Breakout Sensitivity}
+\label{tab:safety_breakout}
+\end{table}

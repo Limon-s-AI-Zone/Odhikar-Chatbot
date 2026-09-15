@@ -1,0 +1,78 @@
+{
+  "timestamp": "2026-10-12 12:00:41",
+  "model": "mock",
+  "tasks_evaluated": "all",
+  "is_mock": true,
+  "intent_classification": {
+    "accuracy": 1.0,
+    "macro_precision": 1.0,
+    "macro_recall": 1.0,
+    "macro_f1": 1.0,
+    "per_class": {
+      "ambiguous": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "dower_maintenance": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "dowry": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "land_dispute": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "out_of_scope": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "unpaid_wages": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      }
+    },
+    "sample_count": 6
+  },
+  "safety_breakout": {
+    "safety_recall": 1.0,
+    "false_negative_rate": 0.0,
+    "false_positive_rate": 0,
+    "specificity": 1.0,
+    "tp": 2,
+    "fp": 0,
+    "tn": 2,
+    "fn": 0,
+    "zero_fn_guarantee": true
+  },
+  "fact_extraction": {
+    "slot_exact_match_ratio": 1.0,
+    "slot_precision": 1.0,
+    "slot_recall": 1.0,
+    "slot_f1": 1.0,
+    "matched_slots": 11,
+    "total_gold_slots": 11,
+    "total_predicted_slots": 11
+  },
+  "latency_ms": {
+    "mean_ms": 23.55,
+    "min_ms": 18.76,
+    "max_ms": 30.02,
+    "p95_ms": 30.02,
+    "count": 12
+  }
+}
