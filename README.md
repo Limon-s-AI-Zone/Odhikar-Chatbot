@@ -41,7 +41,7 @@ Watch a walkthrough demonstration of Odhikar's voice-first Bangla legal intake, 
 
 <p align="center">
   <video src="assets/demo_video.webm" controls="controls" width="100%" height="100px" poster="assets/preview.png">
-    <a href="assets/demo_video.mp4">
+    <a href="assets/demo_video.webm">
       <img src="assets/preview.png" alt="Odhikar Video Walkthrough Demo" width="100%" />
     </a>
   </video>
