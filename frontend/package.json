@@ -9,11 +9,13 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^6.1.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "playwright-core": "^1.64.0",
     "typescript": "~6.0.2",
-    "vite": "^8.2.2"
+    "vite": "^6.4.4"
   },
   "dependencies": {
+    "@rolldown/binding-darwin-arm64": "^1.2.13",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "axios": "^1.20.0",

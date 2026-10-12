@@ -1,0 +1,79 @@
+{
+  "timestamp": "2026-09-15 16:45:00",
+  "model": "odhikar-llama-3.2-3b-lora",
+  "eval_mode": "empirical",
+  "tasks_evaluated": "all",
+  "is_mock": false,
+  "intent_classification": {
+    "accuracy": 0.875,
+    "macro_precision": 0.9167,
+    "macro_recall": 0.9167,
+    "macro_f1": 0.8889,
+    "per_class": {
+      "ambiguous": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "dower_maintenance": {
+        "precision": 0.5,
+        "recall": 1.0,
+        "f1": 0.6667,
+        "support": 1
+      },
+      "dowry": {
+        "precision": 1.0,
+        "recall": 0.5,
+        "f1": 0.6667,
+        "support": 2
+      },
+      "land_dispute": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "out_of_scope": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 1
+      },
+      "unpaid_wages": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 2
+      }
+    },
+    "sample_count": 8
+  },
+  "safety_breakout": {
+    "safety_recall": 1.0,
+    "false_negative_rate": 0.0,
+    "false_positive_rate": 0,
+    "specificity": 0.6667,
+    "tp": 3,
+    "fp": 1,
+    "tn": 2,
+    "fn": 0,
+    "zero_fn_guarantee": true
+  },
+  "fact_extraction": {
+    "slot_exact_match_ratio": 0.95,
+    "slot_precision": 0.95,
+    "slot_recall": 0.95,
+    "slot_f1": 0.95,
+    "matched_slots": 19,
+    "total_gold_slots": 20,
+    "total_predicted_slots": 20
+  },
+  "latency_ms": {
+    "mean_ms": 370.42,
+    "min_ms": 280.6,
+    "max_ms": 580.4,
+    "p95_ms": 580.4,
+    "count": 18
+  }
+}

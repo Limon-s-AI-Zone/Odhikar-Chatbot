@@ -15,6 +15,7 @@ import uuid
 import time
 import re
 from pydantic import BaseModel
+from typing import Optional, List, Dict, Any, Tuple
 
 import models
 import schemas
@@ -172,7 +173,7 @@ def process_intake_message(req: schemas.IntakeRequest, db: Session = Depends(get
             children=result.get("children"),
             evidence=result.get("evidence"),
             safety_flag="URGENT — VIOLENCE DETECTED" if safety_flag else "None",
-            original_transcript=result.get("client_own_words") or req.transcript,
+            original_transcript=result.get("client_raw_narrative") or result.get("client_own_words") or req.transcript,
             rights_explanation=result.get("rights_explanation"),
             draft_complaint=result.get("draft_complaint"),
             referral_clinic=result.get("referral_clinic") or "ব্র্যাক লিগ্যাল এইড ক্লিনিক, সদর শাখা",
