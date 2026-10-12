@@ -1,0 +1,2249 @@
+import os
+from typing import TypedDict, Optional, List, Dict, Any
+from pydantic import BaseModel, Field
+
+from dotenv import load_dotenv
+
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(env_path):
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
+
+from langgraph.graph import StateGraph, END
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+try:
+    from . import prompts
+    from . import templates
+    from .prompt_builder import get_prompt_builder
+except ImportError:
+    import prompts
+    import templates
+    from prompt_builder import get_prompt_builder
+
+# Dynamic prompt builder singleton (loads from prompt_config.yaml)
+_pb = get_prompt_builder()
+
+from utils import (
+    llm,
+    get_llm_for_model,
+    MODEL_REGISTRY,
+    check_local_ollama_status,
+    OPENROUTER_API_KEY,
+    MODEL_NAME,
+    TOKEN_BUDGET_LIMIT,
+    check_llm_status,
+    parse_llm_error,
+    is_model_configured,
+    get_error_message,
+)
+
+# Directory of BRAC Legal Aid Clinics and Helplines across Bangladesh
+LEGAL_AID_CLINIC_DIRECTORY = [
+    {
+        "keywords": ["ঢাকা", "dhaka", "মিরপুর", "mirpur", "উত্তরা", "uttara", "ধানমন্ডি", "dhanmondi", "মোহাম্মদপুর", "mohammadpur"],
+        "clinic_name": "ব্র্যাক মানবাধিকার ও আইনি সহায়তা কেন্দ্র, মিরপুর শাখা",
+        "address": "প্লট-২, ব্লক-বি, মিরপুর-১০, ঢাকা",
+        "contact_number": "০১৭১৩-০৪৫৬৭৮",
+        "referral_slot": "মঙ্গলবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["সাভার", "savar", "আশুলিয়া", "ashulia", "ধামরাই", "dhamrai"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, সাভার শাখা",
+        "address": "সিটি সেন্টার সংলগ্ন, ঢাকা-আরিচা রোড, সাভার",
+        "contact_number": "০১৭৩০-১২৩৪৫৬",
+        "referral_slot": "বুধবার, সকাল ১১:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["গাজীপুর", "gazipur", "জয়দেবপুর", "joydebpur", "টঙ্গী", "tongi"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, জয়দেবপুর শাখা",
+        "address": "শিববাড়ি মোড়, ঢাকা রোড, গাজীপুর সদর",
+        "contact_number": "০১৭৩০-৭৮৯১০১",
+        "referral_slot": "সোমবার, সকাল ১০:৩০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["নারায়ণগঞ্জ", "narayanganj", "চাষাড়া", "chasara", "সিদ্ধিরগঞ্জ", "siddhirganj"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, নারায়ণগঞ্জ শাখা",
+        "address": "চাষাড়া গোলচত্বর সংলগ্ন, বঙ্গবন্ধু সড়ক, নারায়ণগঞ্জ",
+        "contact_number": "০১৭৩০-৫৫৮৮৯৯",
+        "referral_slot": "বুধবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["রংপুর", "rangpur", "কুড়িগ্রাম", "kurigram", "গাইবান্ধা", "gaibandha", "লালমনিরহাট", "lalmonirhat", "নীলফামারী", "nilphamari"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, রংপুর শাখা",
+        "address": "মডার্ন মোড়, আরকে রোড, রংপুর সদর",
+        "contact_number": "০১৭৩০-৩৩৪৫৫৬",
+        "referral_slot": "বৃহস্পতিবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["দিনাজপুর", "dinajpur", "ঠাকুরগাঁও", "thakurgaon", "পঞ্চগড়", "panchagarh"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, দিনাজপুর শাখা",
+        "address": "মহালে রোড, বালুয়াডাঙ্গা, দিনাজপুর সদর",
+        "contact_number": "০১৭৩০-৬৬৭৭৯৯",
+        "referral_slot": "মঙ্গলবার, সকাল ১১:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["বগুড়া", "bogura", "bogra", "শেরপুর", "sherpur", "শিবগঞ্জ", "shibganj"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, বগুড়া শাখা",
+        "address": "সাতমাথা, শেরপুর রোড, বগুড়া সদর",
+        "contact_number": "০১৭৩০-৮৮৯৯০০",
+        "referral_slot": "বুধবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["সিলেট", "sylhet", "সুনামগঞ্জ", "sunamganj", "মৌলভীবাজার", "moulvibazar", "হবিগঞ্জ", "habiganj"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, সিলেট সদর শাখা",
+        "address": "আম্বরখানা পয়েন্ট, বিমানবন্দর রোড, সিলেট",
+        "contact_number": "০১৭৩০-৫৬৭৮৯০",
+        "referral_slot": "রবিবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["চট্টগ্রাম", "chattogram", "chittagong", "কক্সবাজার", "cox's bazar", "ফেনী", "feni"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, চট্টগ্রাম সদর শাখা",
+        "address": "জিইসি মোড়, সিডিএ এভিনিউ, নাসিরাবাদ, চট্টগ্রাম",
+        "contact_number": "০১৭৩০-১১২২৩৩",
+        "referral_slot": "রবিবার, সকাল ১০:৩০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["কুমিল্লা", "cumilla", "comilla", "ব্রাহ্মণবাড়িয়া", "brahmanbaria", "চাঁদপুর", "chandpur"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, কুমিল্লা শাখা",
+        "address": "কান্দিরপাড়, নজরুল এভিনিউ, কুমিল্লা সদর",
+        "contact_number": "০১৭৩০-৭৭৮৮৯৯",
+        "referral_slot": "বুধবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["রাজশাহী", "rajshahi", "নাটোর", "natore", "নওগাঁ", "naogaon", "পাবনা", "pabna"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, রাজশাহী সদর শাখা",
+        "address": "আলুপট্টি মোড়, বোয়ালিয়া, রাজশাহী",
+        "contact_number": "০১৭৩০-৬৬৭৭৮৮",
+        "referral_slot": "সোমবার, সকাল ১১:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["খুলনা", "khulna", "যশোর", "jashore", "jessore", "সাতক্ষীরা", "satkhira", "বাগেরহাট", "bagerhat"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, খুলনা সদর শাখা",
+        "address": "ডাকবাংলো মোড়, কেডিএ এভিনিউ, খুলনা",
+        "contact_number": "০১৭৩০-৯৯০০১১",
+        "referral_slot": "মঙ্গলবার, সকাল ১০:৩০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["বরিশাল", "barishal", "barisal", "পটুয়াখালী", "patuakhali", "ভোলা", "bhola", "পিরোজপুর", "pirojpur"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, বরিশাল সদর শাখা",
+        "address": "সদর রোড, কোতোয়ালি, বরিশাল",
+        "contact_number": "০১৭৩০-২২৩৩৪৪",
+        "referral_slot": "বুধবার, সকাল ১০:৩০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["ময়মনসিংহ", "mymensingh", "জামালপুর", "jamalpur", "নেত্রকোণা", "netrokona"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, ময়মনসিংহ শাখা",
+        "address": "গাঙ্গিনার পাড়, নতুন বাজার রোড, ময়মনসিংহ সদর",
+        "contact_number": "০১৭৩০-৪৪৩৩২২",
+        "referral_slot": "বৃহস্পতিবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["ফরিদপুর", "faridpur", "মাদারীপুর", "madaripur", "শরীয়তপুর", "shariatpur", "গোপালগঞ্জ", "gopalganj", "রাজবাড়ী", "rajbari"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, ফরিদপুর শাখা",
+        "address": "ঝিলটুলী, মুজিব সড়ক, ফরিদপুর সদর",
+        "contact_number": "০১৭৩০-৫৫৬৬৭৭",
+        "referral_slot": "মঙ্গলবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["টাঙ্গাইল", "tangail", "কিশোরগঞ্জ", "kishoreganj", "মানিকগঞ্জ", "manikganj", "মুন্সীগঞ্জ", "munshiganj", "নরসিংদী", "narsingdi"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, টাঙ্গাইল শাখা",
+        "address": "ভিক্টোরিয়া রোড, টাঙ্গাইল সদর",
+        "contact_number": "০১৭৩০-৭৭৮৮১১",
+        "referral_slot": "সোমবার, সকাল ১০:০০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["নোয়াখালী", "noakhali", "লক্ষ্মীপুর", "lakshmipur", "ফেনী", "feni", "চাঁদপুর", "chandpur"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, নোয়াখালী শাখা",
+        "address": "মাইজদী কোর্ট, প্রধান সড়ক, নোয়াখালী সদর",
+        "contact_number": "০১৭৩০-৯৯৮৮৭৭",
+        "referral_slot": "বৃহস্পতিবার, সকাল ১০:৩০ টা",
+        "helpline": "১৬৪৩০"
+    },
+    {
+        "keywords": ["কুষ্টিয়া", "kushtia", "চুয়াডাঙ্গা", "chuadanga", "মেহেরপুর", "meherpur", "ঝিনাইদহ", "jhenaidah", "মাগুরা", "magura"],
+        "clinic_name": "ব্র্যাক লিগ্যাল এইড ক্লিনিক, কুষ্টিয়া শাখা",
+        "address": "এনএস রোড, মজমপুর গেট, কুষ্টিয়া সদর",
+        "contact_number": "০১৭৩০-১২৯৯১১",
+        "referral_slot": "বুধবার, সকাল ১১:০০ টা",
+        "helpline": "১৬৪৩০"
+    }
+]
+
+DEFAULT_CLINIC = {
+    "clinic_name": "ব্র্যাক মানবাধিকার ও আইনি সহায়তা কেন্দ্র, সদর শাখা",
+    "address": "৭৫ মহাখালী, ঢাকা (বা আপনার নিকটস্থ উপজেলা কার্যালয়)",
+    "contact_number": "০৯৬১২২৭২২৭২ (হেল্পলাইন: ১৬৪৩০)",
+    "referral_slot": "বুধবার, সকাল ১০:০০ টা",
+    "helpline": "১৬৪৩০"
+}
+
+@tool
+def find_nearby_legal_aid_center(location: str, issue_category: str = "general") -> Dict[str, str]:
+    """
+    Search and retrieve the nearest BRAC Legal Aid Clinic and available appointment consultation slot based on the client's location and legal category.
+    
+    Args:
+        location: The client's district, upazila, city, or area in Bangladesh (e.g. 'রংপুর', 'বগুড়া', 'সাভার', 'সিলেট', 'চট্টগ্রাম', 'খুলনা', 'রাজশাহী', 'ঢাকা', 'সদর').
+        issue_category: The legal category (family_dower_maintenance, dowry, unpaid_wages, land_dispute, out_of_scope).
+        
+    Returns:
+        A dictionary with clinic_name, address, contact_number, referral_slot, and formatted_display.
+    """
+    loc_lower = (location or "").strip().lower()
+    matched = None
+    best_pos = 999999
+    for entry in LEGAL_AID_CLINIC_DIRECTORY:
+        for kw in entry["keywords"]:
+            pos = loc_lower.find(kw.lower())
+            if pos != -1 and pos < best_pos:
+                best_pos = pos
+                matched = entry
+                break
+            
+    selected = matched if matched else DEFAULT_CLINIC
+    display_name = f"{selected['clinic_name']} ({selected['address']} · ফোন: {selected['contact_number']})"
+    return {
+        "clinic_name": selected["clinic_name"],
+        "address": selected["address"],
+        "contact_number": selected["contact_number"],
+        "referral_slot": selected["referral_slot"],
+        "formatted_display": display_name
+    }
+
+# LLM bound with clinic finder tool
+clinic_tool_llm = llm.bind_tools([find_nearby_legal_aid_center])# Pydantic schema for classification
+class ClassificationOutput(BaseModel):
+    category: str = Field(
+        description="One of: family_dower_maintenance, dowry, unpaid_wages, land_dispute, out_of_scope, unclassifiable"
+    )
+    confidence: int = Field(description="Confidence percentage 0-100")
+    reasoning: str = Field(description="Reasoning in Bengali explaining why this category applies")
+
+# Pydantic schema for structured fact extraction
+class ExtractedFactsOutput(BaseModel):
+    applicant_name: Optional[str] = Field(None, description="Client or applicant name (default '[নাম সংরক্ষিত]' if anonymous)")
+    respondent: Optional[str] = Field(None, description="Party against whom claim is made and their relationship")
+    marriage_date: Optional[str] = Field(None, description="Marriage date, year, or approximate season")
+    marriage_date_inferred: bool = Field(False, description="True if the marriage date is approximate or inferred from events")
+    dower_amount: Optional[str] = Field(None, description="Dower amount agreed in kabinnama")
+    dowry_paid: Optional[str] = Field(None, description="Dowry amount or goods (e.g. motorcycle) paid or demanded")
+    unpaid_wages_claim: Optional[str] = Field(None, description="Total unpaid salary or calculated balance")
+    work_period: Optional[str] = Field(None, description="Duration worked or specific months unpaid")
+    current_status: Optional[str] = Field(None, description="Current situation, pressure, eviction threat, or recovery status")
+    children: Optional[str] = Field(None, description="Children count, ages, or custody context")
+    evidence: Optional[str] = Field(None, description="Available proof, kabinnama, ID card, witnesses, or document location")
+    collective_count: Optional[str] = Field(None, description="If collective claim, number of claimants (e.g. '৪০ জন')")
+    time_critical: bool = Field(False, description="True if urgent action is needed (e.g. property sale underway)")
+    address: Optional[str] = Field(None, description="Client or incident location, village, upazila, district (e.g. সাভার, বগুড়া, রংপুর, সিলেট, ঢাকা)")
+
+# Structured output invocations
+classification_llm = llm.with_structured_output(ClassificationOutput)
+extraction_llm = llm.with_structured_output(ExtractedFactsOutput)
+
+# Pydantic schema for structured dynamic dialogue evaluation (Problem -> Cause -> History -> Impact -> Desired Solution)
+class IntakeDialogueOutput(BaseModel):
+    is_complete: bool = Field(
+        description="Set to True ONLY if the client has sufficiently answered the essential dimensions of their grievance (Problem, Cause, History, Impact, Desired Solution) or cannot provide further information. Set to False if essential stages (such as why the dispute occurred) are still unanswered."
+    )
+    current_stage: str = Field(
+        description="The stage currently being examined: 'problem', 'cause', 'history', 'impact', 'desired_solution', or 'complete'"
+    )
+    stages_covered: List[str] = Field(
+        default_factory=list,
+        description="List of stages covered so far, e.g. ['problem', 'cause']"
+    )
+    missing_aspect: Optional[str] = Field(
+        None,
+        description="Short description in Bengali of what is still missing (e.g. 'ভরণপোষণ বন্ধ হওয়ার মূল কারণ', 'কাবিননামা ও পূর্ববর্তী সালিশ')"
+    )
+    follow_up_question: Optional[str] = Field(
+        None,
+        description="If is_complete is False: an empathetic, conversational question in spoken Bengali (কথ্য বাংলা) asking for the next unaddressed stage in the Problem → Cause → History → Impact → Desired Solution flow. If is_complete is True: null."
+    )
+    suggested_replies: Optional[List[str]] = Field(
+        None,
+        description="If is_complete is False: exactly 3 to 4 natural Bengali quick-reply options directly tailored to the follow_up_question. If is_complete is True: null."
+    )
+    newly_identified_facts: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Any newly extracted case facts (e.g. respondent, marriage_date, dower_amount, current_status, evidence, children, unpaid_wages_claim, address)"
+    )
+
+# LLM Bundle Cache for dynamic model switching (Gemini 2.5 to latest, and Local Llama)
+_bundle_cache: Dict[str, Dict[str, Any]] = {}
+
+def get_model_bundle(model_id: Optional[str] = None, thinking_level: Optional[str] = None) -> Dict[str, Any]:
+    """Dynamically returns a cached bundle containing base LLM, structured outputs, and tool-bound LLMs."""
+    target_id = model_id or "gemini-2.5-flash"
+    lvl = (thinking_level or "medium").lower()
+    cache_key = f"{target_id}::{lvl}"
+    if cache_key in _bundle_cache:
+        return _bundle_cache[cache_key]
+
+    target_llm = get_llm_for_model(target_id, thinking_level=lvl)
+    bundle = {
+        "llm": target_llm,
+        "classification_llm": target_llm.with_structured_output(ClassificationOutput),
+        "extraction_llm": target_llm.with_structured_output(ExtractedFactsOutput),
+        "dialogue_llm": target_llm.with_structured_output(IntakeDialogueOutput),
+        "clinic_tool_llm": target_llm.bind_tools([find_nearby_legal_aid_center])
+    }
+    _bundle_cache[cache_key] = bundle
+    return bundle
+
+# Default legacy singleton aliases for backward compatibility with external imports
+_default_bundle = get_model_bundle("gemini-2.5-flash")
+clinic_tool_llm = _default_bundle["clinic_tool_llm"]
+classification_llm = _default_bundle["classification_llm"]
+extraction_llm = _default_bundle["extraction_llm"]
+dialogue_llm = _default_bundle["dialogue_llm"]
+
+# LangGraph State Schema
+class IntakeState(TypedDict):
+    selected_model: Optional[str]
+    thinking_level: Optional[str]
+    audio_path: Optional[str]
+    transcript: str
+    client_own_words: str
+    turn_count: int
+    
+    # Token budgeting & continuation
+    estimated_tokens: int
+    requires_continuation: bool
+    continuation_prompt: Optional[str]
+    is_continuation_confirmed: bool
+    is_summarized: Optional[bool]
+    client_raw_narrative: Optional[str]
+    
+    # Safety
+    safety_flag: bool
+    safety_message: Optional[str]
+    
+    # Classification
+    category: Optional[str]
+    confidence: Optional[int]
+    classification_reason: Optional[str]
+    disambiguation_needed: bool
+    
+    # Extraction
+    applicant_name: Optional[str]
+    respondent: Optional[str]
+    address: Optional[str]
+    marriage_date: Optional[str]
+    marriage_date_inferred: Optional[bool]
+    dower_amount: Optional[str]
+    dowry_paid: Optional[str]
+    unpaid_wages_claim: Optional[str]
+    work_period: Optional[str]
+    current_status: Optional[str]
+    children: Optional[str]
+    evidence: Optional[str]
+    collective_count: Optional[str]
+    time_critical: Optional[bool]
+    
+    # Dialogue & Templates & Chat History
+    is_complete: bool
+    current_stage: Optional[str]
+    stages_covered: Optional[List[str]]
+    missing_fields: List[str]
+    follow_up_question: Optional[str]
+    suggested_replies: Optional[List[str]]
+    extra_question_asked: Optional[bool]
+    rights_explanation: Optional[str]
+    draft_complaint: Optional[str]
+    referral_clinic: Optional[str]
+    referral_slot: Optional[str]
+    chat_history: List[Dict[str, Any]]
+    action_summary: Optional[str]
+    awaiting_solution_confirmation: Optional[bool]
+    solution_confirmed: Optional[bool]
+    documents_asked: Optional[bool]
+    awaiting_process_confirmation: Optional[bool]
+    awaiting_partial_action_confirmation: Optional[bool]
+    doc_status: Optional[str]
+    taking_action_based_on_docs: Optional[str]
+    llm_error: Optional[str]
+    llm_error_details: Optional[Dict[str, Any]]
+
+
+# Helper to estimate tokens (Bangla words average ~2.5 tokens per word)
+def estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    words = len(text.split())
+    return int(words * 2.5)
+
+def summarize_narrative(text: str) -> Dict[str, Any]:
+    """
+    Uses an extra LLM call to condense a lengthy narrative into a concise,
+    legally focused Bengali summary (under 60 words / ~120 tokens).
+    Retains all material facts: parties, dates/duration, financial amounts, incidents, and requested relief.
+    """
+    if not text or not text.strip():
+        return {"summarized_text": "", "original_tokens": 0, "summarized_tokens": 0}
+    
+    orig_tokens = estimate_tokens(text)
+    prompt = (
+        "You are an expert Bengali legal assistant for paralegal aid intake.\n"
+        "The client provided an overly long narrative that exceeds the token budget.\n"
+        "Summarize this narrative into 2-3 concise sentences in clear, dignified, natural Bengali (strictly under 60 words).\n"
+        "STRICT REQUIREMENTS:\n"
+        "1. Retain ALL core legal facts: parties involved, marriage length/dates, money/amounts (dower, dowry, wages), specific actions/threats, and relief needed.\n"
+        "2. Remove repetitive fillers, emotional commentary, and redundant phrases.\n"
+        "3. Write from the client's perspective (e.g., 'আমার বিয়ে হয়েছে...' or neutral legal summary).\n"
+        "4. Respond ONLY with the summarized Bengali text, without any introductory or concluding remarks, bullet points, or English words.\n\n"
+        f"Original Narrative:\n{text.strip()}"
+    )
+    try:
+        res = llm.invoke(prompt)
+        summarized = res.content.strip().strip('"\'')
+        new_tokens = estimate_tokens(summarized)
+        return {
+            "summarized_text": summarized,
+            "original_tokens": orig_tokens,
+            "summarized_tokens": new_tokens
+        }
+    except Exception as e:
+        print(f"[Summarize Error] {e}")
+        sentences = [s.strip() for s in text.replace("।", ".").split(".") if s.strip()]
+        fallback = "। ".join(sentences[:2]) + "।" if sentences else text[:200]
+        return {
+            "summarized_text": fallback,
+            "original_tokens": orig_tokens,
+            "summarized_tokens": estimate_tokens(fallback)
+        }
+
+# Lazy-loaded faster-whisper instance
+whisper_model = None
+
+BANGLA_WHISPER_PROMPT = "নিম্নলিখিত বিবরণটি সাধারণ মানুষের কথ্য বাংলা ভাষায় প্রতিলিপি: কাবিন, দেনমোহর, ভরণপোষণ, যৌতুক, বিবাহ, তালাক, বকেয়া মজুরি, জমিজমা সংক্রান্ত বিরোধ।"
+
+def get_whisper():
+    global whisper_model
+    if whisper_model is None:
+        try:
+            from faster_whisper import WhisperModel
+            whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
+        except Exception as e:
+            print(f"[Whisper Warning] Could not load local model: {e}")
+            whisper_model = False
+    return whisper_model
+
+def normalize_bangla_transcript(raw_text: str) -> str:
+    """
+    Cleans and restores raw/phonetic speech transcription into pure, standard Bengali script.
+    Fixes Devanagari, Urdu, or phonetic distortions caused by multilingual ASR models.
+    """
+    if not raw_text or not raw_text.strip():
+        return ""
+    
+    # Check if text already looks like pure Bengali without foreign scripts
+    has_foreign_script = any(('\u0900' <= c <= '\u097F') or ('\u0600' <= c <= '\u06FF') for c in raw_text)
+    bengali_chars = [c for c in raw_text if ('\u0980' <= c <= '\u09ff')]
+    alnum_chars = [c for c in raw_text if c.isalnum()]
+    
+    if not has_foreign_script and len(bengali_chars) > 6 and len(bengali_chars) / max(len(alnum_chars), 1) > 0.85:
+        return raw_text.strip()
+
+    try:
+        from langchain_core.messages import HumanMessage
+        prompt = (
+            "You are an expert Bengali audio transcriber and legal intake assistant. "
+            "The following text was transcribed from a voice recording of an everyday Bengali speaker, but contains phonetic, Devanagari, or transliteration errors:\n\n"
+            f"\"{raw_text}\"\n\n"
+            "Restore and output ONLY the clean, natural everyday Bengali sentence in pure Bengali script (বাংলা বর্ণমালা). "
+            "Output nothing else, no quotes, no explanations."
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        cleaned = response.content.strip().strip('"').strip("'")
+        return cleaned if cleaned else raw_text
+    except Exception as ex:
+        print(f"[Transcript Normalization Warning] {ex}")
+        return raw_text
+
+
+# ----------------- GRAPH NODES -----------------
+
+def transcribe_node(state: IntakeState) -> Dict[str, Any]:
+    """Transcribes audio using faster-whisper and restores pure Bangla script."""
+    audio_path = state.get("audio_path")
+    if audio_path and os.path.exists(audio_path):
+        model = get_whisper()
+        if model:
+            try:
+                segments, info = model.transcribe(
+                    audio_path, 
+                    language="bn", 
+                    task="transcribe",
+                    beam_size=5
+                )
+                raw_text = " ".join([seg.text for seg in segments]).strip()
+                text = normalize_bangla_transcript(raw_text)
+                prev_text = state.get("client_own_words", "")
+                combined = f"{prev_text}\n{text}".strip() if prev_text else text
+                return {
+                    "transcript": text,
+                    "client_own_words": combined,
+                    "estimated_tokens": estimate_tokens(combined)
+                }
+            except Exception as ex:
+                print(f"[Whisper Error] Transcription failed: {ex}")
+    
+    if state.get("is_summarized"):
+        current_text = state.get("transcript", "")
+        return {
+            "transcript": current_text,
+            "client_own_words": current_text,
+            "estimated_tokens": estimate_tokens(current_text)
+        }
+    
+    current_text = state.get("transcript", "")
+    prev_text = state.get("client_own_words", "")
+    combined = f"{prev_text}\n{current_text}".strip() if prev_text else current_text
+    return {
+        "transcript": current_text,
+        "client_own_words": combined,
+        "estimated_tokens": estimate_tokens(combined)
+    }
+
+def safety_check_node(state: IntakeState) -> Dict[str, Any]:
+    """Safety check runs on every turn, tuned to over-trigger rather than under-trigger."""
+    if state.get("llm_error"):
+        return {}
+    
+    prev_safety_flag = bool(state.get("safety_flag", False))
+    prev_safety_msg = state.get("safety_message")
+
+    text_to_eval = state.get("transcript", "")
+    if not text_to_eval:
+        return {
+            "safety_flag": prev_safety_flag,
+            "safety_message": prev_safety_msg
+        }
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", prompts.SAFETY_SYSTEM_PROMPT),
+        ("user", "{text}")
+    ])
+    try:
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["llm"].invoke(prompt.format_messages(text=text_to_eval))
+        is_danger = ("DANGER" in res.content.upper()) or prev_safety_flag
+        return {
+            "safety_flag": is_danger,
+            "safety_message": (prev_safety_msg or templates.RIGHTS_EXPLANATIONS["safety_escalation"]) if is_danger else None
+        }
+    except Exception as e:
+        print(f"[Safety LLM Error] {e}")
+        err_info = parse_llm_error(e)
+        return {
+            "safety_flag": prev_safety_flag,
+            "llm_error": err_info["message_bn"],
+            "llm_error_details": err_info
+        }
+
+def token_budget_node(state: IntakeState) -> Dict[str, Any]:
+    """
+    Checks if token consumption exceeds the threshold.
+    If yes and user has not confirmed continuation yet, pauses generation and asks for continuation.
+    Applies when the initial narrative on Turn 1 exceeds the budget, or if a single input message exceeds it.
+    """
+    if state.get("llm_error"):
+        return {}
+    tokens = state.get("estimated_tokens", 0)
+    confirmed = state.get("is_continuation_confirmed", False)
+    turn_count = state.get("turn_count", 1)
+    current_input_tokens = estimate_tokens(state.get("transcript", ""))
+    
+    exceeds_budget = (turn_count == 1 and tokens > TOKEN_BUDGET_LIMIT) or (current_input_tokens > TOKEN_BUDGET_LIMIT)
+    
+    if exceeds_budget and not confirmed:
+        prompt_msg = (
+            f"আপনার বিবরণটি দীর্ঘ (আনুমানিক {tokens} টোকেন)। "
+            f"পরবর্তী ধাপে বিস্তারিত আইনি তথ্য ও অভিযোগ প্রস্তুত করতে আরও টোকেন উৎপন্ন হবে। "
+            f"আপনি কি পরবর্তী টোকেন বিশ্লেষণ সম্পন্ন করতে চান?"
+        )
+        return {
+            "requires_continuation": True,
+            "continuation_prompt": prompt_msg,
+            "is_complete": False
+        }
+    
+    return {
+        "requires_continuation": False,
+        "continuation_prompt": None
+    }
+
+def classification_node(state: IntakeState) -> Dict[str, Any]:
+    """Classifies category and checks confidence."""
+    if state.get("llm_error"):
+        return {}
+
+    # If category is already established in a previous turn with high confidence, retain it
+    existing_cat = state.get("category")
+    existing_conf = state.get("confidence") or 0
+    if existing_cat and existing_cat != "unclassifiable" and existing_conf >= 65 and state.get("turn_count", 1) > 1:
+        return {
+            "category": existing_cat,
+            "confidence": existing_conf,
+            "classification_reason": state.get("classification_reason") or "পূর্ববর্তী ধাপে নির্ধারিত বিষয় অপরিবর্তিত রাখা হলো",
+            "disambiguation_needed": False
+        }
+
+    text_to_eval = state.get("client_own_words") or state.get("transcript", "")
+    latest_transcript = (state.get("transcript") or "").strip().lower()
+    lower_eval = text_to_eval.strip().lower()
+
+    # Fast-path keyword shortcut for category selection (e.g. from disambiguation chips, action selection chips, or direct submission)
+    if any(k in latest_transcript for k in ["দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ", "পারিবারিক দেনমোহর বা ভরণপোষণ", "দেনমোহর বা ভরণপোষণ", "ভরণপোষণ", "পারিবারিক দেনমোহর", "দেনমোহর"]):
+        return {
+            "category": "family_dower_maintenance",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর দেনমোহর/ভরণপোষণ বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
+    if any(k in latest_transcript for k in ["বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ", "বকেয়া মজুরি বা শ্রমিকের পাওনা", "বকেয়া মজুরি", "শ্রমিকের পাওনা", "মজুরি পাওনা"]):
+        return {
+            "category": "unpaid_wages",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর বকেয়া মজুরি বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
+    land_keywords = [
+        "জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ", "জমিজমা সংক্রান্ত", "জমিজমা", "জমির বিরোধ", "জমি নিয়ে বিরোধ", "জমি নিয়ে বিরোধ",
+        "সীমানা বেদখল", "জমি দখল", "পৈতৃক জমি", "জমিজমা সংক্রান্ত বিরোধে", "জমিজমা সংক্রান্ত বিরোধ"
+    ]
+    if any(k in latest_transcript for k in land_keywords) or any(k in lower_eval for k in ["জমিজমা সংক্রান্ত বিরোধ", "জমিজমা সংক্রান্ত"]):
+        return {
+            "category": "land_dispute",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর জমিজমা সংক্রান্ত বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
+    if any(k in latest_transcript for k in ["যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ", "যৌতুক ও নির্যাতন", "যৌতুক"]):
+        return {
+            "category": "dowry",
+            "confidence": 95,
+            "classification_reason": "ব্যবহারকারীর যৌতুক ও নির্যাতন সংক্রান্ত বিষয় নির্বাচন",
+            "disambiguation_needed": False
+        }
+    if any(k in latest_transcript for k in ["অন্যান্য সাধারণ আইনি প্রতিকার", "অন্যান্য সাধারণ"]):
+        return {
+            "category": "general",
+            "confidence": 90,
+            "classification_reason": "ব্যবহারকারীর সাধারণ আইনি প্রতিকার নির্বাচন",
+            "disambiguation_needed": False
+        }
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", prompts.CLASSIFICATION_SYSTEM_PROMPT),
+        ("user", "{text}")
+    ])
+    try:
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["classification_llm"].invoke(prompt.format_messages(text=text_to_eval))
+        if res is None:
+            cat = "unclassifiable"
+            conf = 0
+            reasoning = "স্বয়ংক্রিয় শ্রেণিবিভাগ করা যায়নি"
+        elif isinstance(res, dict):
+            cat = res.get("category", "unclassifiable")
+            conf = int(res.get("confidence", 0) or 0)
+            reasoning = res.get("reasoning", "")
+        else:
+            cat = getattr(res, "category", "unclassifiable")
+            conf = int(getattr(res, "confidence", 0) or 0)
+            reasoning = getattr(res, "reasoning", "")
+
+        disambiguation = (conf < 65) or (cat == "unclassifiable")
+        
+        return {
+            "category": cat,
+            "confidence": conf,
+            "classification_reason": reasoning,
+            "disambiguation_needed": disambiguation
+        }
+    except Exception as e:
+        print(f"[Classification Error] {e}")
+        err_info = parse_llm_error(e)
+        return {
+            "category": "unclassifiable",
+            "confidence": 0,
+            "classification_reason": "স্বয়ংক্রিয় শ্রেণিবিভাগ করা যায়নি",
+            "disambiguation_needed": False,
+            "llm_error": err_info["message_bn"],
+            "llm_error_details": err_info
+        }
+
+def extraction_node(state: IntakeState) -> Dict[str, Any]:
+    """Extracts facts from client's full narrative."""
+    if state.get("llm_error"):
+        return {}
+    text_to_eval = state.get("client_own_words") or state.get("transcript", "")
+    cat = state.get("category", "")
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", prompts.EXTRACTION_SYSTEM_PROMPT),
+        ("user", "Category: {category}\nNarrative: {text}")
+    ])
+    try:
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["extraction_llm"].invoke(
+            prompt.format_messages(category=cat, text=text_to_eval)
+        )
+        if res is None:
+            data = {}
+        elif isinstance(res, dict):
+            data = res
+        elif hasattr(res, "model_dump"):
+            data = res.model_dump()
+        elif hasattr(res, "dict"):
+            data = res.dict()
+        else:
+            data = {}
+
+        return {
+            k: v for k, v in data.items() 
+            if v is not None and str(v).strip().lower() != "null" and str(v).strip() != ""
+        }
+    except Exception as e:
+        print(f"[Extraction Error] {e}")
+        err_info = parse_llm_error(e)
+        return {
+            "llm_error": err_info["message_bn"],
+            "llm_error_details": err_info
+        }
+
+def generate_suggested_replies(
+    question: Optional[str],
+    missing_fields: Optional[List[str]] = None,
+    category: Optional[str] = None
+) -> List[str]:
+    """Generates 3-4 natural, colloquial Bengali suggested quick-replies based on the follow-up question.
+    Now delegates to PromptBuilder which loads replies from prompt_config.yaml."""
+    return _pb.get_suggested_replies(question, missing_fields, category)
+
+def check_uncertainty_or_missing_doc(text: str) -> Tuple[bool, Optional[str]]:
+    """Detects if client indicates lack of documents/proof or inability to remember in response to a question."""
+    if not text:
+        return False, None
+    t = text.strip().lower()
+    
+    # Do not treat long multi-sentence narrative (> 20 words) as an uncertainty chip response
+    if len(t.split()) > 20:
+        return False, None
+
+    # 1. Direct document absent / lost / unknown location patterns
+    doc_patterns = [
+        "ডকুমেন্ট নেই", "ডকুমেন্ট নাই", "ডকুমেন্টস নেই", "ডকুমেন্টস নাই", "কোনো ডকুমেন্ট", "কোন ডকুমেন্ট",
+        "কাগজ নেই", "কাগজ নাই", "কাগজপত্র নেই", "কাগজপত্র নাই", "কোনো কাগজ", "কোন কাগজ",
+        "দলিল নেই", "দলিল নাই", "দলিলপত্র নেই", "কোনো দলিল", "দলিল কোথায়", "দলিল পাচ্ছি না", "দলিল হারিয়ে",
+        "প্রমাণ নেই", "প্রমাণ নাই", "কোনো প্রমাণ", "লিখিত প্রমাণ নেই", "লিখিত প্রমাণ নাই",
+        "লিখিত কিছু নেই", "লিখিত চুক্তি নেই", "চুক্তিপত্র নেই", "লিখিত নাই",
+        "কাবিন নেই", "কাবিন নাই", "কাবিননামা নেই", "কাবিননামা নাই", "কোনো কাবিন নেই",
+        "কাবিন কোথায়", "কাবিননামা কোথায়", "কাবিন পাচ্ছি না", "কাবিননামা পাচ্ছি না", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে",
+        "কাবিন মনে নেই", "কাবিননামা মনে নেই", "কাবিননামা মনে নাই",
+        "কোথায় আছে মনে পড়ছে না", "কোথায় আছে মনে নাই", "কোথায় আছে জানি না", "কোথায় আছে মনে নেই",
+        "স্লিপ নেই", "স্লিপ নাই", "খাতা নেই", "হাজিরা খাতা নেই",
+        "document nei", "document nai", "no document", "no documents",
+        "kagoj nei", "kagoj nai", "kono kagoj", "no proof", "no paper", "no papers", "dolil nei"
+    ]
+    for p in doc_patterns:
+        if p in t:
+            return True, "document_nei"
+
+    # If user explicitly refers to document + uncertain/lost
+    has_doc_ref = any(w in t for w in ["কাবিন", "কাবিননামা", "দলিল", "কাগজ", "খতিয়ান", "খতিয়ান", "পর্চা", "স্লিপ"])
+    has_uncertain = any(w in t for w in ["কোথায়", "মনে পড়ছে না", "মনে পরছে না", "মনে নেই", "মনে নাই", "পাচ্ছি না", "খুঁজে পাচ্ছি না", "হারিয়ে", "নেই", "নাই", "জানি না"])
+    if has_doc_ref and has_uncertain:
+        return True, "document_nei"
+
+    # 2. General inability to remember patterns
+    memory_patterns = [
+        "মনে নেই", "মনে নাই", "মনে পরছে না", "মনে পড়ছে না",
+        "সঠিক মনে নেই", "সঠিক মনে নাই", "নির্দিষ্ট মনে নেই",
+        "জানা নেই", "জানা নাই", "সঠিক জানা নেই", "নির্দিষ্ট জানা নেই",
+        "বলতে পারছি না", "বলতে পারব না", "বলতে পারি না",
+        "ভুলে গেছি", "ভুলে গেসি", "খেয়াল নেই", "খেয়াল নেই",
+        "মনে করতে পারছি না", "মনে করতে পারি না",
+        "mone nei", "mone nai", "sothik mone nei", "mone porche na",
+        "jana nei", "jana nai", "dont know", "don't know", "dont remember", "don't remember", "not sure"
+    ]
+    for p in memory_patterns:
+        if p in t:
+            return True, "mone_nei"
+            
+    return False, None
+
+def generate_extra_fallback_question(
+    match_type: str,
+    category: Optional[str] = None,
+    previous_question: Optional[str] = None
+) -> Tuple[str, List[str]]:
+    """
+    Generates an empathetic extra question and tailored suggested replies
+    when client indicates lack of documents or inability to remember.
+    Now delegates to PromptBuilder which loads from prompt_config.yaml.
+    """
+    return _pb.get_fallback_question(
+        match_type=match_type,
+        category=category,
+        previous_question=previous_question
+    )
+
+def get_stage_fallback_question(category: Optional[str], stage: str, missing_item: Optional[str] = None) -> str:
+    """Gets the fallback follow-up question for a given category and stage.
+    Now delegates to PromptBuilder which loads from prompt_config.yaml."""
+    return _pb.get_stage_fallback_question(category, stage, missing_item)
+
+def classify_document_status(text: str, evidence: str = "", category: str = "general") -> str:
+    """
+    Classifies client's document/evidence readiness as:
+    - 'all_docs': has necessary formal documents ready in hand (also matches 'sufficient')
+    - 'partial_docs': has some documents/witnesses, but lacks key documents
+    - 'no_docs': lacks formal documents / oral only
+    - 'unknown': not yet mentioned
+    """
+    combined = (text + " " + evidence).lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
+    
+    partial_docs_patterns = [
+        "কিছু কাগজপত্র আছে, তবে সব নেই", "কিছু কাগজপত্র আছে তবে সব নেই",
+        "কিছু কাগজপত্র আছে", "কিছু কাগজ আছে", "সব কাগজ নেই", "সব কাগজপত্র নেই",
+        "সব কাগজ নাই", "সব কাগজপত্র নাই", "সব নেই", "সব নাই",
+        "কাবিন স্বামীর কাছে", "কাবিননামা স্বামীর কাছে", "স্বামীর কাছে রেখে", "স্বামীর কাছে",
+        "দলিল প্রতিপক্ষের", "দলিল প্রতিপক্ষের কাছে", "দলিল পাচ্ছি না", "দলিল অন্যের কাছে",
+        "চাচাদের কাছে", "ভাইদের কাছে", "দখলদারদের কাছে", "অন্যের কাছে",
+        "হারিয়ে গেছে", "হারিয়ে গেছে", "খুঁজে পাচ্ছি না", "খুঁজে পাই না", "পুড়ে গেছে",
+        "নষ্ট হয়ে গেছে", "নষ্ট হয়ে গেছে", "কাবিন হারিয়ে", "কাবিন হারিয়েছে",
+        "কাবিননামা হারিয়ে", "কাবিননামা হারিয়েছে", "দলিল হারিয়ে", "দলিল হারিয়ে",
+        "কাজী অফিস থেকে নকল", "কাজী অফিসের নকল", "কাজী অফিসে যেতে হবে", "নকল তুলতে হবে",
+        "খতিয়ান আছে কিন্তু দলিল নেই", "খতিয়ান আছে কিন্তু দলিল নেই", "পরচা আছে কিন্তু দলিল নেই",
+        "দাখিলা আছে কিন্তু দলিল নেই", "হাজিরা খাতা আছে কিন্তু চুক্তিপত্র নেই", "হাজিরা খাতা আছে কিন্তু চুক্তি নেই",
+        "আইডি কার্ড আছে কিন্তু চুক্তি নেই", "মেডিকেল আছে কিন্তু কাবিন নেই", "মেডিকেল সনদ আছে কিন্তু কাবিন নেই",
+        "জিডি করেছি কিন্তু অন্য কাগজ নেই"
+    ]
+
+    no_docs_patterns = [
+        "কোনো লিখিত কাগজপত্র বা প্রমাণ নেই", "কোনো লিখিত কাগজপত্র নেই",
+        "কোনো লিখিত কাগজ নেই", "লিখিত কোনো কাগজ নেই", "লিখিত কোনো প্রমাণ নেই",
+        "কোনো কাগজ নেই", "কোনো কাগজ নাই", "কোনো কাগজপত্র নেই", "কোনো কাগজপত্র নাই",
+        "কাগজ নেই", "কাগজ নাই", "কোন কাগজ নেই", "কোন কাগজ নাই",
+        "কোনো ডকুমেন্ট নেই", "কোনো ডকুমেন্ট নাই", "ডকুমেন্ট নেই", "ডকুমেন্ট নাই",
+        "ডকুমেন্টস নেই", "ডকুমেন্টস নাই",
+        "লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই",
+        "কোনো লিখিত চুক্তি নেই", "লিখিত কোনো চুক্তি নেই", "লিখিত চুক্তি নেই", "লিখিত চুক্তি নাই",
+        "চুক্তি নাই", "চুক্তি নেই", "চুক্তিপত্র নাই", "চুক্তিপত্র নেই",
+        "কোনো প্রমাণ নেই", "কোনো প্রমাণ নাই", "প্রমাণ নাই", "প্রমাণ নেই",
+        "কিছুই নাই", "কিছুই নেই",
+        "মৌখিক চুক্তি", "মৌখিক কথা", "মৌখিক", "মৌখিকভাবে", "শুধু মৌখিক", "শুধুমাত্র মৌখিক",
+        "গ্রামের লোক জানে", "গ্রামের লোক সবাই জানে", "গ্রামের মানুষ জানে", "এলাকার লোক জানে",
+        "কোনো কাজী বা সাক্ষী নেই", "কারও কাছেই তথ্য নেই", "সরাসরি কোনো সাক্ষী নেই",
+        "মেডিকেল নাই", "প্রেসক্রিপশন নাই", "ডাক্তারি কাগজ নেই", "হাসপাতালের কাগজ নেই",
+        "কাবিন নাই", "কাবিন নেই", "কাবিননামা নাই", "কাবিননামা নেই", "কোনো কাবিন নেই",
+        "দলিল নাই", "দলিল নেই"
+    ]
+
+    all_docs_patterns = [
+        "সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে",
+        "সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে",
+        "সমস্ত প্রয়োজনীয় কাগজপত্র", "সমস্ত প্রয়োজনীয় কাগজপত্র",
+        "প্রয়োজনীয় সব কাগজ প্রস্তুত", "প্রয়োজনীয় সব কাগজ প্রস্তুত",
+        "সব কাগজপত্র প্রস্তুত আছে", "সব কাগজপত্র প্রস্তুত",
+        "সব কাগজ প্রস্তুত", "সব কাগজ প্রস্তুত আছে",
+        "সব কাগজপত্র আছে", "সব কাগজ আছে", "সব দলিল আছে",
+        "সব ডকুমেন্ট আছে", "সব ডকুমেন্টস আছে", "সব প্রমাণ আছে", "সব প্রমাণাদি আছে", "প্রমাণপত্র আছে",
+        "কাগজপত্র প্রস্তুত আছে", "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত",
+        "মূল দলিল আছে", "দলিল আছে", "দলিল ও পরচা প্রস্তুত", "দলিল ও খতিয়ান আছে", "দলিল ও খতিয়ান আছে",
+        "দলিল আমার কাছে", "মূল দলিল আমার কাছে", "দলিল সাথে আছে", "দলিল সংরক্ষিত আছে",
+        "কাবিননামা বাবার বাড়িতে আছে", "কাবিননামা বাবার বাড়িতে আছে",
+        "কাবিন বাবার বাড়িতে আছে", "কাবিন বাবার বাড়িতে আছে",
+        "কাবিননামা আছে", "কাবিন আছে", "কাবিননামা সাথে আছে", "কাবিন সাথে আছে",
+        "কাবিননামা আমার সাথে", "কাবিননামা আমার কাছে", "এনআইডি ও কাবিননামা", "জাতীয় পরিচয়পত্র আছে",
+        "জাতীয় পরিচয়পত্র আছে", "এনআইডি আছে",
+        "হাজিরা খাতা ও আইডি কার্ড আছে", "হাজিরা খাতা ও স্লিপ আছে", "হাজিরা খাতা আছে",
+        "স্লিপ আছে", "কাজের চুক্তিপত্র আছে", "নিয়োগপত্র আছে", "নিয়োগপত্র ও আইডি কার্ড আছে",
+        "হ্যাঁ, কাবিননামা", "হ্যাঁ, প্রস্তুত আছে", "হ্যাঁ, সব কাগজ", "হ্যাঁ, দলিল আছে",
+        "প্রস্তুত আছে"
+    ]
+    
+    # Check partial docs first (handles 'কিছু কাগজ আছে, তবে সব নেই' and specific missing/withheld pieces)
+    if any(p.replace('ড়', 'ড়').replace('য়', 'য়') in combined for p in partial_docs_patterns):
+        return "partial_docs"
+    # Check no docs (explicitly oral / zero documents)
+    if any(p.replace('ড়', 'ড়').replace('য়', 'য়') in combined for p in no_docs_patterns):
+        return "no_docs"
+    # Check all docs ready
+    if any(p.replace('ড়', 'ড়').replace('য়', 'য়') in combined for p in all_docs_patterns):
+        return "all_docs"
+        
+    return "unknown"
+
+def check_user_confirmation(text: str) -> bool:
+    """Detects if client confirmed moving forward with the proposed solution or processing."""
+    if not text:
+        return False
+    t = text.strip().lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
+    confirm_patterns = [
+        "হ্যাঁ", "হ্যা", "সম্মতি", "সম্মত", "সম্মত আছি", "আমি সম্মত", "সম্মতি দিচ্ছি",
+        "ঠিক আছে", "এভাবে", "এভাবেই", "এভাবেই করতে চাই", "এভাবেই সমাধান চাই", "এভাবেই প্রস্তুত",
+        "অগ্রসর হতে চাই", "করুন", "প্রস্তুত করুন", "চাই", "অবশ্যই",
+        "সম্পন্ন করতে চাই", "প্রক্রিয়াটি সম্পন্ন করতে চাই", "প্রক্রিয়াটি সম্পন্ন করতে চাই",
+        "বিদ্যমান কাগজেই অগ্রসর", "বিদ্যমান কাগজের ভিত্তিতেই", "বিদ্যমান তথ্যের ভিত্তিতে",
+        "yes", "agree", "proceed", "confirmed", "ok", "sure"
+    ]
+    return any(p in t for p in confirm_patterns)
+
+def check_user_decline_or_alternative(text: str) -> bool:
+    """Detects if client declined processing or requested alternatives."""
+    if not text:
+        return False
+    t = text.strip().lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
+    decline_patterns = [
+        "না", "না, এখন নয়", "না এখন নয়", "পরে বিবেচনা", "পরে বিবেচনা করব",
+        "এখন নয়", "এখন নয়", "বিকল্প", "বিকল্প কোনো উপায়", "বিকল্প কোনো উপায়",
+        "বিকল্প চাই", "সালিশ চাই", "no", "later", "alternative"
+    ]
+    return any(p in t for p in decline_patterns)
+
+def dialogue_node(state: IntakeState) -> Dict[str, Any]:
+    """Identifies missing facts and formulates a dynamic, context-aware follow-up question."""
+    if state.get("llm_error"):
+        return {}
+    cat = state.get("category")
+    turn_count = state.get("turn_count", 1)
+    extra_question_asked = state.get("extra_question_asked", False)
+    text_to_eval = state.get("client_own_words") or state.get("transcript", "")
+    latest_user_text = state.get("transcript", "")
+    
+    # 1. Structured Stages and Coverage Detection
+    stages_order = ["problem", "cause", "history", "impact", "desired_solution"]
+    stage_bn_map = {
+        "problem": "সমস্যার মূল ধরণ",
+        "cause": "বিরোধের কারণ ও সূত্রপাত (কী কারণে ঝামেলা শুরু হলো / জমি কীভাবে বেদখল হলো / ভরণপোষণ কেন বন্ধ হলো)",
+        "history": "ইতিহাস, প্রমাণাদি/দলিল ও পূর্ববর্তী সালিশ (যেমন কাবিননামা, রেজিস্ট্রি দলিল/খতিয়ান, স্থানীয় সালিশ)",
+        "impact": "বর্তমান প্রভাব ও পরিস্থিতি (কোথায় থাকছেন, আর্থিক অনটন, জমিতে যেতে বাধা)",
+        "desired_solution": "প্রত্যাশিত আইনি প্রতিকার বা সমাধান"
+    }
+
+    existing_covered = list(state.get("stages_covered") or [])
+    if not existing_covered:
+        existing_covered = ["problem"]
+
+    prev_stage = state.get("current_stage")
+    if prev_stage and prev_stage in stages_order and prev_stage not in existing_covered:
+        if prev_stage != "history":
+            existing_covered.append(prev_stage)
+
+    # Fact-based detection of stages from accumulated text
+    lower_all = (text_to_eval + " " + latest_user_text).lower().replace('ড়', 'ড়').replace('ঢ়', 'ঢ়').replace('য়', 'য়')
+    
+    # 1. Cause: specific trigger/reason for conflict or separation
+    if any(w in lower_all for w in [
+        "যৌতুক", "দ্বিতীয় বিয়ে", "দ্বিতীয় বিয়ে", "জোরপূর্বক দখল", "বেদখল", "দখল করে",
+        "ঝগড়া করে আলাদা", "ঝগড়া করে আলাদা", "মেরে বের করে", "তাড়িয়ে দিয়েছে", "তাড়িয়ে দিছে",
+        "বের করে দিয়েছে", "বের করে দিছে", "বাড়ি থেকে বের", "বাড়ি থেকে বের", "বাড়ি ছাড়তে বাধ্য", "বাড়ি ছাড়তে বাধ্য",
+        "টাকা চেয়েছিলাম", "টাকা চেয়েছিলাম", "টাকা চেয়েছি", "টাকা চেয়েছি"
+    ]):
+        if "cause" not in existing_covered:
+            existing_covered.append("cause")
+
+    # 2. History & Evidence: requires knowing actual possession/availability of documents or local salish
+    # (NOT merely saying "বাবার বাড়িতে আছি" in one sentence and "কাবিনে লেখা ছিল" in another!)
+    extracted_ev = state.get("evidence") or ""
+    has_evidence_in_state = bool(extracted_ev and str(extracted_ev).strip().lower() not in ("[অপ্রতিষ্ঠিত]", "null", "", "none"))
+
+    # Auto-infer evidence from client's narrative if missing in state
+    if not has_evidence_in_state:
+        if any(w in lower_all for w in ["লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই", "কোনো লিখিত চুক্তি নেই", "লিখিত কোনো চুক্তি নেই", "লিখিত কাগজ নেই"]):
+            if any(w in lower_all for w in ["গ্রামের লোক", "গ্রামবাসী", "সাক্ষী", "সবাই জানে", "মানুষজন"]):
+                extracted_ev = "লিখিত কোনো চুক্তি নেই; মৌখিক চুক্তি এবং স্থানীয় গ্রামবাসী/সাক্ষী রয়েছে"
+            else:
+                extracted_ev = "লিখিত কোনো চুক্তি নেই, মৌখিক চুক্তি"
+            has_evidence_in_state = True
+        elif any(w in lower_all for w in ["গ্রামের লোক জানে", "গ্রামের লোক সবাই জানে", "গ্রামের মানুষ জানে", "এলাকার লোক জানে"]):
+            extracted_ev = "স্থানীয় গ্রামবাসী ও প্রত্যক্ষদর্শী সাক্ষী রয়েছেন"
+            has_evidence_in_state = True
+
+    doc_possession_patterns = [
+        "কাবিননামা আছে", "কাবিননামা নাই", "কাবিননামা নেই", "কাবিন আছে", "কাবিন নাই", "কাবিন নেই",
+        "কাবিননামা আমার", "কাবিন আমার", "কাবিননামা সাথে", "কাবিন সাথে", "কাবিননামা কাছে", "কাবিন কাছে",
+        "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "কাবিন বাবার বাড়িতে", "কাবিন বাবার বাড়ি", "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়ি",
+        "বাবার বাড়িতে আছে", "বাবার বাড়ি আছে", "বাবার বাড়িতে আছে", "বাবার বাড়ি আছে",
+        "কাবিন স্বামীর কাছে", "কাবিননামা স্বামীর কাছে", "কাবিন হারিয়ে", "কাবিননামা হারিয়ে",
+        "কাবিন হারিয়েছে", "কাবিন হারিয়েছে", "কাবিননামা হারিয়েছে", "কাবিননামা হারিয়েছে",
+        "কাজী অফিস থেকে নকল", "কাজী অফিসের নকল", "কাজী অফিসে যেতে", "নকল তুলতে হবে", "কাজী অফিসের এলাকা",
+        "কাগজপত্র প্রস্তুত", "কাগজ প্রস্তুত", "সব কাগজ আমার কাছে", "সব কাগজপত্র আমার কাছে",
+        "প্রয়োজনীয় সব কাগজ", "প্রয়োজনীয় সব কাগজ", "কোনো কাগজপত্র নেই", "কোনো কাগজ নেই",
+        "দলিল আছে", "দলিল নেই", "দলিল নাই", "দলিল সংরক্ষিত", "দলিল আমার", "দলিল সাথে", "দলিল প্রতিপক্ষের",
+        "খতিয়ান আছে", "খতিয়ান আছে", "খাজনার দাখিলা",
+        # Wage / Labor / Informal evidence & Oral contract patterns
+        "লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই",
+        "লিখিত কোনো চুক্তি নেই", "লিখিত চুক্তি নেই", "লিখিত চুক্তি নাই", "লিখিত কোনো কাগজ নেই", "লিখিত কাগজ নেই",
+        "কোনো লিখিত কাগজ নেই", "লিখিত কোনো প্রমাণ নেই", "লিখিত প্রমাণ নেই", "লিখিত প্রমাণ নাই",
+        "মৌখিক চুক্তি", "মৌখিক কথা", "মৌখিক চুক্তি ছিল", "মৌখিকভাবে",
+        "গ্রামের লোক জানে", "গ্রামের লোক সবাই জানে", "গ্রামের মানুষ জানে", "গ্রামের লোকজন জানে",
+        "গ্রামের লোক", "গ্রামের মানুষ", "এলাকার লোক জানে", "সবাই জানে", "মানুষজন জানে",
+        "সাক্ষী আছে", "সাক্ষী আছেন", "সাক্ষী", "সহকর্মী সাক্ষী", "সর্দার সাক্ষী", "মানুষ সাক্ষী", "লোক সাক্ষী",
+        "হাজিরা খাতা", "হাজিরা", "স্লিপ আছে", "স্লিপ নেই", "স্লিপ নাই", "খাতা নেই", "খাতা নাই"
+    ]
+    has_evidence_info = has_evidence_in_state or any(p.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for p in doc_possession_patterns)
+    if has_evidence_info:
+        if "history" not in existing_covered:
+            existing_covered.append("history")
+
+    # 3. Impact: current hardship, living condition, residence, or unpaid wage claim
+    wage_impact_patterns = [
+        "টাকা বকেয়া", "টাকা বকেয়া", "হাজার টাকা", "মাসিক বেতন", "মজুরি বকেয়া", "মজুরি বকেয়া",
+        "পাওনা আছে", "পাওনা টাকা", "টাকা দিচ্ছে না", "বেতন দিচ্ছে না", "ছাঁটাই", "কাজ থেকে বের"
+    ]
+    has_wage_impact = bool(state.get("unpaid_wages_claim")) or any(w in lower_all for w in wage_impact_patterns)
+    if (
+        any(w.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for w in ["বাবার বাড়ি", "বাবার বাড়ি", "বাচ্চা নিয়ে", "বাচ্চা নিয়ে", "কষ্টে দিন", "অনাহারে", "আশ্রয়হীন", "আশ্রয়হীন", "জমিতে যেতে বাধা", "আলাদা"])
+        or (cat == "unpaid_wages" and has_wage_impact)
+    ):
+        if "impact" not in existing_covered:
+            existing_covered.append("impact")
+
+    # 4. Desired Solution: specific remedy, action, or seeking advice
+    if any(w.replace('ড়', 'ড়').replace('য়', 'য়') in lower_all for w in [
+        "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
+        "আদালতে মামলা", "আদালতে মামলা করে",
+        "সালিশের মাধ্যমে", "শান্তিপূর্ণ মীমাংসা", "সালিশ চাই", "মীমাংসা চাই",
+        "আইনি নোটিশ", "আদালতে যাব", "আদালতে যেতে",
+        "নিয়মিত মাসিক ভরণপোষণ", "নিয়মিত ভরণপোষণ", "বকেয়া ভরণপোষণ আদায়", "বকেয়া ভরণপোষণ আদায়",
+        "ভরণপোষণ চাই", "খরচ চাই", "দেনমোহর চাই", "পাওনা চাই", "টাকা চাই", "নিয়মিত খরচ", "নিয়মিত খরচ", "খরচ ও ভরণপোষণ",
+        "সালিশ হয়েছিল কিন্তু সমাধান হয়নি", "সালিশ হয়েছিল", "সমাধান হয়নি", "চেয়ারম্যানের কাছে সালিশ", "মেম্বার বা চেয়ারম্যানের কাছে সালিশ",
+        "তালাক", "উকিল", "আইনজীবী", "কি করব", "কী করব", "পরামর্শ চাই", "সমাধান কি", "সমাধান কী", "আইনি ব্যবস্থা", "কী করণীয়", "কি করণীয়"
+    ]):
+        if "desired_solution" not in existing_covered:
+            existing_covered.append("desired_solution")
+
+    # 0A. Awaiting user confirmation to process (When client provided all docs)
+    was_awaiting_process = bool(state.get("awaiting_process_confirmation") or prev_stage == "confirm_process")
+    if was_awaiting_process:
+        if check_user_confirmation(latest_user_text) and not any(w in latest_user_text.lower() for w in ["না, এখন নয়", "না এখন নয়", "পরে বিবেচনা"]):
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": list(set(existing_covered + ["desired_solution", "confirm_process"])),
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "awaiting_process_confirmation": False,
+                "doc_status": "all_docs"
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+        elif check_user_decline_or_alternative(latest_user_text):
+            hold_msg = (
+                "ঠিক আছে। আপনার প্রয়োজনীয় সকল কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে। আপনি প্রস্তুত হলেই এই আইনি পদক্ষেপ গ্রহণের জন্য "
+                "আমাদের সাথে পুনরায় যোগাযোগ করতে পারেন। আপনার সহায়তায় ব্র্যাক লিগ্যাল এইড সর্বদা প্রস্তুত রয়েছে।"
+            )
+            return {
+                "is_complete": False,
+                "current_stage": "process_on_hold",
+                "stages_covered": existing_covered,
+                "follow_up_question": hold_msg,
+                "suggested_replies": [
+                    "হ্যাঁ, এখন প্রক্রিয়াটি সম্পন্ন করতে চাই",
+                    "অন্য কোনো আইনি প্রতিকার যাচাই করতে চাই"
+                ],
+                "extra_question_asked": False,
+                "awaiting_process_confirmation": True,
+                "doc_status": "all_docs"
+            }
+
+    # 0B. Awaiting partial docs action confirmation
+    was_awaiting_partial = bool(state.get("awaiting_partial_action_confirmation") or prev_stage == "partial_docs_action")
+    if was_awaiting_partial:
+        if check_user_confirmation(latest_user_text):
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": list(set(existing_covered + ["desired_solution", "confirm_partial_action"])),
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "awaiting_partial_action_confirmation": False,
+                "doc_status": "partial_docs",
+                "taking_action_based_on_docs": state.get("taking_action_based_on_docs")
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+        elif check_user_decline_or_alternative(latest_user_text) or "বিকল্প" in latest_user_text:
+            alt_q = (
+                "বিকল্প হিসেবে ইউনিয়ন পরিষদ চেয়ারম্যান বা স্থানীয় সালিশি বোর্ডের মাধ্যমে আপস-মীমাংসার চেষ্টা করা যেতে পারে। "
+                "আপনি কি এই বিকল্প সালিশে সমাধান করতে চান?"
+            )
+            return {
+                "is_complete": False,
+                "current_stage": "confirm_solution",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": alt_q,
+                "suggested_replies": [
+                    "হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই",
+                    "না, বিদ্যমান কাগজ দিয়েই আইনি পদক্ষেপ চাই"
+                ],
+                "extra_question_asked": False,
+                "awaiting_solution_confirmation": True,
+                "doc_status": "partial_docs"
+            }
+
+    # 0C. Legacy / ADR confirmation (when documents were missing/insufficient)
+    was_awaiting_confirmation = bool(state.get("awaiting_solution_confirmation") or prev_stage == "confirm_solution")
+    if was_awaiting_confirmation:
+        if check_user_confirmation(latest_user_text):
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": list(set(existing_covered + ["desired_solution", "confirm_solution"])),
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "awaiting_solution_confirmation": False
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+        else:
+            # Client asked for alternative (e.g. mediation / ADR)
+            if cat == "unpaid_wages":
+                alt_q = "বিকল্প হিসেবে ইউনিয়ন পরিষদ চেয়ারম্যান/মেম্বারের মাধ্যমে স্থানীয় সালিশে মালিকপক্ষকে ডাকা যেতে পারে, অথবা শ্রম অধিদপ্তরে আপস-মীমাংসার আবেদন করা যায়। আপনি কি সালিশি প্রক্রিয়ায় মীমাংসা করতে চান?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আইনি পদক্ষেপেই অগ্রসর হতে চাই"]
+            elif cat in ("family_dower_maintenance", "dowry"):
+                alt_q = "বিকল্প হিসেবে ইউনিয়ন পরিষদের চেয়ারম্যানের সালিশি বোর্ডের মাধ্যমে আপনার স্বামী ও শ্বশুরবাড়ির লোকজনকে ডেকে আপস-মীমাংসার চেষ্টা করা যেতে পারে। আপনি কি এই বিকল্প সালিশে সম্মত আছেন?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আদালতে মামলাই করতে চাই"]
+            elif cat == "land_dispute":
+                alt_q = "বিকল্প হিসেবে এলাকার গণ্যমান্য ব্যক্তি বা ইউনিয়ন পরিষদের মাধ্যমে স্থানীয় সালিশ বৈঠকের মাধ্যমে আপস-মীমাংসার চেষ্টা করা যায়। আপনি কি এই বিকল্পে সম্মত আছেন?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আদালতে মামলাই করতে চাই"]
+            else:
+                alt_q = "বিকল্প হিসেবে স্থানীয় সালিশি বৈঠকের মাধ্যমে সমাধানের চেষ্টা করা যেতে পারে। আপনি কি এই বিকল্পে সম্মত আছেন?"
+                alt_chips = ["হ্যাঁ, সালিশের মাধ্যমে সমাধান চাই", "না, আদালতে মামলাই করতে চাই"]
+            return {
+                "is_complete": False,
+                "current_stage": "confirm_solution",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": alt_q,
+                "suggested_replies": alt_chips,
+                "extra_question_asked": False,
+                "missing_fields": ["solution_confirmation"],
+                "awaiting_solution_confirmation": True
+            }
+
+    # 1. Action checking chips inquiry: If client explicitly asks for action verification
+    action_chips = [
+        "দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ",
+        "বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ",
+        "জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ",
+        "যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ"
+    ]
+    is_action_chip = any(chip in latest_user_text for chip in action_chips)
+    if is_action_chip and not state.get("documents_asked"):
+        docs_q = _pb.get_required_docs_question(cat)
+        docs_chips = _pb.get_required_docs_chips(cat)
+        return {
+            "is_complete": False,
+            "current_stage": "history",
+            "stages_covered": ["problem"],
+            "follow_up_question": docs_q,
+            "suggested_replies": docs_chips,
+            "extra_question_asked": False,
+            "documents_asked": True,
+            "doc_status": "unknown"
+        }
+
+    # 2. Check document readiness response
+    current_doc_status = classify_document_status(latest_user_text, state.get("evidence") or extracted_ev, cat)
+    doc_status = current_doc_status if current_doc_status != "unknown" else (state.get("doc_status") or classify_document_status(text_to_eval, state.get("evidence") or extracted_ev, cat))
+
+    is_answering_docs = (
+        state.get("documents_asked")
+        or (state.get("turn_count", 1) > 1 and any(w in latest_user_text for w in [
+            "প্রয়োজনীয় কাগজপত্র", "প্রয়োজনীয় কাগজপত্র", "সব কাগজ", "সব কাগজপত্র",
+            "কিছু কাগজপত্র আছে", "কিছু কাগজ আছে", "কোনো লিখিত কাগজপত্র", "কোনো কাগজ নেই",
+            "কাবিননামা বাবার বাড়িতে", "কাবিননামা বাবার বাড়িতে", "কাবিননামা আছে", "দলিল আছে",
+            "কাজী অফিসে", "স্বামীর কাছে", "প্রতিপক্ষের কাছে"
+        ]))
+    )
+
+    if is_answering_docs and current_doc_status != "unknown":
+        if current_doc_status in ("all_docs", "sufficient"):
+            confirm_q = _pb.get_confirm_process_question(cat)
+            confirm_chips = _pb.get_confirm_process_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "confirm_process",
+                "stages_covered": list(set(existing_covered + ["problem", "history", "desired_solution"])),
+                "follow_up_question": confirm_q,
+                "suggested_replies": confirm_chips,
+                "extra_question_asked": False,
+                "awaiting_process_confirmation": True,
+                "doc_status": "all_docs",
+                "documents_asked": True
+            }
+        elif current_doc_status in ("partial_docs", "insufficient"):
+            partial_action_text = _pb.get_partial_docs_action_text(cat, evidence=state.get("evidence") or extracted_ev)
+            partial_chips = _pb.get_partial_docs_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "partial_docs_action",
+                "stages_covered": list(set(existing_covered + ["problem", "history"])),
+                "follow_up_question": partial_action_text,
+                "suggested_replies": partial_chips,
+                "extra_question_asked": False,
+                "taking_action_based_on_docs": partial_action_text,
+                "awaiting_partial_action_confirmation": True,
+                "doc_status": "partial_docs",
+                "documents_asked": True
+            }
+        elif current_doc_status == "no_docs":
+            # If not providing any docs then process will continue across all categories
+            if not state.get("extra_question_asked"):
+                continuation_q = _pb.get_no_docs_continuation_question(cat)
+                continuation_chips = _pb.get_no_docs_chips(cat)
+                return {
+                    "is_complete": False,
+                    "current_stage": "history",
+                    "stages_covered": list(set(existing_covered + ["problem", "history"])),
+                    "follow_up_question": continuation_q,
+                    "suggested_replies": continuation_chips,
+                    "extra_question_asked": True,
+                    "doc_status": "no_docs",
+                    "documents_asked": True
+                }
+
+    # 3. Check if user provided their desired solution (or chose court/salish/remedy)
+    solution_provided = ("desired_solution" in existing_covered) or any(w.replace('ড়', 'ড়').replace('য়', 'য়') in latest_user_text.lower() for w in [
+        "মামলা করতে চাই", "মামলা করে", "মামলা দায়ের", "মামলা দায়ের",
+        "আদালতে মামলা", "সালিশ চাই", "মীমাংসা চাই", "আইনি ব্যবস্থা", "টাকা চাই", "পাওনা চাই",
+        "ভরণপোষণ চাই", "খরচ চাই", "দেনমোহর চাই", "পরামর্শ চাই", "সমাধান চাই"
+    ])
+    if solution_provided and "desired_solution" not in existing_covered:
+        existing_covered.append("desired_solution")
+
+    # -------------------------------------------------------------
+    # SOLUTION -> REQUIRED DOCUMENTS -> ALTERNATIVE CONFIRMATION FLOW:
+    # -------------------------------------------------------------
+    if solution_provided:
+        # Step A: Documents/proof not yet discussed or unknown -> ASK FOR DOCUMENTS/PROOF
+        if (not has_evidence_info or doc_status == "unknown") and turn_count < 6:
+            target_stage = "history"
+            missing_fields = ["documents_for_court"]
+            court_q = _pb.get_stage_fallback_question(cat, "history", missing_item="documents_for_court")
+            court_chips = _pb.get_suggested_replies(court_q, missing_fields, cat)
+            return {
+                "is_complete": False,
+                "current_stage": "history",
+                "stages_covered": existing_covered,
+                "follow_up_question": court_q,
+                "suggested_replies": court_chips,
+                "extra_question_asked": False,
+                "missing_fields": missing_fields,
+                "documents_asked": True
+            }
+
+        # Step B: User lacks enough documents (partial / insufficient) -> PROVIDE REQUIRED SOLUTION & CONFIRM
+        if doc_status in ("partial_docs", "insufficient") and not state.get("solution_confirmed") and turn_count < 6:
+            confirm_q = _pb.get_partial_docs_action_text(cat, evidence=state.get("evidence") or extracted_ev)
+            confirm_chips = _pb.get_partial_docs_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "partial_docs_action",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": confirm_q,
+                "suggested_replies": confirm_chips,
+                "extra_question_asked": False,
+                "missing_fields": ["solution_confirmation"],
+                "taking_action_based_on_docs": confirm_q,
+                "awaiting_partial_action_confirmation": True,
+                "doc_status": "partial_docs"
+            }
+
+        # Step C: User has sufficient documents, or no_docs flow continued, or already confirmed -> COMPLETE WITH TAILORED SOLUTION
+        if doc_status in ("all_docs", "sufficient", "no_docs") or state.get("solution_confirmed") or turn_count >= 6:
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": existing_covered,
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "doc_status": doc_status
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+
+    # 2. If an extra fallback question was ALREADY asked and client just responded to it:
+    if extra_question_asked:
+        if "history" not in existing_covered:
+            existing_covered.append("history")
+
+    # 3. Check if client's response expresses "mone nei" or "document nei"
+    is_uncertain, match_type = check_uncertainty_or_missing_doc(latest_user_text)
+    if is_uncertain and match_type:
+        previous_q = state.get("follow_up_question")
+        if not previous_q and state.get("chat_history"):
+            for m in reversed(state.get("chat_history", [])):
+                if m.get("role") == "assistant" and m.get("content") and not m.get("content").startswith("⚠️"):
+                    previous_q = m.get("content")
+                    break
+
+        extra_q, extra_chips = generate_extra_fallback_question(
+            match_type=match_type,
+            category=cat,
+            previous_question=previous_q
+        )
+
+        return {
+            "is_complete": False,
+            "current_stage": state.get("current_stage") or "history",
+            "stages_covered": existing_covered,
+            "follow_up_question": extra_q,
+            "suggested_replies": extra_chips,
+            "extra_question_asked": True,
+            "missing_fields": state.get("missing_fields", [])
+        }
+
+    # 4. Disambiguation if category is unclassifiable
+    if state.get("disambiguation_needed") or cat == "unclassifiable":
+        question = "আপনার সমস্যাটি কি দেনমোহর/ভরণপোষণ, বকেয়া মজুরি, নাকি জমিজমা নিয়ে? অনুগ্রহ করে একটু বিস্তারিত বলুন।"
+        try:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", prompts.FOLLOW_UP_SYSTEM_PROMPT),
+                ("user", "Client said: {client_narrative}\n\nPlease ask a warm, colloquial Bengali question connecting to what they said to clarify whether this is about family/dower/maintenance (পারিবারিক দেনমোহর বা ভরণপোষণ), unpaid wages (বকেয়া মজুরি), or land dispute (জমিজমা).")
+            ])
+            res = llm.invoke(prompt.format_messages(
+                client_narrative=text_to_eval,
+                category="অস্পষ্ট / শ্রেণিবিহীন",
+                known_facts="নির্দিষ্ট কোনো আইনি ঘটনা বা দাবি এখনো স্পষ্ট নয়",
+                missing_field="সমস্যার মূল ধরণ (পারিবারিক দেনমোহর/ভরণপোষণ, বকেয়া মজুরি, নাকি জমিজমা সংক্রান্ত বিষয়)"
+            ))
+            if res.content and res.content.strip():
+                question = res.content.strip()
+        except Exception as e:
+            print(f"[Dialogue LLM Error - Disambiguation] {e}")
+            err_info = parse_llm_error(e)
+            return {
+                "is_complete": False,
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "llm_error": err_info["message_bn"],
+                "llm_error_details": err_info
+            }
+
+        return {
+            "is_complete": False,
+            "follow_up_question": question,
+            "suggested_replies": [
+                "পারিবারিক দেনমোহর বা ভরণপোষণ",
+                "বকেয়া মজুরি বা শ্রমিকের পাওনা",
+                "জমিজমা সংক্রান্ত বিরোধ",
+                "যৌতুক ও নির্যাতন সংক্রান্ত"
+            ],
+            "extra_question_asked": False
+        }
+
+    # 5. Generous safety ceiling against runaway loops (e.g. if user sends unrelated single letters/noise repeatedly)
+    if turn_count >= 7:
+        return {
+            "is_complete": True,
+            "missing_fields": [],
+            "follow_up_question": None,
+            "suggested_replies": None,
+            "extra_question_asked": False
+        }
+
+    remaining_stages = [s for s in stages_order if s not in existing_covered]
+    target_stage = remaining_stages[0] if remaining_stages else "complete"
+
+    # If all stages are covered (or target_stage is complete):
+    if target_stage == "complete" or len(existing_covered) >= 5:
+        if doc_status in ("partial_docs", "insufficient") and not state.get("solution_confirmed") and turn_count < 6:
+            confirm_q = _pb.get_partial_docs_action_text(cat, evidence=state.get("evidence") or extracted_ev)
+            confirm_chips = _pb.get_partial_docs_chips()
+            return {
+                "is_complete": False,
+                "current_stage": "partial_docs_action",
+                "stages_covered": list(set(existing_covered + ["desired_solution"])),
+                "follow_up_question": confirm_q,
+                "suggested_replies": confirm_chips,
+                "extra_question_asked": False,
+                "missing_fields": ["solution_confirmation"],
+                "taking_action_based_on_docs": confirm_q,
+                "awaiting_partial_action_confirmation": True,
+                "doc_status": "partial_docs"
+            }
+        else:
+            ret_complete = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": existing_covered,
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "solution_confirmed": True,
+                "doc_status": doc_status
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_complete["evidence"] = extracted_ev
+            return ret_complete
+
+    # Assemble known facts extracted so far
+    known = []
+    if state.get("applicant_name") and state.get("applicant_name") != "[নাম সংরক্ষিত]":
+        known.append(f"আবেদনকারী: {state.get('applicant_name')}")
+    if state.get("respondent") and state.get("respondent") != "[বিবাদী]":
+        known.append(f"বিবাদী: {state.get('respondent')}")
+    if state.get("marriage_date"):
+        known.append(f"বিয়ের সময়: {state.get('marriage_date')}")
+    if state.get("dower_amount"):
+        known.append(f"দেনমোহর: {state.get('dower_amount')}")
+    if state.get("dowry_paid"):
+        known.append(f"যৌতুক/দাবি: {state.get('dowry_paid')}")
+    if state.get("unpaid_wages_claim"):
+        known.append(f"বকেয়া মজুরি: {state.get('unpaid_wages_claim')}")
+    if state.get("work_period"):
+        known.append(f"কাজের সময়: {state.get('work_period')}")
+    if state.get("current_status"):
+        known.append(f"বর্তমান অবস্থা/দখল: {state.get('current_status')}")
+    if state.get("children"):
+        known.append(f"সন্তান: {state.get('children')}")
+    if state.get("evidence"):
+        known.append(f"প্রমাণ/দলিল: {state.get('evidence')}")
+    if state.get("address"):
+        known.append(f"ঠিকানা: {state.get('address')}")
+
+    # Format full conversation history for deep context (up to last 16 messages / 8 turns)
+    chat_hist = state.get("chat_history", [])[-16:]
+    formatted_history = "\n".join([
+        f"{'👤 ক্লায়েন্ট' if m.get('role') == 'user' else '⚖️ প্যারালিগ্যাল সহকারী'}: {m.get('content', '')}"
+        for m in chat_hist if m.get("content")
+    ])
+
+    target_stage_bn = stage_bn_map.get(target_stage, target_stage)
+    stages_covered_bn = ", ".join([f"{s} ({stage_bn_map.get(s, s)})" for s in existing_covered])
+
+    dialogue_prompt = ChatPromptTemplate.from_messages([
+        ("system", prompts.INTAKE_DIALOGUE_SYSTEM_PROMPT),
+        ("user", (
+            "মামলার ক্যাটাগরি: {category}\n\n"
+            "ক্লায়েন্টের সম্পূর্ণ বিবরণ (Cumulative Story):\n{client_narrative}\n\n"
+            "পূর্ববর্তী সকল কথোপকথন রেকর্ড (Full Chat History):\n{chat_history}\n\n"
+            "ইতিমধ্যে প্রতিষ্ঠিত ও সংগৃহীত তথ্যসমূহ:\n{known_facts}\n\n"
+            "ইতিমধ্যে সম্পন্ন হওয়া ধাপসমূহ (Covered Stages): {stages_covered_bn}\n"
+            "পরবর্তী লক্ষ্য ধাপ (Target Stage): {target_stage} ({target_stage_bn})\n\n"
+            "ক্লায়েন্টের সর্বশেষ উত্তর (Latest User Reply): {latest_user_text}\n"
+            "বর্তমান টার্ন সংখ্যা: {turn_count}\n\n"
+            "টাস্ক নির্দেশিকা:\n"
+            "1. কথোপকথনের গভীর ধারাবাহিকতা (Chat History Continuity): ক্লায়েন্টের পূর্ববর্তী সকল কথোপকথন রেকর্ড মনোযোগ দিয়ে পর্যবেক্ষণ করুন। ক্লায়েন্ট সর্বশেষ উত্তরে বা আগের কোনো উত্তরে যা কিছু উল্লেখ করেছেন (যেমন নির্দিষ্ট পরিমাণ টাকা, স্বামী/বিবাদীর নাম ও আচরণ, সন্তান, বাবার বাড়ির অবস্থান, কাজের মেয়াদ, জমি দখলের ধরন ইত্যাদি), আপনার উত্তরে স্পষ্টভাবে সেই প্রসঙ্গের সহানুভূতিশীল স্বীকৃতি (acknowledgement) দিন।\n"
+            "2. লক্ষ্য ধাপ '{target_stage}' ({target_stage_bn}) অনুযায়ী পরবর্তী স্বাভাবিক কথ্য বাংলা প্রশ্নটি করুন। পূর্বের কোনো উত্তরের সাথে সরাসরি মিলিয়ে প্রশ্ন করবেন, বিচ্ছিন্ন বা রোবোটিক প্রশ্ন করবেন না।\n"
+            "3. ইতিমধ্যে যে ধাপগুলো সম্পন্ন হয়েছে ({stages_covered_bn}) সে বিষয়ে পুনরাবৃত্তিমূলক প্রশ্ন করবেন না।\n"
+            "   - অযাচিত অনুমান নিষেধ: ক্লায়েন্ট যদি শুধু বলেন 'কাবিনে লেখা ছিল দুই লাখ টাকা' বা দেনমোহরের অঙ্ক উল্লেখ করেন, তবে এর অর্থ তিনি দেনমোহরের পরিমাণ জানেন। এর অর্থ এই নয় যে কাবিননামার মূল কাগজটি তাঁর নিজের কাছেই আছে! ক্লায়েন্ট নিজে পরিষ্কারভাবে না বললে কখনোই 'আপনার কাবিননামা যেহেতু আপনার কাছে আছে' বলে ধরে নেবেন না। কাগজটি তাঁর কাছে আছে নাকি স্বামীর কাছে বা কাজী অফিসে তা নিশ্চিত হতে প্রশ্ন করুন।\n"
+            "   - কঠোর সতর্কতা: ক্লায়েন্ট যদি ইতিমধ্যে বলে থাকেন যে কাবিননামা/দলিল তাঁর কাছে বা সাথে আছে (যেমন 'আমার কাবিননামা আমার সাথেই আছে'), তবে কাবিননামা আছে কি না বা কার কাছে আছে তা কোনোভাবেই পুনরায় জিজ্ঞাসা করবেন না! সরাসরি তাদের আইনি সমাধান (আদালতে মামলা নাকি সালিশ) সম্পর্কে প্রশ্ন করুন।\n"
+            "   - যদি target_stage='history' হয়: পূর্ববর্তী উত্তরে কোনো সালিশ বা আদালতের উল্লেখ থাকলে সেই অনুসারে প্রয়োজনীয় কাগজপত্র (কাবিননামা/দলিল/এনআইডি) প্রস্তুত আছে কি না তা প্রাসঙ্গিকভাবে জানতে চান।\n"
+            "   - যদি target_stage='desired_solution' হয়: পূর্বের নথিপত্র ও পরিস্থিতি উল্লেখ করে ক্লায়েন্ট সালিশ চান নাকি পারিবারিক/দেওয়ানি আদালতে মামলা করতে চান তা জানতে চান।\n"
+            "   - যদি target_stage='impact' হয়: পারিবারিক/যৌতুক বিরোধে বর্তমান বসবাস ও আর্থিক কষ্টের কথা জানতে চান; জমিজমার বিরোধে জমিতে প্রবেশে বাধার কথা জানতে চান; আর বকেয়া মজুরির ক্ষেত্রে মোট বকেয়া টাকার পরিমাণ বা কাজ থেকে ছাঁটাই/হুমকি দেওয়া হয়েছে কি না তা জানতে চান (বকেয়া মজুরির ক্ষেত্রে পরিবারে সংসার চালানোর কষ্টের মতো অপ্রাসঙ্গিক আবেগীয় প্রশ্ন করবেন না)।\n"
+            "   - যদি target_stage='cause' হয়: বিরোধ বা আলাদা থাকার মূল কারণ কী ছিল তা পূর্ববর্তী বক্তব্যের সূত্রে জানতে চান।\n"
+            "4. ক্লায়েন্টের সর্বশেষ জবাব ও আপনার করা প্রশ্নের সাথে সরাসরি প্রাসঙ্গিক ৩-৪টি কথ্য বাংলা দ্রুত উত্তরের অপশন (suggested_replies) দিন।\n"
+            "5. ক্লায়েন্ট যদি একটিমাত্র বক্তব্যে সমস্যা, কারণ, কাবিননামা/প্রমাণ এবং করণীয় প্রশ্ন বলে থাকেন এবং প্রয়োজনীয় মৌলিক তথ্য সম্পন্ন হয়ে থাকে, তবে is_complete=True দিন। অন্যথায় is_complete=False দিন।"
+        ))
+    ])
+
+    try:
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["dialogue_llm"].invoke(dialogue_prompt.format_messages(
+            category=cat or "সাধারণ বিরোধ",
+            client_narrative=text_to_eval,
+            chat_history=formatted_history or "কথোপকথন সবে শুরু হয়েছে।",
+            known_facts="; ".join(known) if known else "নির্দিষ্ট কোনো তথ্য এখনো বিস্তারিত পাওয়া যায়নি।",
+            stages_covered_bn=stages_covered_bn,
+            target_stage=target_stage,
+            target_stage_bn=target_stage_bn,
+            latest_user_text=latest_user_text,
+            turn_count=turn_count
+        ))
+
+        if res is None:
+            is_comp = False
+            q = None
+            replies = None
+            missing_item = None
+            new_facts = {}
+        elif isinstance(res, dict):
+            is_comp = bool(res.get("is_complete", False))
+            q = res.get("follow_up_question")
+            replies = res.get("suggested_replies")
+            missing_item = res.get("missing_aspect")
+            new_facts = res.get("newly_identified_facts") or {}
+        else:
+            is_comp = bool(getattr(res, "is_complete", False))
+            q = getattr(res, "follow_up_question", None)
+            replies = getattr(res, "suggested_replies", None)
+            missing_item = getattr(res, "missing_aspect", None)
+            new_facts = getattr(res, "newly_identified_facts", None) or {}
+
+        if is_comp and ("desired_solution" in existing_covered or target_stage == "complete" or len(existing_covered) >= 5):
+            ret_comp = {
+                "is_complete": True,
+                "current_stage": "complete",
+                "stages_covered": existing_covered,
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False
+            }
+            if extracted_ev and not state.get("evidence"):
+                ret_comp["evidence"] = extracted_ev
+            return ret_comp
+
+        # Repetition and fallback detection:
+        is_repetitive = False
+        if not q or not q.strip():
+            is_repetitive = True
+        
+        prev_assistant_questions = [
+            m.get("content", "").strip() for m in state.get("chat_history", [])
+            if m.get("role") == "assistant" and m.get("content") and not m.get("content").startswith("⚠️")
+        ]
+        # Only fallback if question is empty or an exact duplicate of an already asked assistant question
+        if q and any(q.strip() == prev_q for prev_q in prev_assistant_questions if prev_q):
+            is_repetitive = True
+
+        if is_repetitive:
+            fallback_missing = "documents_for_court" if "desired_solution" in existing_covered else (missing_item or "marriage_documents")
+            fallback_candidate = get_stage_fallback_question(cat, target_stage, fallback_missing)
+
+            # If the fallback candidate was already asked before AND desired_solution is already covered, or turn_count >= 5:
+            # Complete the intake!
+            if any(fallback_candidate.strip() == prev_q for prev_q in prev_assistant_questions if prev_q):
+                if "desired_solution" in existing_covered or len(existing_covered) >= 5 or turn_count >= 5:
+                    ret_complete = {
+                        "is_complete": True,
+                        "current_stage": "complete",
+                        "stages_covered": existing_covered,
+                        "missing_fields": [],
+                        "follow_up_question": None,
+                        "suggested_replies": None,
+                        "extra_question_asked": False
+                    }
+                    if extracted_ev and not state.get("evidence"):
+                        ret_complete["evidence"] = extracted_ev
+                    return ret_complete
+                else:
+                    # If desired_solution is not yet covered, ask the desired_solution question!
+                    q = get_stage_fallback_question(cat, "desired_solution")
+                    target_stage = "desired_solution"
+            else:
+                q = fallback_candidate
+
+        # Preserve the LLM's dynamic suggested replies; only fall back to static generator if empty
+        if not replies or len(replies) == 0:
+            replies = generate_suggested_replies(
+                question=q,
+                missing_fields=[target_stage],
+                category=cat
+            )
+
+        ret: Dict[str, Any] = {
+            "is_complete": False,
+            "current_stage": target_stage,
+            "stages_covered": existing_covered,
+            "missing_fields": [missing_item] if missing_item else [target_stage],
+            "follow_up_question": q,
+            "suggested_replies": replies,
+            "extra_question_asked": False
+        }
+
+        # Merge any newly discovered facts
+        if isinstance(new_facts, dict):
+            for k, v in new_facts.items():
+                if v and str(v).strip() and str(v).lower() != "null" and not state.get(k):
+                    ret[k] = v
+        if extracted_ev and not ret.get("evidence") and not state.get("evidence"):
+            ret["evidence"] = extracted_ev
+
+        return ret
+
+    except Exception as e:
+        print(f"[Dialogue LLM Error] {e}")
+        err_info = parse_llm_error(e)
+        if err_info.get("status_code") in (401, 402, 429) or err_info.get("error_type") in ("authentication_error", "connection_error"):
+            return {
+                "is_complete": False,
+                "missing_fields": [],
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "llm_error": err_info["message_bn"],
+                "llm_error_details": err_info
+            }
+
+        # Fallback question based on Problem -> Cause -> History
+        fallback_q = get_stage_fallback_question(cat, target_stage)
+        fallback_replies = generate_suggested_replies(fallback_q, missing_fields=[target_stage], category=cat)
+        return {
+            "is_complete": False,
+            "current_stage": target_stage,
+            "stages_covered": existing_covered,
+            "missing_fields": [target_stage],
+            "follow_up_question": fallback_q,
+            "suggested_replies": fallback_replies,
+            "extra_question_asked": False
+        }
+
+def template_output_node(state: IntakeState) -> Dict[str, Any]:
+    """Applies reviewed legal templates, calls nearby clinic tool, and synthesizes dynamic legal rights & solutions."""
+    if state.get("llm_error"):
+        return {}
+    cat = state.get("category", "family_dower_maintenance")
+    standard_exp = templates.RIGHTS_EXPLANATIONS.get(cat, templates.RIGHTS_EXPLANATIONS["out_of_scope"])
+    
+    facts = {
+        "applicant_name": state.get("applicant_name") or "[নাম সংরক্ষিত]",
+        "respondent": state.get("respondent") or "[বিবাদী]",
+        "address": state.get("address") or "[ঠিকানা — অপ্রতিষ্ঠিত]",
+        "marriage_date": state.get("marriage_date") or "[অপ্রতিষ্ঠিত]",
+        "dower_amount": state.get("dower_amount") or "[অপ্রতিষ্ঠিত]",
+        "dowry_paid": state.get("dowry_paid") or "[অপ্রতিষ্ঠিত]",
+        "unpaid_wages_claim": state.get("unpaid_wages_claim") or "[অপ্রতিষ্ঠিত]",
+        "work_period": state.get("work_period") or "[অপ্রতিষ্ঠিত]",
+        "current_status": state.get("current_status") or "[চাপ প্রয়োগ করা হইতেছে]",
+        "children": state.get("children") or "[সন্তানের বিবরণ উল্লেখ নেই]",
+        "evidence": state.get("evidence") or "[অপ্রতিষ্ঠিত]"
+    }
+    
+    draft = templates.generate_draft_complaint(cat, facts)
+    
+    # 1. Tool Calling: Dynamically retrieve nearest legal aid center and consultation slot
+    clinic = DEFAULT_CLINIC["clinic_name"]
+    slot = DEFAULT_CLINIC["referral_slot"]
+    text_to_eval = state.get("client_own_words") or state.get("transcript", "")
+    user_location = state.get("address") or facts.get("address") or ""
+    if user_location == "[ঠিকানা — অপ্রতিষ্ঠিত]":
+        user_location = ""
+        
+    try:
+        tool_prompt = (
+            f"Client's full grievance narrative: {text_to_eval}\n"
+            f"Case Category: {cat}\n"
+            f"Extracted Location/Address: {user_location or 'Not explicitly provided'}\n\n"
+            "Task: You MUST call the tool find_nearby_legal_aid_center with the detected or inferred location and legal issue category to locate the nearest BRAC Legal Aid Clinic and available appointment slot."
+        )
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        tool_res = bundle["clinic_tool_llm"].invoke(tool_prompt)
+        if tool_res.tool_calls:
+            tool_args = tool_res.tool_calls[0].get("args", {})
+            clinic_info = find_nearby_legal_aid_center.invoke(tool_args)
+            clinic = clinic_info.get("formatted_display") or clinic_info.get("clinic_name") or clinic
+            slot = clinic_info.get("referral_slot") or slot
+        else:
+            # Fallback direct tool invocation with available context
+            fallback_info = find_nearby_legal_aid_center.invoke({
+                "location": user_location or text_to_eval,
+                "issue_category": cat
+            })
+            clinic = fallback_info.get("formatted_display") or fallback_info.get("clinic_name") or clinic
+            slot = fallback_info.get("referral_slot") or slot
+    except Exception as e:
+        print(f"[Clinic Tool Calling Error] {e}")
+        clinic = DEFAULT_CLINIC["clinic_name"]
+        slot = DEFAULT_CLINIC["referral_slot"]
+        err_info = parse_llm_error(e)
+        if err_info.get("status_code") in (401, 402, 429) or err_info.get("error_type") in ("authentication_error", "connection_error"):
+            return {
+                "rights_explanation": standard_exp,
+                "draft_complaint": draft,
+                "referral_clinic": clinic,
+                "referral_slot": slot,
+                "is_complete": True,
+                "llm_error": err_info["message_bn"],
+                "llm_error_details": err_info
+            }
+    
+    # 2. Dynamic synthesis: Generate personalized legal advice and action plan based on user's narrative & follow-up answers
+    rights_exp = standard_exp
+    if cat != "out_of_scope" and text_to_eval:
+        try:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", prompts.DYNAMIC_SOLUTION_SYSTEM_PROMPT),
+                ("user", "Client Full Narrative & Follow-up Answers:\n{client_narrative}\n\nExtracted Facts:\n{known_facts}\n\nStandard Legal Guidelines:\n{legal_framework}\n\nPlease generate the personalized Bengali legal explanation and actionable roadmap ('আপনার আইনি অধিকার ও পথ') for this client.")
+            ])
+            bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+            res = bundle["llm"].invoke(prompt.format_messages(
+                client_narrative=text_to_eval,
+                category=cat,
+                known_facts=str({k: v for k, v in facts.items() if "[অপ্রতিষ্ঠিত]" not in str(v) and "[নাম সংরক্ষিত]" not in str(v)}),
+                legal_framework=standard_exp
+            ))
+            if res.content and len(res.content.strip()) > 60:
+                rights_exp = res.content.strip()
+        except Exception as e:
+            print(f"[Dynamic Solution Error] Falling back to standard template: {e}")
+            rights_exp = standard_exp
+            err_info = parse_llm_error(e)
+            if err_info.get("status_code") in (401, 402, 429) or err_info.get("error_type") in ("authentication_error", "connection_error"):
+                return {
+                    "rights_explanation": rights_exp,
+                    "draft_complaint": draft,
+                    "referral_clinic": clinic,
+                    "referral_slot": slot,
+                    "is_complete": True,
+                    "llm_error": err_info["message_bn"],
+                    "llm_error_details": err_info
+                }
+    
+    return {
+        "rights_explanation": rights_exp,
+        "draft_complaint": draft,
+        "referral_clinic": clinic,
+        "referral_slot": slot,
+        "is_complete": True
+    }
+
+# ----------------- WORKFLOW GRAPH -----------------
+
+workflow = StateGraph(IntakeState)
+
+workflow.add_node("transcribe", transcribe_node)
+workflow.add_node("safety_check", safety_check_node)
+workflow.add_node("token_budget", token_budget_node)
+workflow.add_node("classify", classification_node)
+workflow.add_node("extract", extraction_node)
+workflow.add_node("dialogue", dialogue_node)
+workflow.add_node("generate_templates", template_output_node)
+
+workflow.set_entry_point("transcribe")
+workflow.add_edge("transcribe", "safety_check")
+
+# Safety routing: No hard breakout shortcut. All clients proceed to token budget and questionnaire intake flow.
+def check_safety_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
+    return "token_budget"
+
+workflow.add_conditional_edges(
+    "safety_check",
+    check_safety_route,
+    {
+        "token_budget": "token_budget",
+        END: END
+    }
+)
+
+# Token budget routing: if exceeds threshold, pause and ask for confirmation
+def check_token_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
+    if state.get("requires_continuation"):
+        return "ask_continuation"
+    return "classify"
+
+workflow.add_conditional_edges(
+    "token_budget",
+    check_token_route,
+    {
+        "ask_continuation": END,
+        "classify": "classify",
+        END: END
+    }
+)
+
+# Classification routing
+def check_classification_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
+    if state.get("category") == "out_of_scope":
+        return "generate_templates"
+    if state.get("disambiguation_needed"):
+        return "dialogue"
+    return "extract"
+
+workflow.add_conditional_edges(
+    "classify",
+    check_classification_route,
+    {
+        "generate_templates": "generate_templates",
+        "dialogue": "dialogue",
+        "extract": "extract",
+        END: END
+    }
+)
+
+workflow.add_edge("extract", "dialogue")
+
+# Dialogue routing
+def check_dialogue_route(state: IntakeState):
+    if state.get("llm_error"):
+        return END
+    if state.get("is_complete"):
+        return "generate_templates"
+    return END
+
+workflow.add_conditional_edges(
+    "dialogue",
+    check_dialogue_route,
+    {
+        "generate_templates": "generate_templates",
+        END: END
+    }
+)
+
+workflow.add_edge("generate_templates", END)
+
+odhikar_graph = workflow.compile()
+
+# ----------------- ACTION SUMMARY GENERATION (STEP 3 COMPLETION) -----------------
+ACTION_SUMMARY_SYSTEM_PROMPT = """You are an expert Bengali legal aid paralegal at BRAC Human Rights and Legal Aid Services.
+The client has just completed answering all questions in their intake consultation.
+Generate a concise, professional, empathetic, and legally precise summary of the immediate legal actions to be taken (আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ) tailored specifically to the client's answers and circumstances.
+
+Structure:
+📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:
+
+১. **আইনি প্রতিকার ও মামলার ভিত্তি:** (Specify the exact statutory rights and court, e.g. পারিবারিক আদালত অধ্যাদেশ ১৯৮৫ for dower/maintenance suit, or বাংলাদেশ শ্রম আইন ২০০৬ for unpaid wages, or দেওয়ানি আদালত/সুনির্দিষ্ট প্রতিকার আইন for land dispute. Accurately reflect whether the client chose court lawsuit or ADR/arbitration if stated).
+২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** (List the exact documents or realistic evidence to prepare:
+   - If they confirmed having formal documents (Kabinnama, deed, pay slips), list them.
+   - If they lack formal documents or have informal/oral proof: list realistic practical preparation, such as: "কাজের স্থান ও বকেয়া মজুরির সুনির্দিষ্ট বিবরণ এবং স্থানীয় গ্রামবাসী ও প্রত্যক্ষদর্শী সাক্ষীদের নাম-ঠিকানার তালিকা প্রস্তুত রাখা" (NEVER tell an informal laborer to prepare non-existent appointment letters/ID cards, and NEVER say 'আপনার মৌখিক চুক্তি প্রস্তুত রাখুন' because an oral contract cannot be physically held). For family cases without kabinnama: "সংশ্লিষ্ট কাজী অফিস থেকে কাবিননামার সার্টিফাইড নকল সংগ্রহ ও এনআইডি প্রস্তুত রাখা").
+৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** (Actionable next step with legal aid clinic, e.g. ব্র্যাক লিগ্যাল এইড ক্লিনিকের প্যানেল আইনজীবীর মাধ্যমে আনুষ্ঠানিক অভিযোগপত্র ও আরজি চূড়ান্তকরণ এবং আদালতে মামলা দাখিল বা নোটিশ প্রেরণ).
+
+আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।
+
+Guidelines:
+- Clear, empathetic, numbered bullet points, in spoken Bengali (কথ্য ও প্রাঞ্জল বাংলা).
+- Total length under 130 words.
+- Do NOT output generic filler phrases. Focus directly on the 3 actionable steps."""
+
+def generate_action_summary(state: Dict[str, Any]) -> str:
+    """
+    Generates a personalized summary of actionable legal steps (করণীয় আইনি পদক্ষেপের সারসংক্ষেপ)
+    tailored to the client's answers, legal category, and verified evidence.
+    Falls back to a category-specific deterministic legal template on error or timeout.
+    """
+    cat = state.get("category") or "family_dower_maintenance"
+    dower = state.get("dower_amount")
+    evidence = state.get("evidence")
+    wages = state.get("unpaid_wages_claim")
+    clinic = state.get("referral_clinic") or "ব্র্যাক মানবাধিকার ও আইনি সহায়তা কেন্দ্র"
+
+    # 1. Attempt dynamic LLM generation for maximum personalization
+    try:
+        dialogue_snippets = []
+        for msg in state.get("chat_history", [])[-6:]:
+            if msg.get("content"):
+                dialogue_snippets.append(f"{msg.get('role')}: {msg.get('content')}")
+        chat_context = "\n".join(dialogue_snippets)
+
+        facts_list = [f"Category: {cat}"]
+        if dower: facts_list.append(f"Dower: {dower}")
+        if wages: facts_list.append(f"Unpaid wages claim: {wages}")
+        if evidence: facts_list.append(f"Evidence: {evidence}")
+        if state.get("current_status"): facts_list.append(f"Current situation: {state.get('current_status')}")
+        if state.get("children"): facts_list.append(f"Children: {state.get('children')}")
+        facts_summary = "\n".join(facts_list)
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", ACTION_SUMMARY_SYSTEM_PROMPT),
+            ("user", f"Client Facts:\n{facts_summary}\n\nRecent Dialogue:\n{chat_context}\n\nPlease generate the '📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ':")
+        ])
+        bundle = get_model_bundle(state.get("selected_model"), state.get("thinking_level"))
+        res = bundle["llm"].invoke(prompt.format_messages())
+        if res.content and len(res.content.strip()) > 50:
+            return res.content.strip()
+    except Exception as exc:
+        print(f"[Action Summary LLM Warning] Falling back to template: {exc}")
+
+    # 2. Deterministic high-quality fallback templates by category
+    if cat == "family_dower_maintenance":
+        dower_str = f"আপনার {dower} টাকার দেনমোহর" if dower and dower != "[অপ্রতিষ্ঠিত]" else "আপনার দেনমোহর"
+        has_missing_kabinnama = any(w in (evidence or "") for w in ["স্বামীর কাছে", "কাজী অফিস", "নেই", "নাই", "হারিয়ে", "কোনো কাবিন"])
+        prep_text = (
+            "সংশ্লিষ্ট কাজী অফিস থেকে কাবিননামার সার্টিফাইড নকল (কপি) সংগ্রহ, দেনমোহরের দাবিপত্র এবং জাতীয় পরিচয়পত্র (NID) প্রস্তুত রাখুন।"
+            if has_missing_kabinnama else
+            "আপনার নিকাহনামা/কাবিননামা, দেনমোহরের দাবিপত্র, জাতীয় পরিচয়পত্র (NID) এবং অন্যান্য প্রাসঙ্গিক সকল প্রমাণাদি প্রস্তুত রাখুন।"
+        )
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            f"১. **আইনি প্রতিকার ও মামলার ভিত্তি:** পারিবারিক আদালত অধ্যাদেশ, ১৯৮৫ এর অধীনে {dower_str} ও বিগত দিনগুলোর বকেয়া খোরপোষ/ভরণপোষণ আদায়ের জন্য পারিবারিক আদালতে নিয়মিত মামলা দায়ের করা।\n"
+            f"২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** {prep_text}\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর বিজ্ঞ আইনজীবীর সহায়তায় আনুষ্ঠানিকভাবে নালিশ ও আরজি চূড়ান্ত করে পারিবারিক আদালতে মামলা দাখিল সম্পন্ন করা।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    elif cat == "unpaid_wages":
+        wage_str = f"আপনার {wages} টাকার বকেয়া মজুরি" if wages and wages != "[অপ্রতিষ্ঠিত]" else "আপনার বকেয়া মজুরি"
+        has_informal_proof = any(w in (evidence or "") for w in ["মৌখিক", "লিখিত কোনো", "কোনো লিখিত", "সাক্ষী", "গ্রামের লোক", "লিখিত কিছু নাই", "লিখিত কিছু নেই", "লিখিত নাই", "লিখিত নেই"])
+        prep_text = (
+            "কাজের স্থান ও বকেয়া মজুরির সুনির্দিষ্ট বিবরণ এবং স্থানীয় গ্রামবাসী ও প্রত্যক্ষদর্শী সাক্ষীদের নাম-ঠিকানার তালিকা প্রস্তুত রাখুন।"
+            if has_informal_proof else
+            "আপনার কাজের পরিচয়পত্র (ID Card), দৈনিক হাজিরা খাতা বা স্লিপ, কাজের চুক্তিনামা এবং বকেয়া বেতনের হিসাব প্রস্তুত রাখুন।"
+        )
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            f"১. **আইনি প্রতিকার ও মামলার ভিত্তি:** বাংলাদেশ শ্রম আইন, ২০০৬ এর ৩৩ ধারা অনুযায়ী {wage_str} ও ক্ষতিপূরণ আদায়ের জন্য মালিকপক্ষ বরাবর আনুষ্ঠানিক আইনি নোটিশ প্রেরণ ও শ্রম আদালতে নালিশ দায়ের।\n"
+            f"২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** {prep_text}\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর মাধ্যমে মালিকপক্ষকে লিখিত দাবি নোটিশ প্রেরণ এবং শ্রম আদালতের জন্য অভিযোগপত্র প্রস্তুত করা।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    elif cat == "land_dispute":
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            "১. **আইনি প্রতিকার ও মামলার ভিত্তি:** সুনির্দিষ্ট প্রতিকার আইন, ১৮৭৭ অনুযায়ী স্বত্ব সাব্যস্তপূর্বক খাস দখল বা চিরস্থায়ী নিষেধাজ্ঞার দেওয়ানি মোকদ্দমা এবং শান্তিভঙ্গ রোধে ফৌজদারি কার্যবিধির ১৪৫ ধারায় প্রতিকার চাওয়া।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** আপনার জমির মূল রেজিস্ট্রি দলিল, হালনাগাদ পরচা/খতিয়ান (CS/SA/RS), দাখিলা ও দখলের প্রমাণপত্র প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর লিগ্যাল এইড প্যানেল আইনজীবীর মাধ্যমে নালিশি জমির স্বত্ব যাচাইপূর্বক দেওয়ানি আদালতে মামলা বা সালিশি মীমাংসার উদ্যোগ গ্রহণ।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    elif cat == "dowry":
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            "১. **আইনি প্রতিকার ও মামলার ভিত্তি:** যৌতুক নিরোধ আইন, ২০১৮ এবং পারিবারিক সহিংসতা প্রতিরোধ ও সুরক্ষা আইন, ২০১০ এর অধীনে বিজ্ঞ আদালতে নিয়মিত মামলা দায়ের ও ক্ষতিপূরণ দাবি।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** যৌতুক দাবির প্রত্যক্ষদর্শী সাক্ষীদের তালিকা, চিকিৎসা সনদের অনুলিপি (যদি থাকে) এবং বিয়ের প্রমাণপত্র প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** {clinic}-এর বিজ্ঞ আইনজীবীর সহায়তায় আদালতে আনুষ্ঠানিক নালিশি পিটিশন দাখিল বা সুরক্ষা আদেশের আবেদন সম্পন্ন করা।\n\n"
+            "আপনার এলাকার নিকটস্থ আইনি সহায়তা কেন্দ্র চিহ্নিত করতে এবং আনুষ্ঠানিক অভিযোগপত্র প্রস্তুত করতে নিচের ব্যক্তিগত ও বিবাদীর তথ্য প্রদান করুন।"
+        )
+    else:
+        return (
+            "📋 আপনার করণীয় আইনি পদক্ষেপের সারসংক্ষেপ:\n\n"
+            "১. **আইনি প্রতিকার ও ভিত্তি:** আপনার বর্ণিত বিষয়টি আমাদের প্রাথমিক তালিকার বাইরে হলেও প্রচলিত দেওয়ানি বা ফৌজদারি আইনের অধীনে আদালতে আইনি প্রতিকার লাভের সুযোগ রয়েছে।\n"
+            "২. **প্রয়োজনীয় প্রস্তুতি ও প্রমাণাদি:** ঘটনার প্রত্যক্ষদর্শী সাক্ষী, লিখিত চুক্তি বা অভিযোগ সংক্রান্ত সকল নথিপত্র প্রস্তুত রাখুন।\n"
+            f"৩. **পরবর্তী প্রত্যক্ষ পদক্ষেপ:** উপযুক্ত আদালত, সংশ্লিষ্ট থানা বা সরকারি জেলা লিগ্যাল এইড কর্মকর্তার কার্যালয়ে যোগাযোগ করে আনুষ্ঠানিক পদক্ষেপ গ্রহণ করা।\n\n"
+            "আপনার এলাকার নিকটস্থ সহায়তা কেন্দ্র চিহ্নিত করতে নিচের ব্যক্তিগত তথ্য প্রদান করুন।"
+        )
+
+# Public runner function
+def run_intake(
+    transcript: str, 
+    audio_path: Optional[str] = None, 
+    existing_state: Optional[Dict[str, Any]] = None,
+    is_continuation: bool = False,
+    is_summarized: bool = False,
+    selected_model: Optional[str] = None,
+    thinking_level: Optional[str] = None
+) -> Dict[str, Any]:
+    """Processes a single conversational turn in Bangla with multi-model selection (Gemini 2.5 to latest, and Local Llama) and thinking level control."""
+    model_to_use = selected_model or (existing_state.get("selected_model") if existing_state else None) or "gemini-2.5-flash"
+    thinking_to_use = thinking_level or (existing_state.get("thinking_level") if existing_state else None) or "medium"
+
+    # Check model availability
+    if model_to_use == "local-llama":
+        ollama_status = check_local_ollama_status()
+        if not ollama_status["online"]:
+            err_details = {
+                "status_code": 503,
+                "error_type": "connection_error",
+                "title": "লোকাল এলএলএম সংযোগ বিচ্ছিন্ন (Ollama Offline)",
+                "message_bn": "লোকাল এলএলএম (Ollama) সার্ভার চালু নেই। টার্মিনালে 'ollama run llama3.1' কমান্ডটি চালান অথবা Gemini ক্লাউড মডেল ব্যবহার করুন।",
+                "message_en": "Local Ollama server is offline. Please run 'ollama run llama3.1' or switch to Gemini."
+            }
+            history = list(existing_state.get("chat_history", [])) if existing_state else []
+            if transcript and transcript.strip():
+                history.append({"role": "user", "content": transcript.strip()})
+            history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
+            return {
+                "transcript": transcript,
+                "client_own_words": transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else transcript),
+                "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
+                "safety_flag": False,
+                "safety_message": None,
+                "is_complete": False,
+                "current_stage": None,
+                "stages_covered": [],
+                "requires_continuation": False,
+                "continuation_prompt": None,
+                "follow_up_question": None,
+                "suggested_replies": None,
+                "extra_question_asked": False,
+                "rights_explanation": None,
+                "draft_complaint": None,
+                "referral_clinic": None,
+                "referral_slot": None,
+                "action_summary": None,
+                "chat_history": history,
+                "llm_error": err_details["message_bn"],
+                "llm_error_details": err_details,
+                "selected_model": model_to_use,
+                "thinking_level": thinking_to_use
+            }
+    elif not is_model_configured():
+        err_details = get_error_message("authentication_error", "Missing or unconfigured LLM API key in backend/.env")
+        history = list(existing_state.get("chat_history", [])) if existing_state else []
+        if transcript and transcript.strip():
+            history.append({"role": "user", "content": transcript.strip()})
+        history.append({"role": "assistant", "content": f"⚠️ {err_details['message_bn']}"})
+        return {
+            "transcript": transcript,
+            "client_own_words": transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else transcript),
+            "turn_count": (existing_state.get("turn_count", 0) + 1) if existing_state else 1,
+            "safety_flag": False,
+            "safety_message": None,
+            "is_complete": False,
+            "current_stage": None,
+            "stages_covered": [],
+            "requires_continuation": False,
+            "continuation_prompt": None,
+            "follow_up_question": None,
+            "suggested_replies": None,
+            "extra_question_asked": False,
+            "rights_explanation": None,
+            "draft_complaint": None,
+            "referral_clinic": None,
+            "referral_slot": None,
+            "action_summary": None,
+            "chat_history": history,
+            "llm_error": err_details["message_bn"],
+            "llm_error_details": err_details,
+            "selected_model": model_to_use,
+            "thinking_level": thinking_to_use
+        }
+
+    was_continuation = is_continuation or is_summarized or (existing_state and existing_state.get("is_continuation_confirmed"))
+    was_disambiguation = bool(
+        existing_state and not was_continuation and (
+            existing_state.get("disambiguation_needed") or 
+            existing_state.get("category") == "unclassifiable" or
+            existing_state.get("missing_fields") == ["category_clarification"] or
+            existing_state.get("category") is None
+        )
+    )
+    if was_disambiguation:
+        current_turn = 1
+    elif existing_state:
+        current_turn = existing_state.get("turn_count", 0) + 1
+    else:
+        current_turn = 1
+
+    client_words = transcript if is_summarized else (existing_state.get("client_own_words", "") if existing_state else "")
+    raw_prev = (
+        existing_state.get("client_raw_narrative") or existing_state.get("client_own_words", "")
+        if (is_summarized and existing_state)
+        else (existing_state.get("client_raw_narrative") if existing_state else None)
+    )
+
+    state: IntakeState = {
+        "selected_model": model_to_use,
+        "thinking_level": thinking_to_use,
+        "audio_path": audio_path,
+        "transcript": transcript,
+        "client_own_words": client_words,
+        "client_raw_narrative": raw_prev,
+        "is_summarized": is_summarized,
+        "turn_count": current_turn,
+        "estimated_tokens": estimate_tokens(transcript) if is_summarized else (existing_state.get("estimated_tokens", 0) if existing_state else 0),
+        "requires_continuation": False,
+        "continuation_prompt": None,
+        "is_continuation_confirmed": is_continuation or is_summarized or (existing_state.get("is_continuation_confirmed", False) if existing_state else False),
+        "safety_flag": existing_state.get("safety_flag", False) if existing_state else False,
+        "safety_message": existing_state.get("safety_message", None) if existing_state else None,
+        "category": existing_state.get("category") if existing_state else None,
+        "confidence": existing_state.get("confidence") if existing_state else None,
+        "classification_reason": None,
+        "disambiguation_needed": False,
+        "applicant_name": existing_state.get("applicant_name") if existing_state else None,
+        "respondent": existing_state.get("respondent") if existing_state else None,
+        "address": existing_state.get("address") if existing_state else None,
+        "marriage_date": existing_state.get("marriage_date") if existing_state else None,
+        "marriage_date_inferred": existing_state.get("marriage_date_inferred", False) if existing_state else False,
+        "dower_amount": existing_state.get("dower_amount") if existing_state else None,
+        "dowry_paid": existing_state.get("dowry_paid") if existing_state else None,
+        "unpaid_wages_claim": existing_state.get("unpaid_wages_claim") if existing_state else None,
+        "work_period": existing_state.get("work_period") if existing_state else None,
+        "current_status": existing_state.get("current_status") if existing_state else None,
+        "children": existing_state.get("children") if existing_state else None,
+        "evidence": existing_state.get("evidence") if existing_state else None,
+        "collective_count": existing_state.get("collective_count") if existing_state else None,
+        "time_critical": existing_state.get("time_critical", False) if existing_state else False,
+        "is_complete": False,
+        "current_stage": existing_state.get("current_stage") if existing_state else None,
+        "stages_covered": list(existing_state.get("stages_covered", [])) if existing_state else [],
+        "missing_fields": existing_state.get("missing_fields", []) if existing_state else [],
+        "follow_up_question": None,
+        "suggested_replies": existing_state.get("suggested_replies") if existing_state else None,
+        "extra_question_asked": existing_state.get("extra_question_asked", False) if existing_state else False,
+        "rights_explanation": None,
+        "draft_complaint": None,
+        "referral_clinic": None,
+        "referral_slot": None,
+        "action_summary": existing_state.get("action_summary") if existing_state else None,
+        "taking_action_based_on_docs": existing_state.get("taking_action_based_on_docs") if existing_state else None,
+        "doc_status": existing_state.get("doc_status") if existing_state else None,
+        "awaiting_process_confirmation": existing_state.get("awaiting_process_confirmation", False) if existing_state else False,
+        "awaiting_partial_action_confirmation": existing_state.get("awaiting_partial_action_confirmation", False) if existing_state else False,
+        "awaiting_solution_confirmation": existing_state.get("awaiting_solution_confirmation", False) if existing_state else False,
+        "solution_confirmed": existing_state.get("solution_confirmed", False) if existing_state else False,
+        "documents_asked": existing_state.get("documents_asked", False) if existing_state else False,
+        "chat_history": list(existing_state.get("chat_history", [])) if existing_state else [],
+        "llm_error": None,
+        "llm_error_details": None
+    }
+    
+    # Append the user's current message to chat_history if present
+    if transcript and transcript.strip():
+        state["chat_history"].append({
+            "role": "user",
+            "content": transcript.strip()
+        })
+
+    try:
+        result = odhikar_graph.invoke(state)
+    except Exception as exc:
+        print(f"[Graph Invocations Error] {exc}")
+        err_info = parse_llm_error(exc)
+        result = dict(state)
+        result["llm_error"] = err_info["message_bn"]
+        result["llm_error_details"] = err_info
+    
+    # Append assistant's response to chat_history based on outcome
+    history = list(result.get("chat_history", []))
+    if result.get("llm_error"):
+        history.append({
+            "role": "assistant",
+            "content": f"⚠️ ত্রুটি: {result.get('llm_error')}"
+        })
+    elif result.get("requires_continuation"):
+        history.append({
+            "role": "assistant",
+            "content": result.get("continuation_prompt") or "টোকেন বিশ্লেষণ অনুমতির অপেক্ষা।"
+        })
+    elif result.get("follow_up_question"):
+        history.append({
+            "role": "assistant",
+            "content": result.get("follow_up_question")
+        })
+    elif result.get("is_complete"):
+        action_summary = generate_action_summary(result)
+        result["action_summary"] = action_summary
+        history.append({
+            "role": "assistant",
+            "content": action_summary
+        })
+    elif result.get("safety_flag"):
+        history.append({
+            "role": "assistant",
+            "content": result.get("safety_message") or "জরুরি নিরাপত্তা সতর্কতা সক্রিয় করা হয়েছে।"
+        })
+    
+    result["chat_history"] = history
+    result["selected_model"] = model_to_use
+    result["thinking_level"] = thinking_to_use
+    result["taking_action_based_on_docs"] = result.get("taking_action_based_on_docs")
+    result["doc_status"] = result.get("doc_status")
+    result["awaiting_process_confirmation"] = result.get("awaiting_process_confirmation", False)
+    result["awaiting_partial_action_confirmation"] = result.get("awaiting_partial_action_confirmation", False)
+    result["documents_asked"] = result.get("documents_asked", False)
+    return result
+
+
+# Pydantic schema for voice-to-profile extraction
+class ProfileVoiceExtractOutput(BaseModel):
+    applicant_name: Optional[str] = Field(None, description="Client or applicant's full name")
+    father_name: Optional[str] = Field(None, description="Father's or guardian's name")
+    division: Optional[str] = Field(None, description="Division in Bangladesh: ঢাকা, চট্টগ্রাম, রাজশাহী, খুলনা, বরিশাল, সিলেট, রংপুর, or ময়মনসিংহ")
+    zilla: Optional[str] = Field(None, description="District / Zilla in Bangladesh, e.g. কুমিল্লা, ঢাকা, ফরিদপুর, বগুড়া, নারায়ণগঞ্জ, নোয়াখালী")
+    thana: Optional[str] = Field(None, description="Upazila or Thana, e.g. চান্দিনা, ভাঙ্গা, সাভার, মিরপুর")
+    union_village: Optional[str] = Field(None, description="Union or Village name, e.g. বাতাঘাসী, ঘারুয়া")
+    contact_number: Optional[str] = Field(None, description="Mobile / phone number")
+    aggressor_name: Optional[str] = Field(None, description="Opponent or aggressor's full name")
+    aggressor_relation: Optional[str] = Field(None, description="Relationship with applicant, e.g. স্বামী, ভাই, শ্বশুর, প্রতিবেশী, মালিক")
+    aggressor_address: Optional[str] = Field(None, description="Opponent's address or workplace location")
+    summary_text: Optional[str] = Field(None, description="Concise 1-sentence summary in Bengali of the extracted profile")
+
+profile_voice_extractor_llm = llm.with_structured_output(ProfileVoiceExtractOutput)
+
+VOICE_PROFILE_PROMPT = """You are an expert Bengali legal paralegal information extractor.
+Given the user's spoken statement and recent intake transcript, extract personal identity and location details for legal aid registration:
+- applicant_name: Client or applicant's full name (e.g. মোসাম্মৎ রহিমা খাতুন, মোতালেব)
+- father_name: Father's or guardian's name if mentioned (e.g. আবদুল করিম)
+- division: Administrative division in Bangladesh (ঢাকা, চট্টগ্রাম, রাজশাহী, খুলনা, বরিশাল, সিলেট, রংপুর, ময়মনসিংহ). If not mentioned explicitly, infer it from the district/zilla (e.g. কুমিল্লা -> চট্টগ্রাম, ফরিদপুর -> ঢাকা, বগুড়া -> রাজশাহী).
+- zilla: District / Zilla (e.g. কুমিল্লা, ফরিদপুর, ঢাকা, নারায়ণগঞ্জ, বগুড়া)
+- thana: Upazila or Thana (e.g. চান্দিনা, ভাঙ্গা, সাভার, মিরপুর)
+- union_village: Union or Village name (e.g. বাতাঘাসী, ঘারুয়া)
+- contact_number: Phone / mobile number (e.g. ০১৭১২৩৪৫৬৭৮)
+- aggressor_name: Opponent or aggressor's full name (e.g. রফিকুল ইসলাম, কাশেম)
+- aggressor_relation: Relationship with applicant (e.g. স্বামী, ভাই, শ্বশুর, প্রতিবেশী, মালিক)
+- aggressor_address: Opponent's address or workplace location (e.g. চান্দিনা বাজার, ভাঙ্গা বাজার)
+- summary_text: 1-sentence Bengali summary of extracted info
+
+If a field is not mentioned, leave it null. Always respond in valid structured output."""
+
+def extract_profile_from_voice(voice_transcript: str, chat_history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """
+    Extracts applicant and aggressor information automatically from a spoken Bengali audio transcript
+    or text narrative using LLM with structured entity output.
+    """
+    context_snippets = []
+    if chat_history:
+        for msg in chat_history[-6:]:
+            if msg.get("role") == "user":
+                context_snippets.append(f"আগের কথা: {msg.get('content', '')}")
+    
+    combined_input = voice_transcript
+    if context_snippets:
+        combined_input = f"{voice_transcript}\n\nপূর্ববর্তী কথোপকথন:\n" + "\n".join(context_snippets)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", VOICE_PROFILE_PROMPT),
+        ("user", "Spoken input: {spoken_input}")
+    ])
+    
+    try:
+        res = profile_voice_extractor_llm.invoke(prompt.format_messages(spoken_input=combined_input))
+        if res is not None and hasattr(res, "model_dump"):
+            data = res.model_dump()
+            return data
+        elif isinstance(res, dict):
+            return res
+    except Exception as e:
+        print(f"[Profile Voice Extraction Warning] {e}")
+
+    # Fallback basic extraction if LLM is unavailable
+    fallback_data = {
+        "applicant_name": None,
+        "father_name": None,
+        "division": None,
+        "zilla": None,
+        "thana": None,
+        "union_village": None,
+        "contact_number": None,
+        "aggressor_name": None,
+        "aggressor_relation": None,
+        "aggressor_address": None,
+        "summary_text": None
+    }
+    
+    import re
+    # Simple regex for mobile number
+    phone_match = re.search(r'(01[3-9]\d{8}|০১[৩-৯][০-৯]{8})', voice_transcript)
+    if phone_match:
+        fallback_data["contact_number"] = phone_match.group(1)
+        
+    return fallback_data

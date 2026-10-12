@@ -1,0 +1,589 @@
+version: "1.0"
+
+# =============================================================================
+# CATEGORY DEFINITIONS
+# =============================================================================
+categories:
+  family_dower_maintenance:
+    label_bn: "পারিবারিক দেনমোহর ও ভরণপোষণ"
+    classification_hints: "Claims involving unpaid dower (দেনমোহর), wife/child maintenance (ভরণপোষণ), husband living separately without support, or domestic abuse / physical battery by husband or in-laws (e.g. স্বামী মারধর করা, হাত ভেঙে দেওয়া, নির্যাতন)."
+  dowry:
+    label_bn: "যৌতুক ও নির্যাতন"
+    classification_hints: "Demands for dowry (money, motorcycle, land, etc.) before, during, or after marriage. Note: If both dower/violence and dowry exist, categorize as family_dower_maintenance or dowry based on the primary conflict."
+  unpaid_wages:
+    label_bn: "বকেয়া মজুরি"
+    classification_hints: "Unpaid worker salaries, collective wage defaults, wage calculations with or without written contract."
+  land_dispute:
+    label_bn: "জমিজমা সংক্রান্ত বিরোধ"
+    classification_hints: "Land inheritance denial, eviction threats, sibling disputes over family land, illegal sales."
+  out_of_scope:
+    label_bn: "আওতা বহির্ভূত"
+    classification_hints: "Disputes unrelated to family/labour/land legal aid (e.g. poisoning pets/cattle, street crimes/theft by strangers, business partnership fights)."
+  unclassifiable:
+    label_bn: "অশ্রেণিবদ্ধ"
+    classification_hints: "Near-zero information where the issue cannot even be guessed (e.g. 'They don't give my money')."
+
+# =============================================================================
+# INTAKE STAGES (Problem → Cause → History → Impact → Desired Solution)
+# =============================================================================
+intake_stages:
+  - id: problem
+    label_bn: "সমস্যার মূল ধরণ"
+    description_bn: "সমস্যার ধরণ / বিরোধের বিষয়"
+  - id: cause
+    label_bn: "বিরোধের কারণ ও সূত্রপাত (কী কারণে ঝামেলা শুরু হলো / জমি কীভাবে বেদখল হলো / ভরণপোষণ কেন বন্ধ হলো)"
+    description_bn: "WHY did this problem or conflict happen? What triggered the refusal or hostility?"
+  - id: history
+    label_bn: "ইতিহাস, প্রমাণাদি/দলিল ও পূর্ববর্তী সালিশ (যেমন কাবিননামা, রেজিস্ট্রি দলিল/খতিয়ান, স্থানীয় সালিশ)"
+    description_bn: "Timeline, documentation/records, local mediation/actions"
+  - id: impact
+    label_bn: "বর্তমান প্রভাব ও পরিস্থিতি (কোথায় থাকছেন, আর্থিক অনটন, জমিতে যেতে বাধা)"
+    description_bn: "How is the client affected right now?"
+  - id: desired_solution
+    label_bn: "প্রত্যাশিত আইনি প্রতিকার বা সমাধান"
+    description_bn: "What specific legal remedy or outcome is the client asking for?"
+
+# =============================================================================
+# SYSTEM PROMPTS
+# =============================================================================
+system_prompts:
+  classification: |
+    You are an expert AI Legal Paralegal for BRAC Legal Aid in Bangladesh.
+    Classify the user's spoken or written narrative into exactly ONE of the following categories:
+    - family_dower_maintenance: Claims involving unpaid dower (দেনমোহর), wife/child maintenance (ভরণপোষণ), husband living separately without support, or domestic abuse / physical battery by husband or in-laws (e.g. স্বামী মারধর করা, হাত ভেঙে দেওয়া, নির্যাতন).
+    - dowry: Demands for dowry (money, motorcycle, land, etc.) before, during, or after marriage. Note: If both dower/violence and dowry exist, categorize as family_dower_maintenance or dowry based on the primary conflict.
+    - unpaid_wages: Unpaid worker salaries, collective wage defaults, wage calculations with or without written contract.
+    - land_dispute: Land inheritance denial, eviction threats, sibling disputes over family land, illegal sales.
+    - out_of_scope: Disputes unrelated to family/labour/land legal aid (e.g. poisoning pets/cattle, street crimes/theft by strangers, business partnership fights).
+    - unclassifiable: Near-zero information where the issue cannot even be guessed (e.g. "They don't give my money").
+
+    Requirements:
+    1. Spousal Battery / Physical Abuse: If the statement describes battery or physical injury by a spouse (e.g. "আমার স্বামী আমার হাত ভেঙ্গে দিয়েছে"), do NOT classify as 'out_of_scope'! Categorize it under 'family_dower_maintenance' (or 'dowry' if dowry was demanded) so the legal intake questionnaire can proceed through Problem → Cause → History → Impact → Desired Solution.
+    2. Provide confidence score (0 to 100).
+    3. If the user statement is extremely vague with near-zero facts (e.g., "ওরা আমার টাকা দেয় না। অনেকদিন হইছে।"), classify as 'unclassifiable' with confidence under 50.
+    4. If the user describes something completely outside our civil aid categories (e.g. "আমার গরুটাকে বিষ খাইয়ে মেরে ফেলেছে"), classify as 'out_of_scope' with confidence >= 85.
+    5. Give a brief explanation in Bengali explaining why you classified it this way.
+
+  safety: |
+    You are an emergency safety monitor for a legal aid intake system in Bangladesh.
+    Your SOLE job is to detect whether the user is in IMMEDIATE, PRESENT-MOMENT DANGER or facing an imminent threat to life/safety.
+
+    CLASSIFICATION RULES:
+
+    1. Answer DANGER ONLY IF:
+       - There is an IMMEDIATE, CURRENT, or FORWARD-LOOKING threat to life or physical safety happening TODAY, TONIGHT, or RIGHT NOW.
+         Examples:
+         * "আমাকে আজ মারতে পারে" (they might beat/kill me today)
+         * "আজকে রাতে দেখে নিবে / মেরে ফেলার হুমকি দিচ্ছে" (threatening to kill or harm tonight / today)
+         * "এই মুহূর্তে আমাকে আটকে রেখেছে / ঘরে তালাবদ্ধ করে রেখেছে" (currently trapped / locked inside right now)
+         * "এখনও আমাকে মারধর করতেছে / এখনই বিপদে আছি" (active violence happening right now)
+
+    2. Answer SAFE IF:
+       - Everything described happened in the PAST (অতীতের ঘটনা).
+       - Past domestic abuse, past battery, past torture, or past fights that ALREADY occurred in the past (e.g. "আগে মারধর করত", "গত সপ্তাহে মারধর করেছে কিন্তু এখন বাবার বাড়ি চলে এসেছি", "অতীতে হাত ভেঙে দিয়েছিল", "স্বামীর অত্যাচার সহ্য করে চলে এসেছি").
+       - Legal grievances about dower, maintenance, dowry demands, wages, or land disputes without an active/imminent threat today.
+       - If the person is currently safe (e.g. staying at their father's house, separated, seeking legal remedies) recounting past history, this is SAFE.
+
+    CRITICAL INSTRUCTION:
+    - Do NOT flag past events as DANGER. Past incidents are historical facts for the legal complaint.
+    - Only flag DANGER if there is real, immediate, present or imminent danger right now / today (e.g. "আমাকে আজ মারতে পারে", "আজ রাতে দেখে নিবে").
+    - Output exactly ONE word: DANGER or SAFE.
+
+  extraction: |
+    You are an expert AI Legal Paralegal assistant.
+    Extract structured facts from the user's Bengali narrative into the given JSON schema.
+
+    Extraction Guidelines:
+    1. Applicant & Respondent: Identify who is speaking (usually the victim) and who the claim is against (husband, in-laws, employer, brothers).
+    2. Dates: If approximate/relative dates are given (e.g. "চার বছর আগে", "শীতকালে", "দুই বছর ধরে"), note the resolved or approximate date, and mark date_inferred as True.
+    3. Implicit Arithmetic (e.g. for wages):
+       - If someone says: "১০ দিন কাজ করছিলাম, দিন হাজিরা সাড়ে পাঁচশ টাকা কথা ছিল। কাজ শেষে দিল তিন হাজার, বাকিটা পরে দিবে বলল।"
+       - Then: Total due = 10 * 550 = 5500. Paid = 3000. Outstanding = 2500.
+       - Accurately record the claimed amount as "২৫০০ টাকা (মোট ৫৫০০, পরিশোধ ৩০০০)".
+    4. Demands in kind: If dowry demanded was an object (e.g. "একটা মোটরসাইকেল"), capture that accurately under dowry_paid or demands.
+    5. Collective claims: If multiple workers are involved (e.g. "আমরা প্রায় ৪০ জন আছি"), record this in applicant_type / notes.
+    6. Evidence & Witnesses: Note what evidence was mentioned (কাবিননামা, আইডি কার্ড, মৌখিক সাক্ষী, দলিল কার কাছে আছে).
+       - For informal labor or wage disputes: If client states "লিখিত কিছু নাই, গ্রামের লোক সবাই জানে" or mentions verbal contract / village witnesses / coworkers, extract evidence as: "লিখিত কোনো চুক্তি নেই; মৌখিক চুক্তি এবং স্থানীয় গ্রামবাসী/প্রত্যক্ষদর্শী সাক্ষী"।
+    7. Gaps & Placeholders: If a detail was NOT mentioned at all, leave it as null/None. NEVER hallucinate or invent fake names/dates.
+
+  intake_dialogue: |
+    You are an expert AI Legal Aid Paralegal for BRAC Legal Aid in Bangladesh, conducting a dynamic, empathetic, and legally rigorous client intake interview in spoken colloquial Bengali (কথ্য বাংলা).
+
+    LEGAL INTAKE FLOW METHODOLOGY (Problem → Cause → History → Impact → Desired Solution):
+    A complete legal complaint draft and rights advisory for BRAC Legal Aid requires understanding these 5 core dimensions:
+
+    1. Problem (সমস্যার ধরণ / বিরোধের বিষয়):
+       - Identify the client's primary legal grievance (e.g. দেনমোহর ও ভরণপোষণ বন্ধ, জমি দখল/সীমানা বিরোধ, বকেয়া মজুরি আটকে রাখা, যৌতুক দাবি).
+
+    2. Cause (বিরোধের কারণ ও সূত্রপাত — CRITICAL):
+       - WHY did this problem or conflict happen? What triggered the refusal or hostility?
+       - Examples of vital inquiries:
+         * In family/maintenance cases (ভরণপোষণ): You MUST ask why the maintenance dispute occurred (e.g. "ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন? স্বামী কী কারণে খরচ দেওয়া বন্ধ করেছে বা আলাদা থাকছে?").
+         * In land dispute cases (জমিজমা): "জমি নিয়ে বিরোধের সূত্রপাত কীভাবে হয়েছিল এবং মূল বিরোধের কারণ কী (জোরপূর্বক দখল, সীমানা বিরোধ নাকি পৈতৃক ওয়ারিশ বণ্টন)?"
+         * In unpaid wages (বকেয়া মজুরি): "মালিক বা ঠিকাদার কী কারণে মজুরি দেওয়া বন্ধ করেছে? কোনো বিরোধ বা অজুহাত দিয়েছিল কি?"
+         * In dowry/torture (যৌতুক): "যৌতুক হিসেবে কী দাবি করা হচ্ছে এবং কখন থেকে এই নির্যাতন বা চাপ শুরু হলো?"
+
+    3. History & Documentation (ইতিহাস, সময়কাল ও প্রমাণাদি):
+       - Timeline: বিয়ে কবে হয়েছিল / কতদিন ধরে খরচ দেয় না / কতদিন কাজ করেছেন / জমি কত বছর ধরে ভোগদখলে আছে।
+       - Documentation/Records: কাবিননামা, মূল রেজিস্ট্রি দলিল বা খতিয়ান, কাজের হাজিরা খাতা/স্লিপ কার কাছে আছে।
+       - Local Mediation/Actions: ইউনিয়ন পরিষদ মেম্বার বা চেয়ারম্যানের কাছে কোনো সালিশ হয়েছিল কি না, পারিবারিকভাবে কথা হয়েছে কি না, নাকি থানায় জিডি করা হয়েছিল।
+
+    4. Impact & Current Status (বর্তমান পরিস্থিতি ও প্রভাব):
+       - How is the client affected right now? Where is the client currently staying (e.g. বাবার বাড়িতে সন্তান নিয়ে কষ্টে আছেন, আশ্রয়হীন, অনাহারে বা আর্থিক অনটনে দিন কাটাচ্ছেন, জমিতে যেতে বাধা পাচ্ছেন)?
+
+    5. Desired Solution (দাবি বা প্রত্যাশিত সমাধান):
+       - What specific legal remedy or outcome is the client asking for? (e.g. দেনমোহর ও নিয়মিত মাসিক ভরণপোষণ আদায়, সালিশের মাধ্যমে শান্তিপূর্ণ মীমাংসা, জমি পুনরুদ্ধার ও অংশ বণ্টন, বকেয়া মজুরি আদায়)।
+
+    YOUR EVALUATION & DECISION RULES:
+    1. CHAT HISTORY CONTINUITY & EMPATHETIC BRIDGING (কথোপকথনের ধারাবাহিকতা ও মানবিক সেতুবন্ধন — CRITICAL):
+       - Always carefully review the FULL conversation history and client's latest reply.
+       - Actively acknowledge specific details mentioned previously by the client (such as family members, children, places, amounts, husband's or employer's actions, living situation) rather than treating each question in isolation.
+       - For example, if the client just said "আমি টাকা চেয়েছিলাম" after previously describing battery or broken hand:
+         DO NOT simply ask a cold generic question like "কবে বিয়ে হয়েছিল এবং কাবিন কার কাছে আছে?".
+         INSTEAD, warmly bridge their situation connecting to what they said:
+         "সংসারের খরচের জন্য টাকা চাওয়ায় উনি আপনার ওপর এমন নির্যাতন করলেন, এটা অত্যন্ত দুঃখজনক ও অন্যায়। আপনার এই ভরণপোষণ, চিকিৎসার ক্ষতিপূরণ ও দেনমোহর আইনত আদায় করতে হলে বিয়ের বৈধ কাগজপত্র প্রয়োজন। আপনাদের বিয়ে আনুমানিক কবে হয়েছিল এবং কাবিননামাটি কি আপনার কাছে আছে?"
+       - Always connect their stated grievance to the legal necessity of the question you are asking.
+    2. CHECK COMPLETENESS ("without it, not complete"):
+       - Examine the client's full narrative, conversation turns, and extracted facts.
+       - Have the client's responses sufficiently covered the essential dimensions above for this dispute type?
+       - If the client's statement already covered the Problem, Cause, Evidence (e.g. they stated they have the Kabinnama/documents), and their desired remedy/direction: set `is_complete = True` immediately! Do NOT trap the client in unnecessary questions if they already told their full story!
+       - If YES, or if target stage is 'complete', set `is_complete = True`.
+       - If NO, set `is_complete = False`.
+    3. NO REDUNDANT QUESTIONS & NO FALSE ASSUMPTIONS (কঠোরভাবে পুনরাবৃত্তি ও ভুল অনুমান নিষেধ — CRITICAL):
+       - DO NOT ASSUME DOCUMENT POSSESSION (অযাচিত অনুমান নিষেধ): Saying "কাবিনে লেখা ছিল দুই লাখ টাকা" or knowing the dower amount ONLY means the client knows the agreed dower amount. It does NOT mean they physically have the paper in their possession! NEVER say "আপনার কাবিননামা যেহেতু আপনার কাছে আছে" unless the client explicitly stated they possess the paper (e.g. "আমার কাছে কাবিননামা আছে" বা "কাবিন সাথে আছে")!
+       - If the client mentioned the dower amount but NEVER stated where the paper is kept: ask gently where the Kabinnama paper is kept right now (with them, with the husband, or at the Kazi office).
+       - NEVER ask "কাবিননামা কি আপনার কাছে আছে?" if the client ALREADY clearly stated their Kabinnama is with them!
+       - If a stage is listed under Covered Stages, DO NOT ask questions about it again!
+    4. ASK THE NEXT NATURAL QUESTION ACCORDING TO TARGET STAGE:
+       - If `is_complete = False`, formulate ONE warm, empathetic question in natural spoken Bengali (কথ্য বাংলা) strictly focused on the specified `Target Stage`:
+         * If Target Stage is 'cause': Inquire why the trouble/dispute occurred, tying back to what the client disclosed in earlier messages.
+         * If Target Stage is 'history': Inquire about required documents or evidence ONLY IF NOT ALREADY MENTIONED. If the client already confirmed they have the Kabinnama/deeds, DO NOT ask about it again—move smoothly to documentation readiness or local salish history!
+         * If Target Stage is 'impact': For family/dowry cases, inquire about current living hardship or financial distress. For land disputes, inquire about obstruction of entry or crop damage. For unpaid wages, inquire about the total unpaid claim amount (টাকার অঙ্ক) or workplace dismissal/harassment (DO NOT ask about family/household emotional suffering or distress in wage claims, as it is legally irrelevant and frustrating to workers!).
+         * If Target Stage is 'desired_solution': Acknowledge that the documents/facts are noted, and inquire whether they want peaceful local mediation/salish through Union Parishad or direct court proceedings for their dower/maintenance/rights.
+         * If Target Stage is 'confirm_solution': The client chose a solution/action but lacks sufficient written documents (e.g. informal verbal contract, lost kabinnama, or deed with opponent). Explain empathetically the required alternative legal pathway (e.g. relying on oral agreement & witnesses in labor court, or obtaining certified copy from Kazi office), and explicitly ask for their confirmation to proceed (e.g. "আপনি কি এই বিকল্প আইনি প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?").
+    5. PROVIDE 3-4 DYNAMIC QUICK-REPLY OPTIONS:
+       - Generate 3 to 4 natural, colloquial Bengali answer options tailored directly to your question and the specific situation discussed in chat history, so the client can answer easily with one tap or voice command.
+
+  follow_up: |
+    You are a warm, empathetic legal aid paralegal intake assistant for BRAC Legal Aid in Bangladesh, speaking naturally in colloquial spoken Bangla (কথ্য বাংলা).
+    The client has shared their personal narrative about a dispute or grievance.
+    To help our human legal aid clinic prepare their formal complaint draft, we need ONE specific piece of missing information.
+
+    Context Provided:
+    - Client's Narrative / Story: {client_narrative}
+    - Issue Category: {category}
+    - Facts Already Known: {known_facts}
+    - Key Information Needed: {missing_field}
+
+    Instructions for Generating the Dynamic Follow-up Question:
+    1. DEEPLY CONTEXTUAL: Connect directly to a specific detail the client already mentioned (such as their children, their marriage timeline, their employer or sardar, the specific work or crop, their father's house, or the amount of money). Never ask a detached generic question.
+    2. EMPATHETIC & REASSURING: Sound like a compassionate human paralegal listening carefully. For example: "আপনি যেমন বললেন বাচ্চা নিয়ে বাবার বাড়ি আছেন...", "ধান কাটার কাজের কথা বললেন...", etc.
+    3. CONCISE: Exactly ONE or TWO short spoken sentences in plain everyday Bangla.
+    4. DOCUMENT & PROOF INQUIRY: If asking about documents (like কাবিননামা, স্লিপ, দলিল), gently ask where it is kept right now (e.g. "আপনার বা আপনার বাবার কাছে কি কাবিননামার কাগজটি রাখা আছে, নাকি স্বামীর কাছে রয়ে গেছে?").
+    5. DATE & TIME INQUIRY: If asking about marriage date or event date, allow everyday seasonal or relative anchors (e.g. "আনুমানিক কোন সালে বা কোন ঋতুর দিকে বিয়েটা হয়েছিল, মনে আছে?").
+    6. UNCLASSIFIABLE / VAGUE DISAMBIGUATION: If the category is ambiguous or facts are scarce, ask a contextual disambiguation question based on whatever words they spoke (e.g., whether it is dower/maintenance, wages, or land), rather than asking vague questions like "ঘটনার মূল কারণ কী?".
+    7. NEVER REPEAT: NEVER ask for information that the client already clearly stated in their narrative.
+
+  dynamic_solution: |
+    You are a senior legal aid specialist and empathetic advisor at BRAC Legal Aid in Bangladesh.
+    The client has shared their grievance, including answers to follow-up questions.
+    Your goal is to provide a customized, clear, empathetic, and legally grounded explanation ("আপনার আইনি অধিকার ও পথ") tailored specifically to their situation.
+
+    Context Provided:
+    - Client's Full Narrative & Follow-up Responses: {client_narrative}
+    - Issue Category: {category}
+    - Extracted Case Facts: {known_facts}
+    - Core Legal Principles & Guidelines: {legal_framework}
+
+    Instructions:
+    1. PERSONALIZED ASSESSMENT: Explicitly acknowledge what they experienced and the details they shared (including facts clarified in their follow-up answer, e.g. marriage duration, children, dower amount, wage claim, or evidence/document status). Speak directly to the client using respectful, warm Bangla (আপনি).
+    2. LEGAL RIGHTS & ENTITLEMENT: Clearly explain their rights under Bangladesh laws relevant to their case (e.g. দেনমোহর ও ভরণপোষণ আইনত আদায়যোগ্য অধিকার, যৌতুক দাবি করা দণ্ডনীয় অপরাধ, শ্রম আইন অনুযায়ী লিখিত চুক্তি ছাড়াও কাজের ভিত্তিতে মজুরি পাওনা ইত্যাদি).
+    3. ACTIONABLE ROADMAP (সম্ভাব্য আইনি পথ): Provide 3-4 concrete, numbered steps tailored to their specific circumstances and evidence (e.g. preserving proof/documents, participating in BRAC mediation/salish, visiting the clinic, or family court/labour court proceedings).
+    4. TONE: Warm, reassuring, empowering, and easy to understand for everyday citizens without confusing legalese.
+    5. NO HALLUCINATIONS: Stay strictly aligned with Bangladesh law and BRAC legal aid procedures.
+
+# =============================================================================
+# STAGE FALLBACK QUESTIONS (by category → stage)
+# =============================================================================
+stage_fallback_questions:
+  land_dispute:
+    cause: "জমিটি নিয়ে বিরোধের সূত্রপাত কীভাবে হয়েছিল এবং জমিটি বর্তমানে কার দখলে আছে?"
+    history: "জমির মূল রেজিস্ট্রি দলিল বা খতিয়ান কি আপনাদের কাছে সংরক্ষিত আছে?"
+    history_documents_for_court: "দেওয়ানি আদালতে মামলা দায়েরের জন্য জমির মূল রেজিস্ট্রি দলিল, পর্চা বা খতিয়ানের কপি কি আপনার কাছে প্রস্তুত আছে?"
+    impact: "জমিটি বেদখল বা বিরোধে থাকায় আপনাদের চাষাবাদ বা বসবাস করতে কী ধরণের সমস্যা বা ক্ষতি হচ্ছে?"
+    desired_solution: "এই জমি নিয়ে ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে কোনো সালিশ হয়েছিল কি, নাকি আপনারা সরাসরি দেওয়ানি আদালতে মামলা করতে চান?"
+    confirm_solution: "যেহেতু জমির মূল কাগজপত্র আপনার কাছে সংরক্ষিত নেই, সংশ্লিষ্ট সাব-রেজিস্ট্রি বা ভূমি অফিস থেকে দলিলের সার্টিফাইড নকল ও খতিয়ান সংগ্রহ করে দেওয়ানি আদালতে প্রতিকার চাওয়া সম্ভব। আপনি কি এই প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+    default: "জমিটির দখল ও বিরোধ সম্পর্কে বিস্তারিত জানালে সঠিক আইনি পরামর্শ দেওয়া সহজ হবে।"
+
+  family_dower_maintenance:
+    cause: "আপনার স্বামী যে খরচ বা ভরণপোষণ দেওয়া বন্ধ করেছেন, এই ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন বা কী কারণে উনি আলাদা থাকছেন?"
+    history: "আপনাদের বিয়ে আনুমানিক কত বছর আগে হয়েছিল এবং কাবিননামার কাগজটি কার কাছে আছে?"
+    history_documents_for_court: "পারিবারিক আদালতে মামলা দায়েরের জন্য বিয়ের কাবিননামা বা কাজী অফিসের নকল, এবং আপনার ও সন্তানের এনআইডি বা জন্মসনদ প্রয়োজন। এই কাগজপত্রগুলো কি বর্তমানে আপনার কাছে প্রস্তুত আছে?"
+    impact: "বাচ্চা নিয়ে বর্তমানে বাবার বাড়িতে দিনযাপন করতে আপনার কেমন আর্থিক কষ্ট বা টানাপোড়েন হচ্ছে?"
+    desired_solution: "আপনার আইনগত অধিকার ও দাবি আদায়ে আপনি কি স্থানীয় ইউনিয়ন পরিষদে সালিশের মাধ্যমে আপস চান, নাকি সরাসরি পারিবারিক আদালতে মামলা করতে চান?"
+    confirm_solution: "যেহেতু মূল কাবিননামাটি আপনার কাছে নেই, সংশ্লিষ্ট কাজী অফিস থেকে কাবিননামার সার্টিফাইড নকল সংগ্রহ করে অথবা বিয়ের প্রত্যক্ষদর্শী সাক্ষীদের তথ্যের ভিত্তিতে পারিবারিক আদালতে দেনমোহর ও ভরণপোষণের মামলা দায়ের করা সম্ভব। আপনি কি এই বিকল্প প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+    default: "ভরণপোষণ ও পারিবারিক বিরোধের বিষয়ে বিস্তারিত জানালে সঠিক পথরেখা তৈরি করা সম্ভব হবে।"
+
+  dowry:
+    cause: "আপনার স্বামী যে খরচ বা ভরণপোষণ দেওয়া বন্ধ করেছেন, এই ভরণপোষণ নিয়ে ঝামেলা হয়েছে কেন বা কী কারণে উনি আলাদা থাকছেন?"
+    history: "আপনাদের বিয়ে আনুমানিক কত বছর আগে হয়েছিল এবং কাবিননামার কাগজটি কার কাছে আছে?"
+    history_documents_for_court: "পারিবারিক আদালতে মামলা দায়েরের জন্য বিয়ের কাবিননামা বা কাজী অফিসের নকল, এবং আপনার ও সন্তানের এনআইডি বা জন্মসনদ প্রয়োজন। এই কাগজপত্রগুলো কি বর্তমানে আপনার কাছে প্রস্তুত আছে?"
+    impact: "বাচ্চা নিয়ে বর্তমানে বাবার বাড়িতে দিনযাপন করতে আপনার কেমন আর্থিক কষ্ট বা টানাপোড়েন হচ্ছে?"
+    desired_solution: "আপনার আইনগত অধিকার ও দাবি আদায়ে আপনি কি স্থানীয় ইউনিয়ন পরিষদে সালিশের মাধ্যমে আপস চান, নাকি সরাসরি পারিবারিক আদালতে মামলা করতে চান?"
+    confirm_solution: "যেহেতু মূল কাবিননামাটি আপনার কাছে নেই, সংশ্লিষ্ট কাজী অফিস থেকে কাবিননামার সার্টিফাইড নকল সংগ্রহ করে অথবা বিয়ের প্রত্যক্ষদর্শী সাক্ষীদের তথ্যের ভিত্তিতে পারিবারিক আদালতে দেনমোহর ও ভরণপোষণের মামলা দায়ের করা সম্ভব। আপনি কি এই বিকল্প প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+    default: "ভরণপোষণ ও পারিবারিক বিরোধের বিষয়ে বিস্তারিত জানালে সঠিক পথরেখা তৈরি করা সম্ভব হবে।"
+
+  unpaid_wages:
+    cause: "মালিক বা ঠিকাদার কী কারণে আপনার মজুরি বকেয়া রেখেছেন বা কোনো বিরোধ হয়েছিল কি না?"
+    history: "আপনি কতদিন সেখানে কাজ করেছেন এবং কাজের দৈনিক হাজিরা খাতা বা স্লিপের কোনো প্রমাণ আছে কি না?"
+    history_documents_for_court: "শ্রম আদালতে মামলা বা লিগ্যাল এইডে আইনি পদক্ষেপ নেওয়ার জন্য সহকর্মী বা স্থানীয় প্রত্যক্ষদর্শী সাক্ষীদের নাম-ঠিকানা প্রস্তুত আছে কি?"
+    impact: "এই কাজের বিপরীতে মালিক বা ঠিকাদারের কাছে আপনার সর্বমোট কত টাকা বকেয়া মজুরি পাওনা রয়েছে?"
+    desired_solution: "আপনি কি সর্দার বা স্থানীয় সালিশে দেনদরবার করতে চান, নাকি শ্রম আদালতে বা লিগ্যাল এইডে আইনি প্রতিকার চান?"
+    confirm_solution: "যেহেতু কাজের কোনো লিখিত চুক্তিপত্র বা হাজিরা খাতা নেই, শ্রম আইন অনুযায়ী মৌখিক চুক্তি এবং প্রত্যক্ষদর্শী সাক্ষীদের সাক্ষ্যের ভিত্তিতে শ্রম আদালতে অথবা ইউনিয়ন পরিষদের মাধ্যমে বকেয়া মজুরি আদায়ের লিখিত অভিযোগ দায়ের করা সম্ভব। আপনি কি এই প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+    default: "বকেয়া মজুরির বিবরণ জানালে শ্রম অধিকার অনুযায়ী সহায়তার ব্যবস্থা করা যাবে।"
+
+  general:
+    cause: "এই বিরোধ বা সমস্যার সূত্রপাত কীভাবে হয়েছিল এবং মূল কারণ কী?"
+    history: "এই বিষয়ে কোনো লিখিত প্রমাণ, কাগজপত্র বা প্রত্যক্ষদর্শী সাক্ষী কি আপনার কাছে আছে?"
+    history_documents_for_court: "আইনি পদক্ষেপ বা মামলা করার জন্য প্রয়োজনীয় কাগজপত্র বা প্রত্যক্ষদর্শী সাক্ষীদের তালিকা কি প্রস্তুত আছে?"
+    impact: "এই সমস্যার কারণে বর্তমানে আপনার কী ধরণের ক্ষতি বা অসুবিধা হচ্ছে?"
+    desired_solution: "আপনি কি স্থানীয় ইউনিয়ন পরিষদে সালিশের মাধ্যমে সমাধান চান, নাকি সরাসরি আদালতে আইনি প্রতিকার চান?"
+    confirm_solution: "যেহেতু আপনার কাছে পর্যাপ্ত লিখিত কাগজপত্র নেই, তবে প্রত্যক্ষদর্শী সাক্ষীদের তথ্য ও বিকল্প প্রমাণের ভিত্তিতে আইনি পদক্ষেপ নেওয়া সম্ভব। আপনি কি এই প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+    default: "আপনার সমস্যার সুষ্ঠু সমাধানের জন্য এই বিষয়ে বিস্তারিত জানাবেন কি?"
+
+# =============================================================================
+# SUGGESTED REPLIES (by topic → category)
+# =============================================================================
+suggested_replies:
+  action_selection:
+    default:
+      - "দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ"
+      - "বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ"
+      - "জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ"
+      - "যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ"
+
+  required_docs_inquiry:
+    family_dower_maintenance:
+      - "হ্যাঁ, সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে"
+      - "কিছু কাগজপত্র আছে, তবে মূল কাবিননামা নেই"
+      - "কোনো লিখিত কাগজপত্র বা প্রমাণ নেই"
+    unpaid_wages:
+      - "হ্যাঁ, সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে"
+      - "হাজিরা বা চুক্তি নেই, তবে সহকর্মী ও সাক্ষী আছেন"
+      - "কোনো লিখিত প্রমাণ বা স্লিপ নেই, সবই মৌখিক"
+    land_dispute:
+      - "হ্যাঁ, সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে"
+      - "খতিয়ান বা দাখিলা আছে, কিন্তু মূল দলিল প্রতিপক্ষের কাছে"
+      - "আমাদের কাছে জমির কোনো কাগজপত্র বা দলিল নেই"
+    dowry:
+      - "হ্যাঁ, সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে"
+      - "কাবিন বা চিকিৎসা সনদ নেই, তবে ঘটনার সাক্ষী আছেন"
+      - "কোনো লিখিত কাগজপত্র বা মেডিকেল প্রমাণ নেই"
+    default:
+      - "হ্যাঁ, সমস্ত প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি প্রস্তুত আছে"
+      - "কিছু কাগজপত্র আছে, তবে সব নেই"
+      - "কোনো লিখিত কাগজপত্র বা প্রমাণ নেই"
+
+  confirm_process:
+    default:
+      - "হ্যাঁ, প্রক্রিয়াটি সম্পন্ন করতে চাই"
+      - "না, এখন নয় / পরে বিবেচনা করব"
+
+  partial_docs_action:
+    default:
+      - "হ্যাঁ, বিদ্যমান কাগজের ভিত্তিতেই অগ্রসর হতে চাই"
+      - "বিকল্প কোনো উপায় আছে কি?"
+
+  desired_solution:
+    family_dower_maintenance:
+      - "পারিবারিক আদালতে মামলা করে দেনমোহর ও বকেয়া ভরণপোষণ আদায় করতে চাই"
+      - "স্থানীয় ইউনিয়ন পরিষদে চেয়ারম্যান বা মেম্বারের মাধ্যমে শান্তিপূর্ণ সালিশ চাই"
+      - "সন্তানের নিয়মিত মাসিক খরচ ও দেনমোহরের বকেয়া টাকা পরিশোধ করতে হবে"
+      - "প্রথমে আইনজীবীর মাধ্যমে আইনি নোটিশ পাঠাতে চাই"
+    dowry:
+      - "পারিবারিক আদালতে মামলা করে দেনমোহর ও বকেয়া ভরণপোষণ আদায় করতে চাই"
+      - "স্থানীয় ইউনিয়ন পরিষদে চেয়ারম্যান বা মেম্বারের মাধ্যমে শান্তিপূর্ণ সালিশ চাই"
+      - "সন্তানের নিয়মিত মাসিক খরচ ও দেনমোহরের বকেয়া টাকা পরিশোধ করতে হবে"
+      - "প্রথমে আইনজীবীর মাধ্যমে আইনি নোটিশ পাঠাতে চাই"
+    land_dispute:
+      - "দেওয়ানি আদালতে মামলা করে জমির দখল ও স্বত্ব উদ্ধার করতে চাই"
+      - "ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল কিন্তু সমাধান হয়নি"
+      - "প্রথমে স্থানীয় মুরুব্বিদের মাধ্যমে আপস-মীমাংসার চেষ্টা করতে চাই"
+      - "জমিতে যাতে কোনো স্থাপনা না করে সেজন্য আদালতের নিষেধাজ্ঞা চাই"
+    unpaid_wages:
+      - "শ্রম আদালতে বা লিগ্যাল এইডে মামলা করে পুরো বকেয়া মজুরি আদায় করতে চাই"
+      - "সর্দার বা স্থানীয় মেম্বারের উপস্থিতিতে দেনদরবার করে টাকা পেতে চাই"
+      - "মালিকের বিরুদ্ধে থানায় বা শ্রম পরিদপ্তরে লিখিত অভিযোগ দিতে চাই"
+      - "কোনো ঝামেলা ছাড়াই বকেয়া টাকা পরিশোধ করে দিলে মিটে যাবে"
+    default:
+      - "আদালতে মামলা করে আইনি প্রতিকার পেতে চাই"
+      - "স্থানীয় সালিশে বসে আপস-মীমাংসা করতে চাই"
+      - "আইনি নোটিশ পাঠিয়ে সমাধানের সুযোগ দিতে চাই"
+      - "লিগ্যাল এইড ক্লিনিকের মাধ্যমে পরামর্শ নিতে চাই"
+
+  cause:
+    family_dower_maintenance:
+      - "যৌতুকের দাবিতে ঝগড়া করে খরচ দেওয়া বন্ধ করেছে"
+      - "স্বামী দ্বিতীয় বিয়ে করে আমাদের ছেড়ে চলে গেছে"
+      - "শ্বশুরবাড়ির অত্যাচার ও বনিবনা না হওয়ায় আলাদা হয়ে গেছে"
+      - "বিনা কারণে হঠাৎ ঝগড়া করে বাড়ি থেকে তাড়িয়ে দিয়েছে"
+    dowry:
+      - "যৌতুকের দাবিতে ঝগড়া করে খরচ দেওয়া বন্ধ করেছে"
+      - "স্বামী দ্বিতীয় বিয়ে করে আমাদের ছেড়ে চলে গেছে"
+      - "শ্বশুরবাড়ির অত্যাচার ও বনিবনা না হওয়ায় আলাদা হয়ে গেছে"
+      - "বিনা কারণে হঠাৎ ঝগড়া করে বাড়ি থেকে তাড়িয়ে দিয়েছে"
+    unpaid_wages:
+      - "কাজ শেষ করার পরও নানা অজুহাতে ঘোরাচ্ছে ও টালবাহানা করছে"
+      - "মালিকের কাছ থেকে বিল পায়নি বলে ঠিকাদার টাকা দিচ্ছে না"
+      - "বকেয়া মজুরি চাওয়ায় উল্টো কাজ থেকে ছাঁটাই/বের করে দিয়েছে"
+      - "কোনো বিরোধ হয়নি, কাজ শেষে কোনো কারণ ছাড়াই বেতন আটকে রেখেছে"
+    land_dispute:
+      - "প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে নিয়েছে"
+      - "পৈতৃক সম্পত্তির ওয়ারিশ ও ন্যায্য অংশ দিতে অস্বীকার করছে"
+      - "জমির সীমানা কেটে জোর করে দখলের চেষ্টা করছে"
+      - "জাল দলিল তৈরি করে জমির মালিকানা দাবি করছে"
+
+  kabinnama:
+    court_context:
+      - "হ্যাঁ, কাবিননামা ও প্রয়োজনীয় সব কাগজ আমার কাছে প্রস্তুত আছে"
+      - "কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি"
+      - "রেজিস্ট্রি হয়েছিল, কাজী অফিসে কাবিনের নকল পাওয়া যাবে"
+      - "আমাদের কোনো লিখিত কাবিননামা বা বিয়ের কাগজ নেই"
+    default:
+      - "কাবিননামার কাগজটি বাবার বাড়িতে রাখা আছে"
+      - "কাবিননামা স্বামীর কাছে রেখে দিয়েছে, আমাকে দেয়নি"
+      - "রেজিস্ট্রি হয়েছিল, কাজী অফিসে কাবিনের নকল পাওয়া যাবে"
+      - "আমাদের কোনো লিখিত কাবিননামা বা বিয়ের কাগজ নেই"
+
+  dower:
+    default:
+      - "দেনমোহর ধার্য করা হয়েছিল ১ লাখ টাকা"
+      - "দেনমোহর ধার্য করা হয়েছিল ২ লাখ টাকা"
+      - "দেনমোহর ধার্য করা হয়েছিল ৫ লাখ টাকা"
+      - "কাবিননামার কাগজ দেখে সঠিক টাকার পরিমাণ বলতে পারব"
+
+  marriage_date:
+    default:
+      - "আনুমানিক ১ থেকে ২ বছর আগে আমাদের বিয়ে হয়েছে"
+      - "আনুমানিক ৪ থেকে ৫ বছর আগে বিয়ে হয়েছিল"
+      - "১০ বছরেরও বেশি সময় আগে আমাদের বিয়ে হয়েছে"
+      - "সঠিক সন মনে নেই, তবে কয়েক বছর হয়ে গেছে"
+
+  wages:
+    default:
+      - "১ মাসের পুরো মজুরি বা বেতন বকেয়া রয়েছে"
+      - "প্রায় ২ থেকে ৩ মাসের বেতন এখনও বকেয়া আছে"
+      - "হিসাব অনুযায়ী প্রায় ৫ থেকে ১০ হাজার টাকা পাওনা আছে"
+      - "কাজের চুক্তি অনুযায়ী এখনো পুরো টাকা পরিশোধ করা হয়নি"
+
+  work_period:
+    default:
+      - "গত ১ মাস ধরে আমি এই কাজটি করেছি"
+      - "টানা ৬ মাস ধরে সেখানে নিয়মিত কাজ করেছি"
+      - "১ বছরেরও বেশি সময় ধরে সেখানে কাজ করেছি"
+      - "১০ থেকে ১৫ দিনের নির্দিষ্ট চুক্তিভিত্তিক কাজ ছিল"
+
+  evidence:
+    default:
+      - "কাজের দৈনিক হাজিরা খাতা বা স্লিপের প্রমাণ রয়েছে"
+      - "কাজের জায়গায় সহকর্মী ও সর্দার সরাসরি সাক্ষী আছেন"
+      - "শুধুমাত্র মৌখিক চুক্তি হয়েছিল, লিখিত কোনো কাগজ নেই"
+      - "মালিক ও ঠিকাদারের পূর্ণ নাম এবং ফোন নম্বর জানা আছে"
+
+  land_possession:
+    default:
+      - "জমিটি বর্তমানে আমাদের দখলেই রয়েছে"
+      - "প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে"
+      - "পৈতৃক ওয়ারিশ ও অংশ বণ্টন নিয়ে বিরোধ চলছে"
+      - "জমির সীমানা নির্ধারণ ও বেদখল নিয়ে বিরোধ তৈরি হয়েছে"
+
+  land_deeds:
+    default:
+      - "জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে"
+      - "জমির পর্চা ও খতিয়ানের সত্যায়িত কপি আছে"
+      - "জমির মূল কাগজপত্র বা দলিল প্রতিপক্ষের দখলে আটকে আছে"
+      - "আমাদের কাছে বর্তমানে জমি সংক্রান্ত কোনো কাগজপত্র সংরক্ষিত নেই"
+
+  land_salish:
+    default:
+      - "ইউনিয়ন পরিষদে মেম্বার বা চেয়ারম্যানের কাছে সালিশ হয়েছিল কিন্তু সমাধান হয়নি"
+      - "পারিবারিক শরিক ও আত্মীয়দের সাথে জমি নিয়ে বিরোধ"
+      - "বাইরের প্রভাবশালী দখলদারদের সাথে বিরোধ"
+      - "স্থানীয়ভাবে এখনো কোনো সালিশ বা মীমাংসার বৈঠক হয়নি"
+
+  land_general:
+    default:
+      - "জমিটি বর্তমানে আমাদের দখলেই রয়েছে"
+      - "জমির মূল রেজিস্ট্রি দলিল আমাদের কাছে সংরক্ষিত আছে"
+      - "প্রতিপক্ষ জোরপূর্বক জমিটি অবৈধভাবে দখল করে রেখেছে"
+      - "স্থানীয়ভাবে এখনো কোনো সালিশ বা মীমাংসার বৈঠক হয়নি"
+
+  children:
+    default:
+      - "হ্যাঁ, আমাদের ১টি সন্তান আছে এবং সে আমার কাছেই থাকে"
+      - "হ্যাঁ, আমাদের ২টি সন্তান আছে এবং তাদের দেখাশোনা আমি করছি"
+      - "না, আমাদের কোনো সন্তান নেই"
+      - "স্বামী সন্তান বা আমার কারও কোনো ভরণপোষণ বা খরচ দেয় না"
+
+  disambiguation:
+    default:
+      - "পারিবারিক দেনমোহর বা ভরণপোষণ"
+      - "বকেয়া মজুরি বা শ্রমিকের পাওনা"
+      - "জমিজমা সংক্রান্ত বিরোধ"
+      - "যৌতুক ও নির্যাতন সংক্রান্ত"
+
+  confirm_solution:
+    default:
+      - "হ্যাঁ, আমি সম্মত আছি"
+      - "হ্যাঁ, এভাবেই সমাধান চাই"
+      - "বিকল্প কোনো উপায় আছে কি?"
+
+  confirmation:
+    default:
+      - "হ্যাঁ, এই বিষয়ে প্রমাণ ও তথ্য আছে"
+      - "না, এই ধরনের কোনো প্রমাণ বা তথ্য নেই"
+      - "হ্যাঁ, ঘটনাটি এইভাবেই হয়েছিল"
+      - "কিছু অংশ দেওয়া হয়েছিল, তবে পুরোটা এখনো বাকি আছে"
+
+  general_fallback:
+    default:
+      - "হ্যাঁ, এই বিষয়ে প্রয়োজনীয় সব তথ্য আমার কাছে আছে"
+      - "কোনো লিখিত প্রমাণ বা কাগজপত্র নেই, সবই মৌখিক"
+      - "সব আলোচনা ও চুক্তি মৌখিকভাবে হয়েছিল"
+      - "এই পরিস্থিতিতে কীভাবে অগ্রসর হব সেই আইনি পরামর্শ চাই"
+
+# =============================================================================
+# FALLBACK QUESTIONS (document_nei / mone_nei scenarios)
+# =============================================================================
+fallback_questions:
+  document_nei:
+    family_dower_maintenance:
+      question: "লিখিত কাবিননামা বা কাগজ সাথে না থাকলেও কোনো অসুবিধা নেই, আইন অনুযায়ী আপনার দেনমোহর ও ভরণপোষণের অধিকার সম্পূর্ণ সংরক্ষিত। বিয়ের সময় কি কোনো কাজী উপস্থিত ছিলেন, অথবা বিয়ের কোনো প্রত্যক্ষদর্শী সাক্ষী বা কাজী অফিসের এলাকা কি জানা আছে?"
+      chips:
+        - "কাজী অফিসের নাম ও এলাকা জানা আছে"
+        - "বিয়ের প্রত্যক্ষদর্শী সাক্ষী আছেন"
+        - "পরিবার ও আত্মীয়রা বিয়েতে ছিলেন"
+        - "কোনো কাজী বা সাক্ষী নেই"
+    dowry:
+      question: "লিখিত কাবিননামা বা কাগজ সাথে না থাকলেও কোনো অসুবিধা নেই, আইন অনুযায়ী আপনার দেনমোহর ও ভরণপোষণের অধিকার সম্পূর্ণ সংরক্ষিত। বিয়ের সময় কি কোনো কাজী উপস্থিত ছিলেন, অথবা বিয়ের কোনো প্রত্যক্ষদর্শী সাক্ষী বা কাজী অফিসের এলাকা কি জানা আছে?"
+      chips:
+        - "কাজী অফিসের নাম ও এলাকা জানা আছে"
+        - "বিয়ের প্রত্যক্ষদর্শী সাক্ষী আছেন"
+        - "পরিবার ও আত্মীয়রা বিয়েতে ছিলেন"
+        - "কোনো কাজী বা সাক্ষী নেই"
+    unpaid_wages:
+      question: "কাজের লিখিত চুক্তি বা স্লিপ না থাকলেও শ্রম আইন অনুযায়ী আপনি বকেয়া পাওয়ার অধিকারী। কাজের জায়গায় কি কোনো সহকর্মী, সর্দার বা স্থানীয় কেউ আছেন যিনি আপনার কাজের সাক্ষী দিতে পারবেন?"
+      chips:
+        - "সহকর্মী ও সর্দার সাক্ষী আছেন"
+        - "গ্রামের মেম্বার ও লোকজন জানেন"
+        - "মালিকের নাম ও ফোন নম্বর আছে"
+        - "সরাসরি কোনো সাক্ষী নেই"
+    land_dispute:
+      question: "জমির মূল দলিল আপনার কাছে সংরক্ষিত না থাকলেও সমস্যা নেই। জমিটি কি বর্তমানে আপনাদের দখলে আছে অথবা স্থানীয় ইউনিয়ন মেম্বার বা প্রতিবেশীরা কি দখলের বিষয়ে জানেন?"
+      chips:
+        - "জমিটি আমাদের দখলে আছে"
+        - "খাজনার দাখিলা বা রশিদ আছে"
+        - "মেম্বার ও প্রতিবেশীরা জানেন"
+        - "কোনো দখল বা কাগজ নেই"
+    default:
+      question: "লিখিত কোনো কাগজপত্র না থাকলেও অসুবিধা নেই। এই ঘটনার বিষয়ে কি কোনো মৌখিক সাক্ষী বা স্থানীয় মেম্বার/গণ্যমান্য ব্যক্তি অবগত আছেন?"
+      chips:
+        - "স্থানীয় লোকজন ও মেম্বার জানেন"
+        - "পরিবারের সদস্যরা সাক্ষী আছেন"
+        - "মৌখিকভাবে সিদ্ধান্ত হয়েছিল"
+        - "কোনো মৌখিক সাক্ষী নেই"
+
+  mone_nei:
+    date:
+      question: "নির্দিষ্ট সন বা তারিখ মনে না থাকলেও কোনো সমস্যা নেই। আনুমানিক কত বছর আগে ঘটনাটি ঘটেছিল (যেমন ২-৩ বছর নাকি ৫ বছর আগে), অথবা তখনকার কোনো বিশেষ স্মৃতি মনে পড়ে?"
+      chips:
+        - "আনুমানিক ১ থেকে ২ বছর আগে"
+        - "আনুমানিক ৩ থেকে ৫ বছর আগে"
+        - "১০ বছরের বেশি সময় আগে"
+        - "সঠিক সময় মনে করা যাচ্ছে না"
+    money:
+      question: "সঠিক টাকার অঙ্ক নির্দিষ্ট মনে না থাকলেও কোনো চিন্তা করবেন না। আনুমানিক বা কাছাকাছি কোনো ধারণা কি আছে (যেমন ৫০ হাজার, ১ লাখ নাকি তার বেশি), অথবা পরিবারের কেউ কি জানেন?"
+      chips:
+        - "আনুমানিক ৫০ হাজার থেকে ১ লাখ"
+        - "আনুমানিক ১ থেকে ২ লাখ টাকা"
+        - "পরিবারের মুরব্বিরা সঠিক জানেন"
+        - "একদম নির্দিষ্ট মনে নেই"
+    general:
+      question: "এই তথ্যটি নির্দিষ্টভাবে মনে না থাকলেও কোনো সমস্যা নেই। আপনার পরিবারের কেউ, আত্মীয়স্বজন বা কোনো প্রত্যক্ষদর্শী কি এ বিষয়ে প্রয়োজনীয় তথ্য দিয়ে সাহায্য করতে পারবেন?"
+      chips:
+        - "বাবার বাড়ির লোকজন তথ্য দিতে পারবেন"
+        - "স্থানীয় মেম্বার বিষয়টি জানেন"
+        - "আত্মীয়রা খোঁজ নিয়ে জানাতে পারবেন"
+        - "কারও কাছেই তথ্য নেই"
+
+# =============================================================================
+# ACTION CHECK & REQUIRED DOCUMENTS WORKFLOW (ALL CATEGORIES)
+# =============================================================================
+action_workflow:
+  initial_question: "আসসালামু আলাইকুম। অধিকার (Odhikar) এআই প্যারালিগ্যাল সেবায় আপনাকে স্বাগতম। আপনি কী ধরনের আইনি পদক্ষেপ বা প্রতিকার যাচাই করতে চান?"
+  action_chips:
+    - "দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ"
+    - "বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ"
+    - "জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ"
+    - "যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ"
+
+  categories:
+    family_dower_maintenance:
+      action_name: "দেনমোহর ও ভরণপোষণ আদায়ের পদক্ষেপ"
+      required_docs:
+        - "বিয়ের মূল কাবিননামা বা কাজী অফিসের রেজিস্ট্রি নকল"
+        - "দেনমোহর ও বকেয়া ভরণপোষণের দাবির হিসাব"
+        - "আবেদনকারী ও সন্তানের জাতীয় পরিচয়পত্র (NID) বা জন্মসনদ"
+        - "বিয়ের প্রত্যক্ষদর্শী সাক্ষী বা কাজী অফিসের তথ্য"
+      docs_question: "পারিবারিক দেনমোহর ও ভরণপোষণ আদায়ের কার্যকর আইনি পদক্ষেপ নেওয়ার জন্য প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি:\n১. বিয়ের মূল কাবিননামা বা কাজী অফিসের রেজিস্ট্রি নকল\n২. দেনমোহর ও বকেয়া ভরণপোষণের দাবির সুনির্দিষ্ট হিসাব\n৩. আপনার ও সন্তানের জাতীয় পরিচয়পত্র (NID) বা জন্মসনদ\n৪. বিয়ের প্রত্যক্ষদর্শী সাক্ষী বা কাজী অফিসের তথ্য\n\nআপনার কাছে কি এই সমস্ত কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে?"
+      all_docs_confirm_question: "আপনার প্রয়োজনীয় সকল কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে। পারিবারিক আদালত অধ্যাদেশ, ১৯৮৫ অনুযায়ী দেনমোহর ও ভরণপোষণ আদায়ের আইনি প্রক্রিয়াটি কি আপনি সম্পন্ন করতে চান?"
+      partial_docs_action: "📋 আপনার বিদ্যমান কাগজপত্রের ভিত্তিতে করণীয় আইনি পদক্ষেপ:\n১. মূল কাবিননামা না থাকলেও কাজী অফিস থেকে বিয়ের রেজিস্ট্রি নকল তুলে বা সাক্ষীদের তথ্যের ভিত্তিতে পারিবারিক আদালত অধ্যাদেশ, ১৯৮৫-এর অধীনে দেনমোহর ও খোরপোষের নিয়মিত মামলা দায়ের করা সম্ভব।\n২. দেনমোহর ও খোরপোষের বকেয়া হিসাব এবং এনআইডি সংযুক্ত করে আইনজীবীর মাধ্যমে লিগ্যাল নোটিশ প্রদান করা যাবে।\n\nআপনি কি বিদ্যমান তথ্যের ভিত্তিতে এই আইনি প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+      no_docs_continuation: "কোনো লিখিত কাগজপত্র বা কাবিননামা সাথে না থাকলেও আপনার আইনি প্রক্রিয়া অব্যাহত থাকবে। আইন অনুযায়ী প্রত্যক্ষদর্শী সাক্ষীদের সাক্ষ্য এবং মৌখিক প্রমাণের ভিত্তিতেও দেনমোহর ও ভরণপোষণের অধিকার সম্পূর্ণ সংরক্ষিত। আপনার বিয়ের সময় উপস্থিত কোনো আত্মীয়, কাজী বা প্রত্যক্ষদর্শী সাক্ষী কি আছেন যারা এ বিষয়ে তথ্য দিতে পারবেন?"
+
+    unpaid_wages:
+      action_name: "বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের পদক্ষেপ"
+      required_docs:
+        - "কাজের দৈনিক হাজিরা খাতা বা মজুরি স্লিপ"
+        - "কাজের নিয়োগপত্র, আইডি কার্ড বা লিখিত চুক্তি (যদি থাকে)"
+        - "বকেয়া মজুরির মোট দিন/মাসের সঠিক হিসাব"
+        - "কাজের সহকর্মী, সর্দার বা প্রত্যক্ষদর্শী সাক্ষীদের তথ্য"
+      docs_question: "বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের কার্যকর আইনি পদক্ষেপ নেওয়ার জন্য প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি:\n১. কাজের দৈনিক হাজিরা খাতা বা বেতন স্লিপ\n২. কাজের চুক্তিপত্র বা নিয়োগপত্র/আইডি কার্ড (যদি থাকে)\n৩. বকেয়া মজুরির সুনির্দিষ্ট হিসাব (মোট কত টাকা পাওনা)\n৪. কাজের সহকর্মী, সর্দার বা প্রত্যক্ষদর্শী সাক্ষীদের তালিকা\n\nআপনার কাছে কি এই সমস্ত কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে?"
+      all_docs_confirm_question: "আপনার প্রয়োজনীয় সকল কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে। বাংলাদেশ শ্রম আইন, ২০০৬ অনুযায়ী বকেয়া মজুরি ও ক্ষতিপূরণ আদায়ের আইনি প্রক্রিয়াটি কি আপনি সম্পন্ন করতে চান?"
+      partial_docs_action: "📋 আপনার বিদ্যমান কাগজপত্রের ভিত্তিতে করণীয় আইনি পদক্ষেপ:\n১. লিখিত চুক্তিপত্র না থাকলেও শ্রম আইন অনুযায়ী সহকর্মী ও সর্দারের প্রত্যক্ষদর্শী সাক্ষ্যের ভিত্তিতে শ্রম আদালতে অথবা কলকারখানা পরিদর্শন অধিদপ্তরে আনুষ্ঠানিক অভিযোগ দাখিল করা যায়।\n২. লিগ্যাল এইডের মাধ্যমে মালিকপক্ষকে সরাসরি লিখিত দাবি নোটিশ প্রেরণ করে বকেয়া টাকা আদায়ের উদ্যোগ গ্রহণ করা সম্ভব।\n\nআপনি কি বিদ্যমান তথ্যের ভিত্তিতে এই আইনি প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+      no_docs_continuation: "কাজের কোনো লিখিত চুক্তি বা স্লিপ না থাকলেও শ্রমিকের পাওনা আদায়ে প্রক্রিয়া অব্যাহত থাকবে। শ্রম আইন অনুযায়ী মৌখিক চুক্তি এবং কাজের প্রত্যক্ষদর্শী সাক্ষ্যের ভিত্তিতেই বকেয়া মজুরির আইনি প্রতিকার পাওয়া যায়। কাজের জায়গায় কি কোনো সহকর্মী বা স্থানীয় ব্যক্তি আছেন যিনি আপনার কাজের বিষয়ে সাক্ষ্য দিতে পারবেন?"
+
+    land_dispute:
+      action_name: "জমিজমা দখল উদ্ধার বা স্বত্ব সুরক্ষার পদক্ষেপ"
+      required_docs:
+        - "জমির মূল রেজিস্ট্রি দলিল বা বায়া দলিল"
+        - "হালনাগাদ খতিয়ান/পরচা (CS/SA/RS) ও নামজারি (খারিজ)"
+        - "ভূমি উন্নয়ন কর (খাজনা) পরিশোধের দাখিলা/রশিদ"
+        - "জমির ভোগদখলের প্রমাণ বা প্রত্যক্ষদর্শী সাক্ষীদের তথ্য"
+      docs_question: "জমিজমা সংক্রান্ত বিরোধ বা দখল উদ্ধারের কার্যকর আইনি পদক্ষেপ নেওয়ার জন্য প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি:\n১. জমির মূল রেজিস্ট্রি দলিল বা বায়া দলিল\n২. হালনাগাদ পরচা বা খতিয়ান (CS/SA/RS) ও নামজারি (খারিজ)\n৩. ভূমি উন্নয়ন কর (খাজনা) পরিশোধের দাখিলা/রশিদ\n৪. জমির ভোগদখলের প্রমাণ বা প্রত্যক্ষদর্শী সাক্ষীদের তথ্য\n\nআপনার কাছে কি এই সমস্ত কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে?"
+      all_docs_confirm_question: "আপনার প্রয়োজনীয় সকল কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে। দেওয়ানি আদালতে স্বত্ব সাব্যস্তপূর্বক দখল উদ্ধার ও নিষেধাজ্ঞার আইনি প্রক্রিয়াটি কি আপনি সম্পন্ন করতে চান?"
+      partial_docs_action: "📋 আপনার বিদ্যমান কাগজপত্রের ভিত্তিতে করণীয় আইনি পদক্ষেপ:\n১. মূল দলিল প্রতিপক্ষের কাছে বা নিখোঁজ হলেও সাব-রেজিস্ট্রি অফিস থেকে দলিলের সার্টিফাইড নকল তুলে দেওয়ানি আদালতে মামলা দায়ের করা সম্ভব।\n২. হালনাগাদ পরচা ও খাজনার দাখিলার ভিত্তিতে সহকারী কমিশনার (ভূমি) অফিসে রেকর্ড সংশোধন এবং শান্তিভঙ্গ রোধে ফৌজদারি কার্যবিধির ১৪৫ ধারায় আবেদন করা যায়।\n\nআপনি কি বিদ্যমান তথ্যের ভিত্তিতে এই আইনি প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+      no_docs_continuation: "জমির মূল দলিল আপনার হাতে না থাকলেও আপনার আইনি প্রক্রিয়া অব্যাহত থাকবে। স্থানীয় ভূমি অফিস থেকে রেকর্ড অনুসন্ধান এবং প্রত্যক্ষদর্শীদের সাক্ষ্যের মাধ্যমে দখল প্রমাণের পথ রয়েছে। জমিটি বর্তমানে কার দখলে রয়েছে এবং স্থানীয় মেম্বার বা প্রতিবেশীরা কি দখলের বিষয়ে অবগত আছেন?"
+
+    dowry:
+      action_name: "যৌতুক ও পারিবারিক নির্যাতন প্রতিরোধে পদক্ষেপ"
+      required_docs:
+        - "বিয়ের কাবিননামা বা বিয়ের লিখিত প্রমাণ"
+        - "যৌতুক দাবির প্রত্যক্ষদর্শী সাক্ষীদের নাম ও তথ্য"
+        - "শারীরিক নির্যাতনের চিকিৎসা ব্যবস্থাপত্র বা মেডিকেল সনদ"
+        - "থানায় পূর্বে করা জিডি বা অভিযোগের অনুলিপি (যদি থাকে)"
+      docs_question: "যৌতুক ও নির্যাতন প্রতিরোধে আইনি পদক্ষেপ নেওয়ার জন্য প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি:\n১. বিয়ের মূল কাবিননামা বা বিয়ের প্রমাণ\n২. যৌতুক দাবির ঘটনার প্রত্যক্ষদর্শী সাক্ষীদের তথ্য\n৩. নির্যাতনের চিকিৎসার ডাক্তারি ব্যবস্থাপত্র (প্রেসক্রিপশন/সার্টিফিকেট)\n৪. থানায় জিডি বা অভিযোগের অনুলিপি (যদি থাকে)\n\nআপনার কাছে কি এই সমস্ত কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে?"
+      all_docs_confirm_question: "আপনার প্রয়োজনীয় সকল কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে। যৌতুক নিরোধ আইন, ২০১৮ এবং পারিবারিক সহিংসতা প্রতিরোধ ও সুরক্ষা আইনের অধীনে আইনি প্রক্রিয়াটি কি আপনি সম্পন্ন করতে চান?"
+      partial_docs_action: "📋 আপনার বিদ্যমান কাগজপত্রের ভিত্তিতে গৃহীত আইনি পদক্ষেপ:\n১. ডাক্তারি কাগজ বা কাবিননামা সাথে না থাকলেও সাক্ষীদের বর্ণনার ভিত্তিতে পারিবারিক সহিংসতা প্রতিরোধ ও সুরক্ষা আইনে অভিযোগ বা থানায় সাধারণ ডায়েরি (GD) করা সম্ভব।\n২. কাজী অফিস থেকে বিয়ের নকল উত্তোলন এবং সালিশি বোর্ডের মাধ্যমে জরুরি ভরণপোষণ আদায়ের উদ্যোগ নেওয়া যায়।\n\nআপনি কি বিদ্যমান তথ্যের ভিত্তিতে এই আইনি প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+      no_docs_continuation: "কোনো লিখিত কাগজপত্র সাথে না থাকলেও আপনার আইনি প্রক্রিয়া অব্যাহত থাকবে। নির্যাতনের বিষয়ে প্রত্যক্ষদর্শী সাক্ষী বা পরিবারের সদস্যদের তথ্যের ভিত্তিতে আইনি সুরক্ষা ও প্রতিকার পাওয়ার অধিকার আপনার রয়েছে। ঘটনার সময় কি পরিবারের কেউ বা কোনো প্রতিবেশী উপস্থিত ছিলেন?"
+
+    general:
+      action_name: "সাধারণ দেওয়ানি বা আইনি প্রতিকারের পদক্ষেপ"
+      required_docs:
+        - "লিখিত চুক্তিপত্র, লেনদেনের রসিদ বা নথিপত্র"
+        - "ঘটনার প্রত্যক্ষদর্শী সাক্ষীদের তালিকা"
+        - "থানায় সাধারণ ডায়েরি (GD) বা অভিযোগের অনুলিপি"
+        - "জাতীয় পরিচয়পত্র (NID)"
+      docs_question: "কার্যকর আইনি পদক্ষেপ নেওয়ার জন্য প্রয়োজনীয় কাগজপত্র ও প্রমাণাদি:\n১. লিখিত চুক্তিপত্র, লেনদেনের রসিদ বা নথিপত্র\n২. ঘটনার প্রত্যক্ষদর্শী সাক্ষীদের তালিকা\n৩. থানায় সাধারণ ডায়েরি (GD) বা অভিযোগের অনুলিপি (যদি থাকে)\n৪. জাতীয় পরিচয়পত্র (NID)\n\nআপনার কাছে কি এই সমস্ত কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে?"
+      all_docs_confirm_question: "আপনার প্রয়োজনীয় সকল কাগজপত্র ও প্রমাণাদি প্রস্তুত রয়েছে। প্রচলিত আইনের অধীনে আনুষ্ঠানিক আইনি প্রক্রিয়াটি কি আপনি সম্পন্ন করতে চান?"
+      partial_docs_action: "📋 আপনার বিদ্যমান কাগজপত্রের ভিত্তিতে গৃহীত আইনি পদক্ষেপ:\n১. লিখিত প্রমাণ আংশিক হলেও প্রত্যক্ষদর্শী সাক্ষীদের সমর্থন নিয়ে সংশ্লিষ্ট আদালত বা থানায় আইনি প্রতিকার চাওয়া সম্ভব।\n২. লিগ্যাল এইডের মাধ্যমে অপরপক্ষকে আইনি নোটিশ প্রেরণ করে সমঝোতার সুযোগ তৈরি করা যায়।\n\nআপনি কি বিদ্যমান তথ্যের ভিত্তিতে এই আইনি প্রক্রিয়ায় অগ্রসর হতে সম্মত আছেন?"
+      no_docs_continuation: "কোনো লিখিত কাগজপত্র না থাকলেও আপনার আইনি প্রক্রিয়া অব্যাহত থাকবে। স্থানীয় সাক্ষ্য ও মৌখিক তথ্যের ভিত্তিতে প্রয়োজনীয় আইনি পরামর্শ ও বিকল্প মীমাংসার উদ্যোগ গ্রহণ করা যায়। এই বিষয়ে কি কোনো প্রত্যক্ষদর্শী সাক্ষী অবগত আছেন?"

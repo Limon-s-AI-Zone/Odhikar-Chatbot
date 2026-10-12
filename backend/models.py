@@ -13,6 +13,7 @@ class Case(Base):
     # Extracted fields
     applicant_name = Column(String, default="[নাম সংরক্ষিত]")
     respondent = Column(String, default="[বিবাদী]")
+    address = Column(String, nullable=True)
     marriage_date = Column(String, nullable=True)
     marriage_date_inferred = Column(Boolean, default=False)
     dower_amount = Column(String, nullable=True)

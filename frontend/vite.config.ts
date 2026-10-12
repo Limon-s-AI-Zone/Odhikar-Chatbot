@@ -11,6 +11,22 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/intake': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
+      '/cases': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
+      '/tts': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
+      },
+      '/transcribe': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
       }
     }
   }

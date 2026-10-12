@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { 
   AlertCircle, Clock, Check, Edit3, MessageSquare, 
-  User, Bot, ShieldCheck, ChevronDown, ChevronUp 
+  User, Bot, ShieldCheck, ChevronDown, ChevronUp,
+  Volume2, VolumeX, Download, Printer, Loader2, FileText, Copy
 } from 'lucide-react';
+import { downloadDraftPdf, printDraftPdf } from './utils/draftPdfGenerator';
 
 interface ChatMessage {
   role: string;
@@ -18,6 +20,7 @@ interface CaseItem {
   received_at: string;
   applicant_name: string;
   respondent: string;
+  address?: string;
   marriage_date?: string;
   marriage_date_inferred?: boolean;
   dower_amount?: string;
@@ -38,12 +41,106 @@ interface DashboardProps {
   onRefresh: () => void;
 }
 
+const getCategoryLabel = (cat?: string | null): string => {
+  if (!cat) return 'পারিবারিক — দেনমোহর ও ভরণপোষণ';
+  const map: Record<string, string> = {
+    'family_dower_maintenance': 'পারিবারিক — দেনমোহর ও ভরণপোষণ',
+    'dowry': 'যৌতুক সংক্রান্ত বিরোধ ও নির্যাতন',
+    'unpaid_wages': 'শ্রম ও কর্মসংস্থান — বকেয়া মজুরি আদায়',
+    'land_dispute': 'ভূমি ও সম্পত্তি সংক্রান্ত বিরোধ',
+    'out_of_scope': 'অন্যান্য / সাধারণ আইনি বিষয়'
+  };
+  return map[cat] || cat;
+};
+
 export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh }) => {
   const [selectedCase, setSelectedCase] = useState<CaseItem | null>(cases[0] || null);
   const [isEditingDraft, setIsEditingDraft] = useState(false);
   const [editedDraft, setEditedDraft] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [copiedDraft, setCopiedDraft] = useState(false);
   const [showFullChat, setShowFullChat] = useState(true);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [currentPlayingText, setCurrentPlayingText] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (!selectedCase && cases.length > 0) {
+      setSelectedCase(cases[0]);
+    }
+  }, [cases, selectedCase]);
+
+  const stopVoice = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsPlayingAudio(false);
+    setCurrentPlayingText(null);
+  };
+
+  const playVoice = (text: string) => {
+    if (!text || !text.trim()) return;
+
+    if (isPlayingAudio && currentPlayingText === text) {
+      stopVoice();
+      return;
+    }
+
+    stopVoice();
+    setIsPlayingAudio(true);
+    setCurrentPlayingText(text);
+
+    try {
+      const audioUrl = `/api/tts?text=${encodeURIComponent(text.trim())}`;
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setIsPlayingAudio(false);
+        setCurrentPlayingText(null);
+        audioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        playBrowserSpeechFallback(text);
+      };
+
+      audio.play().catch(() => {
+        playBrowserSpeechFallback(text);
+      });
+    } catch {
+      playBrowserSpeechFallback(text);
+    }
+  };
+
+  const playBrowserSpeechFallback = (text: string) => {
+    if (!('speechSynthesis' in window)) {
+      setIsPlayingAudio(false);
+      setCurrentPlayingText(null);
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'bn-BD';
+    const voices = window.speechSynthesis.getVoices();
+    const bnVoice = voices.find((v) => v.lang.startsWith('bn'));
+    if (bnVoice) utterance.voice = bnVoice;
+    utterance.rate = 0.92;
+    utterance.onend = () => {
+      setIsPlayingAudio(false);
+      setCurrentPlayingText(null);
+    };
+    utterance.onerror = () => {
+      setIsPlayingAudio(false);
+      setCurrentPlayingText(null);
+    };
+    window.speechSynthesis.speak(utterance);
+  };
 
   const handleSelectCase = (c: CaseItem) => {
     setSelectedCase(c);
@@ -71,8 +168,65 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
     }
   };
 
+  const handleCopyDraft = (text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedDraft(true);
+    setTimeout(() => setCopiedDraft(false), 2000);
+  };
+
+  const handleDownloadDraftPdf = async () => {
+    if (!selectedCase) return;
+    const textToExport = isEditingDraft ? editedDraft : (selectedCase.draft_complaint || '');
+    if (!textToExport.trim()) {
+      alert('কোনো খসড়া পাওয়া যায়নি।');
+      return;
+    }
+    try {
+      setIsDownloadingPdf(true);
+      await downloadDraftPdf({
+        draftText: textToExport,
+        caseId: selectedCase.id,
+        category: selectedCase.category,
+        categoryBangla: getCategoryLabel(selectedCase.category),
+        applicantName: selectedCase.applicant_name,
+        respondent: selectedCase.respondent,
+        address: selectedCase.address || '[ঠিকানা — অপ্রতিষ্ঠিত]',
+        clinicName: selectedCase.referral_clinic,
+        appointmentSlot: selectedCase.referral_slot,
+        status: selectedCase.status
+      });
+    } catch (err: any) {
+      console.error('PDF generation error:', err);
+      alert('পিডিএফ তৈরিতে সমস্যা হয়েছে: ' + (err?.message || 'অনুগ্রহ করে পুনরায় চেষ্টা করুন'));
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
+  const handlePrintDraft = () => {
+    if (!selectedCase) return;
+    const textToExport = isEditingDraft ? editedDraft : (selectedCase.draft_complaint || '');
+    if (!textToExport.trim()) {
+      alert('কোনো খসড়া পাওয়া যায়নি।');
+      return;
+    }
+    printDraftPdf({
+      draftText: textToExport,
+      caseId: selectedCase.id,
+      category: selectedCase.category,
+      categoryBangla: getCategoryLabel(selectedCase.category),
+      applicantName: selectedCase.applicant_name,
+      respondent: selectedCase.respondent,
+      address: selectedCase.address || '[ঠিকানা — অপ্রতিষ্ঠিত]',
+      clinicName: selectedCase.referral_clinic,
+      appointmentSlot: selectedCase.referral_slot,
+      status: selectedCase.status
+    });
+  };
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.7fr', gap: '24px' }}>
+    <div className="dashboard-grid">
       {/* LEFT COLUMN: CASE QUEUE */}
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -260,16 +414,45 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
                             fontSize: '13px',
                             maxWidth: '88%',
                             lineHeight: '1.5',
-                            whiteSpace: 'pre-wrap'
+                            whiteSpace: 'pre-wrap',
+                            display: 'flex',
+                            gap: '8px',
+                            alignItems: 'flex-start'
                           }}
                         >
-                          {msg.content}
+                          <div style={{ flex: 1 }}>{msg.content}</div>
+                          <button
+                            onClick={() => playVoice(msg.content)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              color: isPlayingAudio && currentPlayingText === msg.content ? '#e11d48' : '#0284c7',
+                              display: 'flex',
+                              alignItems: 'center',
+                              flexShrink: 0
+                            }}
+                            title="ভয়েস শুনুন"
+                          >
+                            {isPlayingAudio && currentPlayingText === msg.content ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                          </button>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div style={{ fontSize: '13px', color: '#64748b', fontStyle: 'italic' }}>
-                      "{selectedCase.original_transcript}"
+                    <div style={{ fontSize: '13px', color: '#64748b', fontStyle: 'italic', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>"{selectedCase.original_transcript}"</span>
+                      {selectedCase.original_transcript && (
+                        <button
+                          className="btn btn-outline"
+                          style={{ fontSize: '12px', padding: '3px 8px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          onClick={() => playVoice(selectedCase.original_transcript || '')}
+                        >
+                          {isPlayingAudio && currentPlayingText === selectedCase.original_transcript ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                          <span>{isPlayingAudio && currentPlayingText === selectedCase.original_transcript ? 'থামান' : 'শুনুন'}</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -278,20 +461,87 @@ export const ParalegalDashboard: React.FC<DashboardProps> = ({ cases, onRefresh 
 
             {/* DRAFT FIRST COMPLAINT */}
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: '700', color: '#334155' }}>
-                  আবেদনের খসড়া (Draft First Complaint)
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: '700', color: '#334155', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+                  <FileText size={16} color="#d92d20" />
+                  <span>আবেদনের খসড়া (Draft First Complaint)</span>
                 </h3>
-                <button
-                  className="btn btn-outline"
-                  style={{ fontSize: '12px', padding: '4px 8px' }}
-                  onClick={() => {
-                    setIsEditingDraft(!isEditingDraft);
-                    setEditedDraft(selectedCase.draft_complaint || '');
-                  }}
-                >
-                  <Edit3 size={14} /> {isEditingDraft ? 'বাতিল' : 'সম্পাদনা করুন'}
-                </button>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={handleDownloadDraftPdf}
+                    disabled={isDownloadingPdf}
+                    style={{
+                      backgroundColor: '#d92d20',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '5px 12px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: isDownloadingPdf ? 'wait' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      boxShadow: '0 1px 3px rgba(217, 45, 32, 0.25)'
+                    }}
+                    title="অনুমোদিত খসড়াটি অফিশিয়াল PDF হিসেবে ডাউনলোড করুন"
+                  >
+                    {isDownloadingPdf ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={13} />}
+                    <span>{isDownloadingPdf ? 'পিডিএফ হচ্ছে...' : 'PDF ডাউনলোড'}</span>
+                  </button>
+
+                  <button
+                    onClick={handlePrintDraft}
+                    style={{
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      padding: '5px 10px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      color: '#334155'
+                    }}
+                    title="প্রিন্ট প্রিভিউ ও প্রিন্ট"
+                  >
+                    <Printer size={13} />
+                    <span>প্রিন্ট</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleCopyDraft(isEditingDraft ? editedDraft : (selectedCase.draft_complaint || ''))}
+                    style={{
+                      background: 'none',
+                      border: '1px solid #cbd5e1',
+                      borderRadius: '6px',
+                      padding: '5px 9px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      color: copiedDraft ? '#16a34a' : '#475569'
+                    }}
+                    title="খসড়ার টেক্সট কপি করুন"
+                  >
+                    {copiedDraft ? <Check size={13} /> : <Copy size={13} />}
+                    <span>{copiedDraft ? 'কপি হয়েছে' : 'কপি'}</span>
+                  </button>
+
+                  <button
+                    className="btn btn-outline"
+                    style={{ fontSize: '12px', padding: '5px 10px' }}
+                    onClick={() => {
+                      setIsEditingDraft(!isEditingDraft);
+                      setEditedDraft(selectedCase.draft_complaint || '');
+                    }}
+                  >
+                    <Edit3 size={13} /> {isEditingDraft ? 'বাতিল' : 'সম্পাদনা করুন'}
+                  </button>
+                </div>
               </div>
 
               {isEditingDraft ? (
